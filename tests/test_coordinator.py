@@ -146,9 +146,7 @@ async def test_coordinator_logs_failure_and_recovery_once(
         await coordinator.async_refresh()
         await coordinator.async_refresh()
     failures = [
-        record
-        for record in caplog.records
-        if "Error fetching solis data" in record.message
+        record for record in caplog.records if "Error fetching solis data" in record.message
     ]
     recovered = [record for record in caplog.records if "recovered" in record.message]
     assert len(failures) == 1
