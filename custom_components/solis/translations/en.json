@@ -1,0 +1,139 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to SolisCloud",
+        "description": "Use the API key id and secret from SolisCloud account settings. A portal username is not required.",
+        "data": {
+          "api_url": "API URL",
+          "key_id": "API key ID",
+          "key_secret": "API key secret"
+        },
+        "data_description": {
+          "api_url": "Use the host that issued the key, including the port. The international service listens on port 13333."
+        }
+      },
+      "stations": {
+        "title": "Choose plants",
+        "description": "Select the SolisCloud plants this entry should follow.",
+        "data": {
+          "station_ids": "Plants"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Refresh SolisCloud credentials",
+        "description": "The API key was rejected. Enter a current key id and secret.",
+        "data": {
+          "key_id": "API key ID",
+          "key_secret": "API key secret"
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure Solis",
+        "description": "Update the API host, the plants to follow, and how often to poll.",
+        "data": {
+          "api_url": "API URL",
+          "station_ids": "Plants",
+          "scan_interval": "Poll interval (seconds)",
+          "request_timeout": "Request timeout (seconds)",
+          "endpoint_interval": "Minimum gap per endpoint (seconds)"
+        }
+      },
+      "init": {
+        "title": "Solis options",
+        "data": {
+          "scan_interval": "Poll interval (seconds)",
+          "request_timeout": "Request timeout (seconds)",
+          "endpoint_interval": "Minimum gap per endpoint (seconds)"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "SolisCloud rejected the API key id or secret.",
+      "clock_skew": "SolisCloud rejected the request time. The clock must be within 15 minutes of UTC.",
+      "timeout": "SolisCloud did not answer before the timeout.",
+      "cannot_connect": "Could not reach SolisCloud.",
+      "no_stations": "The account returned no plants. Check the API key and that the plant has an id.",
+      "unknown": "Unexpected SolisCloud error."
+    },
+    "abort": {
+      "already_configured": "This API key is already configured.",
+      "reauth_successful": "Authentication refreshed.",
+      "reconfigure_successful": "Configuration updated.",
+      "cannot_connect": "Could not reach SolisCloud to load plants.",
+      "wrong_account": "That API key belongs to a different account."
+    }
+  },
+  "issues": {
+    "invalid_auth": {
+      "title": "SolisCloud rejected the API key",
+      "description": "Update the key id and secret. Reads use the API key only; the portal password is not used."
+    },
+    "clock_skew": {
+      "title": "Home Assistant clock is outside the SolisCloud window",
+      "description": "SolisCloud refuses requests whose Date header is more than 15 minutes from UTC. Set the host clock and time zone, then reload Solis."
+    },
+    "no_inverters": {
+      "title": "SolisCloud returned no inverters",
+      "description": "The plant list or inverter list was empty. A plant without an id, or Solis error 'abnormal data', looks like this. The last successful inverter list is kept for a few polls."
+    },
+    "abnormal_data": {
+      "title": "SolisCloud returned abnormal data",
+      "description": "The platform answered with code 1 (often the Chinese message for abnormal data). This is an account-side fault. Disabling and recreating the API key, or opening a Solis ticket, is what clears it."
+    },
+    "legacy_control": {
+      "title": "Inverter control was not migrated",
+      "description": "The previous Solis integration had the control API enabled. This version does not send /v2/api/control or /v2/api/atRead, because polling those calls has been reported to drop the data logger's cloud session. Battery schedules are unchanged on the inverter."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "status": {
+        "name": "Status",
+        "state": {
+          "online": "Online",
+          "offline": "Offline",
+          "alarm": "Alarm",
+          "stale": "Stale",
+          "unknown": "Unknown"
+        }
+      },
+      "ac_power": { "name": "AC power" },
+      "frequency": { "name": "Frequency" },
+      "temperature": { "name": "Temperature" },
+      "energy_today": { "name": "Energy today" },
+      "energy_month": { "name": "Energy this month" },
+      "energy_year": { "name": "Energy this year" },
+      "energy_total": { "name": "Energy total" },
+      "data_timestamp": { "name": "Measurement time" },
+      "grid_power": { "name": "Grid power" },
+      "consumption_power": { "name": "Consumption power" },
+      "battery_power": { "name": "Battery power" },
+      "battery_soc": { "name": "Battery" },
+      "battery_soh": { "name": "Battery state of health" },
+      "battery_voltage": { "name": "Battery voltage" },
+      "battery_current": { "name": "Battery current" },
+      "battery_charge_today": { "name": "Battery charged today" },
+      "battery_discharge_today": { "name": "Battery discharged today" },
+      "battery_charge_total": { "name": "Battery charged total" },
+      "battery_discharge_total": { "name": "Battery discharged total" },
+      "force_charge_soc": { "name": "Force charge SOC" },
+      "force_discharge_soc": { "name": "Overdischarge SOC" },
+      "phase_voltage": { "name": "Phase {index} voltage" },
+      "phase_current": { "name": "Phase {index} current" },
+      "phase_power": { "name": "Phase {index} power" },
+      "string_voltage": { "name": "String {index} voltage" },
+      "string_current": { "name": "String {index} current" },
+      "string_power": { "name": "String {index} power" },
+      "day_energy": { "name": "Energy today" },
+      "grid_import_today": { "name": "Grid import today" },
+      "grid_export_today": { "name": "Grid export today" },
+      "load_today": { "name": "Load today" },
+      "rssi": { "name": "Signal strength" },
+      "power": { "name": "Power" }
+    },
+    "binary_sensor": {
+      "alarm": { "name": "Alarm" }
+    }
+  }
+}

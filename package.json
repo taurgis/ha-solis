@@ -1,0 +1,20 @@
+{
+  "name": "ha-solis-release-tools",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Release tooling for the Solis Home Assistant integration",
+  "scripts": {
+    "changeset": "changeset",
+    "changeset:version": "changeset version && node scripts/sync-release-version.mjs",
+    "release:tag": "node scripts/create-release-tag.mjs",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.29.7",
+    "vitepress": "^1.6.3"
+  },
+  "overrides": {
+    "@types/node": "22.19.1"
+  }
+}
