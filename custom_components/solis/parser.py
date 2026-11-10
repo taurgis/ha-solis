@@ -9,9 +9,10 @@ China Standard Time.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, tzinfo
 import math
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .models import (
     AlarmSnapshot,
@@ -95,22 +96,75 @@ def parse_offset_hours(value: Any) -> float | None:
     return as_float(value)
 
 
-def plant_period_start(offset_hours: float, now: datetime, period: str) -> datetime:
+def resolve_zone(
+    cloud_offset_hours: float | None,
+    preference: str | None,
+    hass_time_zone: str | None,
+    now: datetime,
+) -> ZoneInfo | None:
+    """Choose the civil timezone used for "today", or None to keep the fixed offset.
+
+    An explicit IANA name always wins. ``plant`` keeps the numeric offset Solis
+    sent. The default follows Home Assistant's zone when that zone is within an
+    hour of the plant offset, which is the daylight-saving gap in issue 533,
+    and leaves a plant in another region on the offset Solis published.
+    """
+    chosen = (preference or "").strip()
+    if chosen == "plant":
+        return None
+    if chosen:
+        return _zone(chosen)
+    if cloud_offset_hours is None:
+        return _zone(hass_time_zone)
+    home = _zone(hass_time_zone)
+    if home is None:
+        return None
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=UTC)
+    home_offset = now.astimezone(home).utcoffset()
+    if home_offset is None:
+        return None
+    if abs(home_offset.total_seconds() / 3600.0 - cloud_offset_hours) <= 1.0:
+        return home
+    return None
+
+
+def _zone(name: str | None) -> ZoneInfo | None:
+    if not name or name == "plant":
+        return None
+    try:
+        return ZoneInfo(name)
+    except ZoneInfoNotFoundError:
+        return None
+
+
+def plant_period_start(
+    offset_hours: float,
+    now: datetime,
+    period: str,
+    zone: tzinfo | None = None,
+) -> datetime:
     """Return the UTC instant when the current plant-local day, month or year began.
 
-    The platform publishes a fixed numeric offset, not an IANA zone, so this
-    does not follow daylight-saving transitions.
+    ``zone`` follows daylight-saving transitions. Without it, the fixed numeric
+    offset from Solis is used and does not change on those transitions.
     """
     if now.tzinfo is None:
         now = now.replace(tzinfo=UTC)
+    if zone is not None:
+        shifted = now.astimezone(zone)
+        shifted = _truncate_period(shifted, period)
+        return shifted.astimezone(UTC)
     shifted = now.astimezone(UTC) + timedelta(hours=offset_hours)
+    return _truncate_period(shifted, period) - timedelta(hours=offset_hours)
+
+
+def _truncate_period(moment: datetime, period: str) -> datetime:
     if period == "month":
-        shifted = shifted.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    elif period == "year":
-        shifted = shifted.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
-    else:
-        shifted = shifted.replace(hour=0, minute=0, second=0, microsecond=0)
-    return shifted - timedelta(hours=offset_hours)
+        return moment.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if period == "year":
+        return moment.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    return moment.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
 def _text(data: dict[str, Any], *keys: str) -> str | None:
@@ -432,10 +486,16 @@ def _kilowatts(watts: float | None) -> float | None:
     return watts / 1000.0
 
 
-def local_date(offset_hours: float | None, now: datetime) -> str:
+def local_date(
+    offset_hours: float | None,
+    now: datetime,
+    zone: tzinfo | None = None,
+) -> str:
     """Return the plant-local ``YYYY-MM-DD`` for a day-energy query."""
     if now.tzinfo is None:
         now = now.replace(tzinfo=UTC)
+    if zone is not None:
+        return now.astimezone(zone).date().isoformat()
     shifted = now.astimezone(UTC) + timedelta(hours=offset_hours or 0.0)
     return shifted.date().isoformat()
 

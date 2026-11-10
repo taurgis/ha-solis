@@ -52,6 +52,8 @@ def test_pec_and_refused_units() -> None:
     assert to_watts(3, "kWh") is None
     assert to_watts(2, "kW", pec="2") == 4000
     assert to_kilowatt_hours(2, "Wh") == 0.002
+    assert to_kilowatt_hours(2, "MW") == 2_000
+    assert to_kilowatt_hours(1, "GW") == 1_000_000
     assert to_kilowatt_hours(1, "not-a-unit") is None
     assert to_identity(50, "Hz", default="hz") == 50
     assert to_identity(50, "kW", default="hz") is None

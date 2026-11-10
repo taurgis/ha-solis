@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+import logging
 from unittest.mock import patch
 
 import pytest
@@ -12,7 +13,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import UpdateFailed
 
 from custom_components.solis.const import DOMAIN
-from custom_components.solis.coordinator import SolisCoordinator, runtime_options
+from custom_components.solis.coordinator import SolisCoordinator
 from custom_components.solis.errors import (
     SolisAuthError,
     SolisClockError,
@@ -70,11 +71,12 @@ async def test_scan_interval_comes_from_options(hass: HomeAssistant) -> None:
     entry = _entry(hass, 180)
     coordinator = SolisCoordinator(hass, entry, _Scripted([]))
     assert coordinator.update_interval == timedelta(seconds=180)
-    assert runtime_options(entry)["scan_interval"] == 180
 
 
-async def test_auth_starts_reauth_once_then_clears(hass: HomeAssistant) -> None:
-    """A repeated auth failure does not stack reauth flows."""
+async def test_auth_starts_reauth_once_then_clears(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A repeated auth failure does not stack reauth flows or warnings."""
     entry = _entry(hass)
     coordinator = SolisCoordinator(
         hass,
@@ -82,11 +84,18 @@ async def test_auth_starts_reauth_once_then_clears(hass: HomeAssistant) -> None:
         _Scripted([SolisAuthError("bad"), SolisAuthError("still bad"), _snapshot()]),
     )
     with patch.object(entry, "async_start_reauth") as start_reauth:
-        with pytest.raises(UpdateFailed):
-            await coordinator._async_update_data()
-        with pytest.raises(UpdateFailed):
-            await coordinator._async_update_data()
+        with caplog.at_level(logging.DEBUG):
+            with pytest.raises(UpdateFailed):
+                await coordinator._async_update_data()
+            with pytest.raises(UpdateFailed):
+                await coordinator._async_update_data()
         start_reauth.assert_called_once_with(hass)
+    warnings = [
+        record
+        for record in caplog.records
+        if record.levelno == logging.WARNING and "credentials" in record.message
+    ]
+    assert len(warnings) == 1
     assert any(key.startswith("invalid_auth") for key in _issue_keys(hass))
     assert await coordinator._async_update_data()
     assert coordinator.auth_failed is False

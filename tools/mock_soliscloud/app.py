@@ -44,6 +44,9 @@ class MockState:
     empty_inverters: bool = False
     nulls: bool = False
     pac_scale: float = 1.0
+    energy_glitch: str | None = None
+    skip_serials: set[str] = field(default_factory=set)
+    decoy_day: bool = False
     calls: list[str] = field(default_factory=list)
 
 
@@ -65,9 +68,20 @@ async def _health(_: web.Request) -> web.Response:
 async def _control(request: web.Request) -> web.Response:
     state: MockState = request.app["state"]
     payload = await request.json()
-    for key in ("mode", "fail_inverter_list", "empty_inverters", "nulls", "pac_scale"):
+    for key in (
+        "mode",
+        "fail_inverter_list",
+        "empty_inverters",
+        "nulls",
+        "pac_scale",
+        "energy_glitch",
+        "decoy_day",
+    ):
         if key in payload:
             setattr(state, key, payload[key])
+    if "skip_serials" in payload:
+        skipped = payload["skip_serials"]
+        state.skip_serials = set(skipped) if isinstance(skipped, list) else set()
     return web.json_response({"mode": state.mode})
 
 
@@ -200,21 +214,22 @@ def _dispatch(state: MockState, path: str, payload: dict[str, Any]) -> dict[str,
     if path == "/v1/api/stationDayEnergyList":
         station_id = str(payload.get("stationIds") or "")
         detail = station_details().get(station_id, {})
-        return _page(
-            [
-                {
-                    "id": station_id,
-                    "energy": detail.get("dayEnergy"),
-                    "energyStr": detail.get("dayEnergyStr"),
-                    "gridPurchasedEnergy": detail.get("gridPurchasedDayEnergy"),
-                    "gridPurchasedEnergyStr": detail.get("gridPurchasedDayEnergyStr"),
-                    "gridSellEnergy": detail.get("gridSellDayEnergy"),
-                    "gridSellEnergyStr": detail.get("gridSellDayEnergyStr"),
-                    "homeLoadEnergy": detail.get("homeLoadTodayEnergy"),
-                    "homeLoadEnergyStr": detail.get("homeLoadTodayEnergyStr"),
-                }
-            ]
-        )
+        real = {
+            "id": station_id,
+            "stationId": station_id,
+            "energy": detail.get("dayEnergy"),
+            "energyStr": detail.get("dayEnergyStr"),
+            "gridPurchasedEnergy": detail.get("gridPurchasedDayEnergy"),
+            "gridPurchasedEnergyStr": detail.get("gridPurchasedDayEnergyStr"),
+            "gridSellEnergy": detail.get("gridSellDayEnergy"),
+            "gridSellEnergyStr": detail.get("gridSellDayEnergyStr"),
+            "homeLoadEnergy": detail.get("homeLoadTodayEnergy"),
+            "homeLoadEnergyStr": detail.get("homeLoadTodayEnergyStr"),
+        }
+        rows = [real]
+        if state.decoy_day:
+            rows.insert(0, {"id": "", "stationId": "", "energy": 999, "energyStr": "kWh"})
+        return _page(rows)
     return _envelope_dict("I0000", f"unknown endpoint {path}", None)
 
 
@@ -224,11 +239,32 @@ def _details(state: MockState, now: datetime) -> dict[str, dict[str, Any]]:
         details = {next(iter(details)): null_detail()}
     fresh_ms = int(now.timestamp() * 1000)
     stale_ms = int((now - timedelta(hours=2)).timestamp() * 1000)
-    for detail in details.values():
+    energy_keys = (
+        "eToday",
+        "eMonth",
+        "eYear",
+        "eTotal",
+        "batteryTodayChargeEnergy",
+        "batteryTodayDischargeEnergy",
+        "batteryTotalChargeEnergy",
+        "batteryTotalDischargeEnergy",
+    )
+    kept: dict[str, dict[str, Any]] = {}
+    for serial, detail in details.items():
+        if serial in state.skip_serials:
+            continue
         detail["dataTimestamp"] = stale_ms if detail.pop("stale", False) else fresh_ms
         if detail.get("pac") is not None and state.pac_scale != 1:
             detail["pac"] = float(detail["pac"]) * state.pac_scale
-    return details
+        if state.energy_glitch == "null":
+            for key in energy_keys:
+                detail[key] = None
+        elif state.energy_glitch == "zero":
+            for key in energy_keys:
+                if key in detail:
+                    detail[key] = 0
+        kept[serial] = detail
+    return kept
 
 
 def _page(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -254,7 +290,7 @@ def _skewed(date_header: str) -> bool:
         return True
     try:
         parsed = parsedate_to_datetime(date_header)
-    except TypeError, ValueError, IndexError:
+    except (TypeError, ValueError, IndexError):
         return True
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)

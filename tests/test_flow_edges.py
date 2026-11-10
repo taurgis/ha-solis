@@ -19,7 +19,9 @@ from mock_soliscloud.catalog import KEY_ID, SECRET
 def test_url_normalisation_and_legacy_migration() -> None:
     """A bare host gets a scheme, and a 4.x entry drops the portal password."""
     assert _normalize_url("www.soliscloud.com:13333/") == "https://www.soliscloud.com:13333"
-    assert _normalize_url("http://example.test") == "http://example.test"
+    assert _normalize_url("http://example.test") == "https://example.test"
+    assert _normalize_url("http://127.0.0.1:8765") == "http://127.0.0.1:8765"
+    assert _normalize_url("http://mock:8765") == "http://mock:8765"
     data, options = migrate_entry_data(
         {
             "portal_domain": "v3.soliscloud.com:13333",
@@ -35,6 +37,33 @@ def test_url_normalisation_and_legacy_migration() -> None:
     assert data["legacy_name"] == "Roof"
     assert options["scan_interval"] == 300
     assert options["endpoint_interval"] == 2.0
+
+
+async def test_options_reject_an_unknown_timezone(
+    hass: HomeAssistant, solis_server: tuple[Any, str]
+) -> None:
+    """A timezone that is not an IANA name, or plant, is rejected."""
+    _state, url = solis_server
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data=entry_data(url),
+        options=entry_options(),
+        unique_id=KEY_ID,
+        version=2,
+    )
+    entry.add_to_hass(hass)
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            "scan_interval": 240,
+            "request_timeout": 55,
+            "endpoint_interval": 3,
+            "time_zone": "Not/AZone",
+        },
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"]["time_zone"] == "invalid_timezone"
 
 
 async def test_empty_station_selection_is_rejected(
@@ -119,4 +148,5 @@ async def test_options_round_trip_keeps_every_knob(
         "scan_interval": 240,
         "request_timeout": 55,
         "endpoint_interval": 3.0,
+        "time_zone": "",
     }

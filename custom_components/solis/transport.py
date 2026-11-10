@@ -34,6 +34,7 @@ from .parser import (
     parse_inverter,
     parse_offset_hours,
     parse_station,
+    resolve_zone,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -53,10 +54,24 @@ class SolisTransport(Protocol):
 class SolisCloudTransport:
     """Read SolisCloud and remember the last good inverter list and details."""
 
-    def __init__(self, client: SolisCloudClient, station_ids: set[str]) -> None:
-        """``station_ids`` empty means every station on the account."""
+    def __init__(
+        self,
+        client: SolisCloudClient,
+        station_ids: set[str],
+        *,
+        time_zone: str = "",
+        hass_time_zone: str | None = None,
+    ) -> None:
+        """``station_ids`` empty means every station on the account.
+
+        ``time_zone`` is the entry option (``""``, ``plant`` or an IANA name).
+        ``hass_time_zone`` is Home Assistant's zone, used when the option is
+        left on automatic.
+        """
         self._client = client
         self._station_ids = station_ids
+        self._time_zone = time_zone
+        self._hass_time_zone = hass_time_zone
         self._details: dict[str, dict[str, Any]] = {}
         self._lists: dict[str, list[dict[str, Any]]] = {}
         self._empty_lists: dict[str, int] = {}
@@ -81,11 +96,14 @@ class SolisCloudTransport:
             offset = parse_offset_hours((detail or {}).get("timeZone"))
             if offset is None:
                 offset = parse_offset_hours(summary.get("timeZone"))
+            zone = resolve_zone(offset, self._time_zone, self._hass_time_zone, now)
             day, day_failed = await self._optional(
                 f"station {station_id} day energy",
-                lambda station_id=station_id, offset=offset: self._client.station_day_energy(
-                    station_id,
-                    local_date(offset, now),
+                lambda station_id=station_id, offset=offset, zone=zone: (
+                    self._client.station_day_energy(
+                        station_id,
+                        local_date(offset, now, zone),
+                    )
                 ),
             )
             partial = partial or day_failed
@@ -114,6 +132,7 @@ class SolisCloudTransport:
         partial = partial or alarms_failed or collectors_failed or epms_failed
         if not inverters:
             raise SolisCloudError("no inverters returned")
+        self._prune(stations, inverters)
         return SolisSnapshot(
             stations=tuple(stations),
             inverters=tuple(inverters),
@@ -124,6 +143,18 @@ class SolisCloudTransport:
             partial=partial,
         )
 
+    def _prune(self, stations: list[StationSnapshot], inverters: list[InverterSnapshot]) -> None:
+        """Drop cached rows for plants and inverters that are no longer present."""
+        live_stations = {station.station_id for station in stations}
+        live_serials = {inverter.serial for inverter in inverters}
+        for station_id in list(self._lists):
+            if station_id not in live_stations:
+                self._lists.pop(station_id, None)
+                self._empty_lists.pop(station_id, None)
+        for serial in list(self._details):
+            if serial not in live_serials:
+                self._details.pop(serial, None)
+
     def _wanted(self, row: dict[str, Any]) -> bool:
         if not self._station_ids:
             return True
@@ -132,7 +163,7 @@ class SolisCloudTransport:
     async def _inverters_for(self, station_id: str) -> tuple[list[dict[str, Any]], bool]:
         try:
             rows = await self._client.inverter_list(station_id)
-        except SolisAuthError, SolisClockError:
+        except (SolisAuthError, SolisClockError):
             raise
         except SolisCloudError as err:
             cached = self._lists.get(station_id)
@@ -166,7 +197,7 @@ class SolisCloudTransport:
             return list_row, True
         try:
             detail = await self._client.inverter_detail(device_id, serial)
-        except SolisAuthError, SolisClockError:
+        except (SolisAuthError, SolisClockError):
             raise
         except SolisCloudError as err:
             _LOGGER.warning("Detail for %s failed (%s); using the last copy", serial, err)
@@ -180,7 +211,7 @@ class SolisCloudTransport:
     async def _optional(self, label: str, call: Any) -> tuple[Any, bool]:
         try:
             return await call(), False
-        except SolisAuthError, SolisClockError:
+        except (SolisAuthError, SolisClockError):
             raise
         except SolisCloudError as err:
             _LOGGER.warning("Solis %s failed: %s", label, err)

@@ -6,6 +6,8 @@ share them.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 
 class SolisCloudError(Exception):
     """Base error for a SolisCloud call that did not yield data."""
@@ -22,6 +24,17 @@ class SolisAuthError(SolisCloudError):
 
 class SolisClockError(SolisCloudError):
     """The Date header was outside the platform's acceptance window."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str | None = None,
+        server_date: datetime | None = None,
+    ) -> None:
+        """Store the platform clock when the response carried a Date header."""
+        super().__init__(message, code=code)
+        self.server_date = server_date
 
 
 class SolisRateLimitError(SolisCloudError):

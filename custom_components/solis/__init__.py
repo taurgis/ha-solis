@@ -25,10 +25,15 @@ from .const import (
     CONF_KEY_SECRET,
     CONF_REQUEST_TIMEOUT,
     CONF_STATION_IDS,
+    CONF_TIME_ZONE,
     DEFAULT_ENDPOINT_INTERVAL,
     DEFAULT_REQUEST_TIMEOUT,
     DOMAIN,
+    ISSUE_ABNORMAL,
+    ISSUE_AUTH,
+    ISSUE_CLOCK,
     ISSUE_LEGACY_CONTROL,
+    ISSUE_NO_INVERTERS,
 )
 from .coordinator import SolisCoordinator
 from .migration import async_migrate_devices
@@ -53,7 +58,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolisConfigEntry) -> boo
             entry.options.get(CONF_ENDPOINT_INTERVAL, DEFAULT_ENDPOINT_INTERVAL)
         ),
     )
-    transport = SolisCloudTransport(client, set(entry.data.get(CONF_STATION_IDS, [])))
+    transport = SolisCloudTransport(
+        client,
+        set(entry.data.get(CONF_STATION_IDS, [])),
+        time_zone=str(entry.options.get(CONF_TIME_ZONE, "")),
+        hass_time_zone=hass.config.time_zone,
+    )
     coordinator = SolisCoordinator(hass, entry, transport)
     try:
         await coordinator.async_config_entry_first_refresh()
@@ -73,8 +83,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolisConfigEntry) -> boo
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: SolisConfigEntry) -> bool:
-    """Unload a config entry."""
-    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    """Unload a config entry and drop poll-failure repairs."""
+    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if unloaded:
+        for key in (ISSUE_AUTH, ISSUE_CLOCK, ISSUE_ABNORMAL, ISSUE_NO_INVERTERS):
+            ir.async_delete_issue(hass, DOMAIN, f"{key}_{entry.entry_id}")
+    return unloaded
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

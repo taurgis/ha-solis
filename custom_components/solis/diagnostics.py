@@ -33,8 +33,12 @@ async def async_get_config_entry_diagnostics(
 ) -> dict[str, Any]:
     """Return redacted config and the latest snapshot."""
     coordinator: SolisCoordinator = entry.runtime_data
+    redacted = async_redact_data(entry.as_dict(), TO_REDACT)
+    # The config-entry unique id is the API key id.
+    if isinstance(redacted, dict):
+        redacted["unique_id"] = "**REDACTED**"
     return {
-        "entry": async_redact_data(entry.as_dict(), TO_REDACT),
+        "entry": redacted,
         "snapshot": _snapshot(coordinator),
     }
 

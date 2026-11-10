@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+try:
+    from homeassistant.components.binary_sensor.const import BinarySensorDeviceClass
+except ImportError:  # Home Assistant 2025.10, before binary_sensor.const existed
+    from homeassistant.components.binary_sensor import (  # type: ignore[attr-defined]
+        BinarySensorDeviceClass,
+    )
 from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
     BinarySensorEntityDescription,
 )
-from homeassistant.components.binary_sensor.const import BinarySensorDeviceClass
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -15,7 +20,7 @@ from . import SolisConfigEntry
 from .const import DOMAIN
 from .coordinator import SolisCoordinator
 from .entity import SolisEntity, inverter_device
-from .migration import async_migrate_entity_ids, legacy_name_from_entry
+from .migration import async_migrate_entity_ids, device_for_identifier, legacy_name_from_entry
 
 PARALLEL_UPDATES = 0
 
@@ -71,38 +76,48 @@ async def async_setup_entry(
     """Add an alarm binary sensor per inverter."""
     solis_entry = entry
     coordinator = solis_entry.runtime_data
-    added: set[str] = set()
-    migrated = False
+    added: dict[str, SolisAlarmBinarySensor] = {}
 
     @callback
     def _sync() -> None:
-        nonlocal migrated
+        if coordinator.data is None:
+            return
+        serials = {inverter.serial for inverter in coordinator.data.inverters}
+        async_migrate_entity_ids(
+            hass,
+            solis_entry.entry_id,
+            legacy_name_from_entry(solis_entry.data),
+            serials,
+            {inverter.serial: inverter.station_id for inverter in coordinator.data.inverters},
+        )
         names = {station.station_id: station.name for station in coordinator.data.stations}
-        if not migrated:
-            async_migrate_entity_ids(
-                hass,
-                solis_entry.entry_id,
-                legacy_name_from_entry(solis_entry.data),
-                {inverter.serial for inverter in coordinator.data.inverters},
-            )
-            migrated = True
-        fresh = []
+        fresh: list[SolisAlarmBinarySensor] = []
         for inverter in coordinator.data.inverters:
             if inverter.serial in added:
                 continue
-            added.add(inverter.serial)
-            parent = dr.async_get(hass).async_get_device_by_identifier(
+            parent = device_for_identifier(
+                dr.async_get(hass),
                 (DOMAIN, f"station:{inverter.station_id}"),
                 solis_entry.entry_id,
             )
-            fresh.append(
-                SolisAlarmBinarySensor(
-                    coordinator,
-                    inverter.serial,
-                    names.get(inverter.station_id),
-                    None if parent is None else parent.id,
-                )
+            entity = SolisAlarmBinarySensor(
+                coordinator,
+                inverter.serial,
+                names.get(inverter.station_id),
+                None if parent is None else parent.id,
             )
+            added[inverter.serial] = entity
+            fresh.append(entity)
+        if not coordinator.data.partial:
+            for serial, entity in list(added.items()):
+                if serial in serials or entity.hass is None:
+                    continue
+                solis_entry.async_create_background_task(
+                    hass,
+                    entity.async_remove(),
+                    name=f"solis_remove_alarm_{serial}",
+                )
+                del added[serial]
         if fresh:
             async_add_entities(fresh)
 

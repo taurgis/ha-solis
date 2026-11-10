@@ -143,9 +143,11 @@ comments that faster traffic produces HTTP 502. Operators on the upstream
 tracker describe the practical limit as closer to one call per two seconds per
 endpoint, which is what this client does by default (`endpoint_interval`,
 minimum 0.5 so the documented 2/s ceiling stays available). HTTP 429 uses
-`Retry-After` when present, otherwise 2 seconds, and then gives up. HTTP 5xx
-retries with backoff. Auth failures, clock failures and `code` `1` are not
-retried.
+`Retry-After` when it is a number of seconds or an HTTP date, otherwise 2
+seconds, and then gives up. HTTP 5xx and timeouts retry with backoff. A 408
+that includes a Date header is signed once more at that clock. Other 4xx
+responses are not retried. Auth failures, a clock the server will not
+correct, and `code` `1` are not retried.
 
 Inverter samples land about every 5 minutes. Polling faster does not make the
 cloud fresher. The default poll is 300 seconds and cannot be set below 60.
@@ -174,14 +176,18 @@ Rules implemented here:
   `psum`, `familyLoadPower`). An explicit `W` is watts. `kWp` (capacity) is
   treated as kW.
 - Energy defaults to kWh. `MWh` × 1000 and `GWh` × 1 000 000 become kWh.
-  Negative energies are dropped so a `total_increasing` statistic cannot go
-  backwards because of a sign error (upstream issue 508).
+  A power unit on an energy field (`kW`, `MW`, `GW`) is read as the matching
+  watt-hour unit. Negative energies are dropped so a `total_increasing`
+  statistic cannot go backwards because of a sign error (upstream issue 508).
 - The station sample labels `generatorTodayEnergyStr` as `kW`. An energy field
   whose only unit is `kW` is read as kWh.
 - `*Pec` other than 1 multiplies the number before the unit scale.
 - Null, `""` and the string `"null"` are missing. They are not coerced to 0.
-  Daily counters therefore do not punch a zero into history when the platform
-  omits the field around midnight (issues 382, 421, 533).
+  Energy sensors then keep the last good reading for the rest of that
+  plant-local day, month, year or lifetime, so a missing sample cannot punch
+  a zero into statistics (issues 382, 421, 533). A lifetime total also
+  ignores a later reading that is smaller or that jumps by more than
+  100 000 kWh.
 - `storageBatteryCurrent` is signed. Battery power is given the sign of that
   current, which is the fix solis-sensor applied for issue 158. The PDF also
   has `batteryPowerZheng` / `batteryPowerFu` and a typo field `bstteryCurrent`.
@@ -191,11 +197,15 @@ Rules implemented here:
   part rendered in China time. We parse the number as an epoch and ignore the
   string for the instant. Values that are not epoch-sized are ignored.
 - Plant `timeZone` is a fixed numeric offset (`8`, `-9`, or `UTC+08:00`), not
-  an IANA zone. Daily `last_reset` uses that offset. Daylight saving is not
-  represented, so a plant left on a winter offset rolls the cloud's "today"
-  an hour early or late. That matches reports of battery charge/discharge
-  today resetting around 23:00 local (issue 533). We cannot correct a counter
-  the cloud itself has already zeroed.
+  an IANA zone. Every energy sensor uses `total_increasing` and does not
+  publish `last_reset`. The day, month and year boundary used to decide when
+  a lower reading is a real reset follows Home Assistant's timezone when that
+  zone is within an hour of the plant offset, which is the daylight-saving
+  gap behind battery charge and discharge resetting around 23:00 (issue 533).
+  A plant in another region keeps the numeric offset. Options can force an
+  IANA name or `plant`. The cloud's own counter can still zero on the offset
+  Solis stored; until the configured boundary, the sensor holds the previous
+  value instead of publishing that early zero.
 - Offline (`state` 2) with a fresh timestamp forces instantaneous power to 0.
   Leaving the previous `pac` in place is the stale-generation bug in issue
   366. A timestamp older than 15 minutes, or a missing timestamp, marks
