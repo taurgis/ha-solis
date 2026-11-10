@@ -1,6 +1,7 @@
 {
   "domain": "solis",
   "name": "Solis",
+  "categories": ["energy.solar_batteries"],
   "codeowners": ["@taurgis"],
   "config_flow": true,
   "documentation": "https://github.com/taurgis/ha-solis",

@@ -14,12 +14,14 @@ _POWER_TO_W = {"w": 1.0, "kw": 1_000.0, "mw": 1_000_000.0}
 _ENERGY_TO_KWH = {"wh": 0.001, "kwh": 1.0, "mwh": 1_000.0, "gwh": 1_000_000.0}
 _IDENTITY = {"v": 1.0, "a": 1.0, "hz": 1.0, "c": 1.0, "%": 1.0, "h": 1.0}
 
-_MISSING = {None, "", "null", "none", "Null", "None"}
+_MISSING_STRINGS = frozenset({"", "null", "none", "Null", "None"})
 
 
 def is_missing(value: Any) -> bool:
     """Return whether Solis sent an empty or literal-null field."""
-    return value in _MISSING
+    if value is None:
+        return True
+    return isinstance(value, str) and value in _MISSING_STRINGS
 
 
 def as_float(value: Any) -> float | None:

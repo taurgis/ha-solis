@@ -10,7 +10,7 @@
           "key_secret": "API key secret"
         },
         "data_description": {
-          "api_url": "International default is https://www.soliscloud.com:13333. Accounts created against v3.soliscloud.com can keep that host."
+          "api_url": "Use the host that issued the key, including the port. The international service listens on port 13333."
         }
       },
       "stations": {
