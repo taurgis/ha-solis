@@ -29,11 +29,8 @@ from .const import (
     DEFAULT_ENDPOINT_INTERVAL,
     DEFAULT_REQUEST_TIMEOUT,
     DOMAIN,
-    ISSUE_ABNORMAL,
-    ISSUE_AUTH,
-    ISSUE_CLOCK,
     ISSUE_LEGACY_CONTROL,
-    ISSUE_NO_INVERTERS,
+    POLL_REPAIRS,
 )
 from .coordinator import SolisCoordinator
 from .migration import async_migrate_devices
@@ -89,7 +86,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: SolisConfigEntry) -> bo
     """Unload a config entry and drop poll-failure repairs."""
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
-        for key in (ISSUE_AUTH, ISSUE_CLOCK, ISSUE_ABNORMAL, ISSUE_NO_INVERTERS):
+        for key in POLL_REPAIRS:
             ir.async_delete_issue(hass, DOMAIN, f"{key}_{entry.entry_id}")
     return unloaded
 

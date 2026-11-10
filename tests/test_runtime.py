@@ -53,6 +53,11 @@ async def test_entities_match_mock(hass: HomeAssistant, solis_server: tuple[Any,
     assert _state(hass, "sensor.north_roof_load_today") == "3.2"
     assert _state(hass, "binary_sensor.barn_hybrid_alarm") == "on"
     assert _state(hass, "binary_sensor.north_roof_s6_gr1p5k_alarm") == "off"
+    charging = er.async_get(hass).async_get_entity_id(
+        "binary_sensor", DOMAIN, f"{HYBRID_SERIAL}_battery_charging"
+    )
+    assert charging is not None
+    assert _state(hass, charging) == "off"
     assert hass.states.get("sensor.barn_hybrid_phase_2_voltage") is not None
     assert hass.states.get("sensor.north_roof_s6_gr1p5k_phase_2_voltage") is None
     total = hass.states.get("sensor.north_roof_s6_gr1p5k_energy_total")
@@ -111,17 +116,32 @@ async def test_inverter_missing_on_first_poll_migrates_later(
 
 
 async def test_failure_then_recovery(hass: HomeAssistant, solis_server: tuple[Any, str]) -> None:
-    """A 502 makes entities unavailable and a later success restores them."""
+    """Two 502s keep the last power. The third hides it and opens a repair."""
     state, url = solis_server
     entry = await _setup(hass, url)
     entity = "sensor.north_roof_s6_gr1p5k_ac_power"
+    total = "sensor.north_roof_s6_gr1p5k_energy_total"
     state.mode = "server_error"
     with patch("custom_components.solis.api.asyncio.sleep", new=AsyncMock()):
         await _refresh(hass, entry)
+        await _refresh(hass, entry)
+        assert _number(hass, entity) == 1250
+        assert _number(hass, total) == 12500
+        await _refresh(hass, entry)
     assert _state(hass, entity) == "unavailable"
+    assert _number(hass, total) == 12500
+    from homeassistant.helpers import issue_registry as ir
+
+    assert any(
+        issue_id.startswith("cloud_outage") for (_domain, issue_id) in ir.async_get(hass).issues
+    )
     state.mode = "ok"
     await _refresh(hass, entry)
     assert _number(hass, entity) == 1250
+    assert _number(hass, total) == 12500
+    assert not any(
+        issue_id.startswith("cloud_outage") for (_domain, issue_id) in ir.async_get(hass).issues
+    )
 
 
 async def test_inverter_list_failure_keeps_devices(

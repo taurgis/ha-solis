@@ -12,7 +12,8 @@ cloud session.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 import logging
 from typing import Any, Protocol
 
@@ -31,6 +32,7 @@ from .parser import (
     parse_alarm,
     parse_collector,
     parse_epm,
+    parse_epoch,
     parse_inverter,
     parse_offset_hours,
     parse_station,
@@ -75,6 +77,7 @@ class SolisCloudTransport:
         self._details: dict[str, dict[str, Any]] = {}
         self._lists: dict[str, list[dict[str, Any]]] = {}
         self._empty_lists: dict[str, int] = {}
+        self._warned: set[str] = set()
 
     async def async_read(self) -> SolisSnapshot:
         """Poll stations, inverters, alarms, collectors and EPMs."""
@@ -113,7 +116,9 @@ class SolisCloudTransport:
             for row in listed:
                 serial = str(row.get("sn") or "")
                 device_id = str(row.get("id") or "")
-                detail_row, failed = await self._inverter_detail(serial, device_id, row)
+                detail_row, failed, unreachable = await self._inverter_detail(
+                    serial, device_id, row
+                )
                 partial = partial or failed
                 if detail_row is None:
                     continue
@@ -122,6 +127,8 @@ class SolisCloudTransport:
                     station_id=station_id,
                     name=str(row.get("name") or row.get("sn") or serial),
                 )
+                if unreachable:
+                    parsed = replace(parsed, unreachable=True)
                 if parsed.serial:
                     inverters.append(parsed)
         alarms, alarms_failed = await self._optional("alarms", self._client.alarm_list)
@@ -167,8 +174,11 @@ class SolisCloudTransport:
             raise
         except SolisCloudError as err:
             cached = self._lists.get(station_id)
-            _LOGGER.warning(
-                "Inverter list for %s failed (%s); keeping the last list", station_id, err
+            self._warn_once(
+                f"list:{station_id}",
+                "Inverter list for %s failed (%s); keeping the last list",
+                station_id,
+                err,
             )
             if not cached:
                 raise
@@ -176,7 +186,8 @@ class SolisCloudTransport:
         if not rows and self._lists.get(station_id):
             self._empty_lists[station_id] = self._empty_lists.get(station_id, 0) + 1
             if self._empty_lists[station_id] < _EMPTY_LIST_TOLERANCE:
-                _LOGGER.warning(
+                self._warn_once(
+                    f"empty:{station_id}",
                     "Inverter list for %s was empty; keeping the last list (%s/%s)",
                     station_id,
                     self._empty_lists[station_id],
@@ -184,6 +195,8 @@ class SolisCloudTransport:
                 )
                 return self._lists[station_id], True
         self._empty_lists[station_id] = 0
+        self._warned.discard(f"list:{station_id}")
+        self._warned.discard(f"empty:{station_id}")
         self._lists[station_id] = rows
         return rows, False
 
@@ -192,30 +205,70 @@ class SolisCloudTransport:
         serial: str,
         device_id: str,
         list_row: dict[str, Any],
-    ) -> tuple[dict[str, Any] | None, bool]:
+    ) -> tuple[dict[str, Any] | None, bool, bool]:
+        """Return detail JSON, whether the poll was partial, and unreachable."""
         if not serial or not device_id:
-            return list_row, True
+            return list_row, True, True
         try:
             detail = await self._client.inverter_detail(device_id, serial)
         except (SolisAuthError, SolisClockError):
             raise
         except SolisCloudError as err:
-            _LOGGER.warning("Detail for %s failed (%s); using the last copy", serial, err)
+            self._warn_once(
+                f"detail:{serial}",
+                "Detail for %s failed (%s); using the last copy",
+                serial,
+                err,
+            )
             cached = self._details.get(serial)
             if cached is not None:
-                return cached, True
-            return list_row, True
+                return cached, True, True
+            return list_row, True, True
+        kept, partial, unreachable = self._prefer_cached(serial, detail)
+        if not partial:
+            self._warned.discard(f"detail:{serial}")
+        return kept, partial, unreachable
+
+    def _prefer_cached(
+        self, serial: str, detail: dict[str, Any]
+    ) -> tuple[dict[str, Any], bool, bool]:
+        """Ignore a sample older than the last one, or a timestamp a day ahead.
+
+        The return is the JSON to publish, whether this read was partial, and
+        whether live sensors should hide it. A future sample with no earlier
+        copy is hidden. An older sample is dropped in favour of the cache.
+        """
+        new_ts = parse_epoch(detail.get("dataTimestamp"))
+        now = datetime.now(UTC)
+        future = new_ts is not None and new_ts > now + timedelta(days=1)
+        cached = self._details.get(serial)
+        if cached is not None:
+            old_ts = parse_epoch(cached.get("dataTimestamp"))
+            if old_ts is not None and (new_ts is None or new_ts < old_ts or future):
+                return cached, True, False
+        if future:
+            return detail, True, True
         self._details[serial] = detail
-        return detail, False
+        return detail, False, False
+
+    def _warn_once(self, key: str, message: str, *args: object) -> None:
+        """Log a repeated cloud fault once at warning, then at debug."""
+        if key in self._warned:
+            _LOGGER.debug(message, *args)
+            return
+        self._warned.add(key)
+        _LOGGER.warning(message, *args)
 
     async def _optional(self, label: str, call: Any) -> tuple[Any, bool]:
         try:
-            return await call(), False
+            result = await call()
         except (SolisAuthError, SolisClockError):
             raise
         except SolisCloudError as err:
-            _LOGGER.warning("Solis %s failed: %s", label, err)
+            self._warn_once(label, "Solis %s failed: %s", label, err)
             return None, True
+        self._warned.discard(label)
+        return result, False
 
 
 def _alarms(rows: list[dict[str, Any]]) -> tuple[AlarmSnapshot, ...]:

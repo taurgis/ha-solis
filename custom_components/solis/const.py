@@ -33,4 +33,19 @@ ISSUE_AUTH = "invalid_auth"
 ISSUE_CLOCK = "clock_skew"
 ISSUE_NO_INVERTERS = "no_inverters"
 ISSUE_ABNORMAL = "abnormal_data"
+ISSUE_OUTAGE = "cloud_outage"
 ISSUE_LEGACY_CONTROL = "legacy_control"
+
+# Polls that fail this many times in a row, or a snapshot older than
+# STALE_AFTER, are a sustained outage rather than a blip.
+OUTAGE_POLLS = 3
+
+# Repairs opened by a poll. Unload deletes these. Legacy control is not one
+# of them: it records a migration choice and stays until the user dismisses it.
+POLL_REPAIRS = (
+    ISSUE_AUTH,
+    ISSUE_CLOCK,
+    ISSUE_NO_INVERTERS,
+    ISSUE_ABNORMAL,
+    ISSUE_OUTAGE,
+)

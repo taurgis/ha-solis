@@ -11,9 +11,21 @@ reading. A daily, monthly or yearly counter may fall only when that period
 rolls. Lifetime totals also ignore a jump of more than 100 000 kWh.
 
 Instantaneous power is 0 when the inverter is offline and the sample is
-fresh. It is unavailable when `dataTimestamp` is older than 15 minutes.
-Status then reads `stale`. A poll that fails after retries marks every entity
-for the entry unavailable until the next success.
+fresh. It is unavailable when `dataTimestamp` is older than 15 minutes, or
+when that inverter's detail call failed while other devices still updated.
+Status then reads `stale`.
+
+A short SolisCloud blip (fewer than three failed polls, and the last good
+snapshot is under 15 minutes old) keeps showing the last values. A longer
+outage hides live readings, leaves energy totals at the last good value, and
+opens a repair that clears itself when a poll succeeds. Energy totals never
+publish a decrease, a zero, a null, or a jump of more than 100 000 kWh inside
+a period, including after a restart that restores the last total.
+
+Home Assistant 2026.11 can derive energy statistics from a power sensor.
+AC power, grid power, consumption power and battery power already use
+`device_class: power` and `state_class: measurement`, so the energy dashboard
+can offer that without a second set of sensors here.
 
 ## Inverter
 
@@ -39,7 +51,8 @@ fields. Battery power is negative when discharging.
 
 | Sensor | Unit | State class | Notes |
 | --- | --- | --- | --- |
-| Battery power | W | measurement | |
+| Battery power | W | measurement | Negative when discharging |
+| Battery charging | | | Binary sensor, on when battery power is positive |
 | Battery | % | measurement | State of charge |
 | Battery state of health | % | measurement | Diagnostic, disabled by default |
 | Battery voltage / current | V, A | measurement | |

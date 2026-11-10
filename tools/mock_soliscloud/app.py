@@ -18,6 +18,7 @@ from aiohttp import web
 
 from .catalog import (
     KEY_ID,
+    NORTH_SERIAL,
     SECRET,
     alarms,
     collectors,
@@ -47,7 +48,29 @@ class MockState:
     energy_glitch: str | None = None
     skip_serials: set[str] = field(default_factory=set)
     decoy_day: bool = False
+    fail_serials: set[str] = field(default_factory=set)
+    timestamp_offset_s: float = 0.0
+    slow_seconds: float = 5.0
+    flap_count: int = 0
+    force_charge: bool = False
     calls: list[str] = field(default_factory=list)
+
+
+_FAULT_MODES = {
+    "ok": "ok",
+    "outage": "server_error",
+    "flap": "flap",
+    "garbage": "garbage",
+    "partial_json": "partial_json",
+    "html": "html",
+    "stale": "stale",
+    "slow": "slow",
+    "rate_limit": "rate_limit",
+    "unavailable": "unavailable",
+    "reset": "ok",
+    "spike": "ok",
+    "partial": "ok",
+}
 
 
 def create_app(state: MockState | None = None) -> web.Application:
@@ -76,13 +99,37 @@ async def _control(request: web.Request) -> web.Response:
         "pac_scale",
         "energy_glitch",
         "decoy_day",
+        "timestamp_offset_s",
+        "slow_seconds",
+        "force_charge",
     ):
         if key in payload:
             setattr(state, key, payload[key])
     if "skip_serials" in payload:
         skipped = payload["skip_serials"]
         state.skip_serials = set(skipped) if isinstance(skipped, list) else set()
-    return web.json_response({"mode": state.mode})
+    if "fail_serials" in payload:
+        failed = payload["fail_serials"]
+        state.fail_serials = set(failed) if isinstance(failed, list) else set()
+    if "fault" in payload:
+        _apply_fault(state, str(payload["fault"]))
+    return web.json_response({"mode": state.mode, "fault": payload.get("fault")})
+
+
+def _apply_fault(state: MockState, fault: str) -> None:
+    """Map a lab fault name onto the mock fields that produce it."""
+    state.mode = _FAULT_MODES.get(fault, state.mode)
+    if fault == "spike":
+        state.energy_glitch = "spike"
+    elif fault == "reset":
+        state.energy_glitch = "reset"
+    elif fault == "partial":
+        state.fail_serials.add(NORTH_SERIAL)
+    elif fault == "ok":
+        state.energy_glitch = None
+        state.fail_serials = set()
+        state.timestamp_offset_s = 0.0
+        state.fail_inverter_list = False
 
 
 async def _expected(request: web.Request) -> web.Response:
@@ -133,7 +180,9 @@ async def _handle(request: web.Request) -> web.Response:
     if state.mode == "timeout":
         await asyncio.sleep(30)
         return web.Response(text="slow")
-    forced = _forced(state, path)
+    if state.mode == "slow":
+        await asyncio.sleep(state.slow_seconds)
+    forced = _forced(state, path, body)
     if forced is not None:
         return forced
     headers = {key: request.headers[key] for key in request.headers}
@@ -156,20 +205,54 @@ async def _handle(request: web.Request) -> web.Response:
     return web.json_response(_dispatch(state, path, payload))
 
 
-def _forced(state: MockState, path: str) -> web.Response | None:
-    if state.mode == "auth_error":
-        return _envelope("I0012", "Incorrect account or password, please re-enter", status=403)
-    if state.mode == "clock":
-        return web.Response(status=408, text="clock")
-    if state.mode == "rate_limit":
-        return web.Response(status=429, text="slow down", headers={"Retry-After": "0"})
-    if state.mode == "server_error":
-        return web.Response(status=502, text="bad gateway")
-    if state.mode == "abnormal":
-        return _envelope("1", "数据异常 请联系管理员", data=None)
+def _forced(state: MockState, path: str, body: bytes) -> web.Response | None:
+    canned = _canned_mode(state)
+    if canned is not None:
+        return canned
+    if state.mode == "flap":
+        state.flap_count += 1
+        if state.flap_count % 2 == 1:
+            return web.Response(status=502, text="flap")
     if state.fail_inverter_list and path == "/v1/api/inverterList":
         return web.Response(status=502, text="inverter list down")
+    if state.fail_serials and path == "/v1/api/inverterDetail":
+        serial = _body_serial(body)
+        if serial in state.fail_serials:
+            return web.Response(status=502, text="inverter detail down")
     return None
+
+
+def _canned_mode(state: MockState) -> web.Response | None:
+    """Return a fixed response for modes that do not look at the request."""
+    html = "<html><body>bad gateway</body></html>"
+    modes = {
+        "auth_error": _envelope(
+            "I0012", "Incorrect account or password, please re-enter", status=403
+        ),
+        "clock": web.Response(status=408, text="clock"),
+        "rate_limit": web.Response(status=429, text="slow down", headers={"Retry-After": "0"}),
+        "server_error": web.Response(status=502, text="bad gateway"),
+        "unavailable": web.Response(status=503, text="unavailable", headers={"Retry-After": "0"}),
+        "html": web.Response(
+            status=403, text="<html><body>nginx</body></html>", content_type="text/html"
+        ),
+        "garbage": web.Response(status=200, text=html, content_type="text/html"),
+        "partial_json": web.Response(
+            status=200, text='{"code":"0","data":', content_type="application/json"
+        ),
+        "abnormal": _envelope("1", "数据异常 请联系管理员", data=None),
+    }
+    return modes.get(state.mode)
+
+
+def _body_serial(body: bytes) -> str:
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    return str(payload.get("sn") or "")
 
 
 def _dispatch(state: MockState, path: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -253,7 +336,13 @@ def _details(state: MockState, now: datetime) -> dict[str, dict[str, Any]]:
     for serial, detail in details.items():
         if serial in state.skip_serials:
             continue
-        detail["dataTimestamp"] = stale_ms if detail.pop("stale", False) else fresh_ms
+        if state.mode == "stale" or detail.pop("stale", False):
+            detail["dataTimestamp"] = stale_ms
+        elif state.timestamp_offset_s:
+            shifted = now + timedelta(seconds=state.timestamp_offset_s)
+            detail["dataTimestamp"] = int(shifted.timestamp() * 1000)
+        else:
+            detail["dataTimestamp"] = fresh_ms
         if detail.get("pac") is not None and state.pac_scale != 1:
             detail["pac"] = float(detail["pac"]) * state.pac_scale
         if state.energy_glitch == "null":
@@ -263,6 +352,15 @@ def _details(state: MockState, now: datetime) -> dict[str, dict[str, Any]]:
             for key in energy_keys:
                 if key in detail:
                     detail[key] = 0
+        elif state.energy_glitch == "reset":
+            for key in energy_keys:
+                if key in detail:
+                    detail[key] = 1
+        elif state.energy_glitch == "spike" and "eTotal" in detail:
+            detail["eTotal"] = 250000
+            detail["eTotalStr"] = "kWh"
+        if state.force_charge and detail.get("storageBatteryCurrent") is not None:
+            detail["storageBatteryCurrent"] = abs(float(detail["storageBatteryCurrent"]))
         kept[serial] = detail
     return kept
 

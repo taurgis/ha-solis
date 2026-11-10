@@ -17,6 +17,18 @@
   plant sensors are what the energy dashboard can use for those.
 - Control writes (`/v2/api/control`, `/v2/api/atRead`) are not implemented.
   Polling them has been reported to drop the logger's cloud session.
+- `device_class: energy_storage` is not used. SolisCloud reports battery
+  state of charge and plant capacity in kW, not stored energy in kWh.
+  Deriving kWh from state of charge would invent a number.
+- Plants stay in one config entry. Config subentries would split that entry
+  and put the existing entity ids at risk. The plant picker already selects
+  any number of plants under one API key.
+- No purpose-specific trigger or condition platform is registered. Battery
+  and energy device classes already supply Home Assistant's built-in triggers
+  where the core version has them.
+- The integration does not add its own derived energy sensors. From Home
+  Assistant 2026.11 the energy dashboard can derive those from the existing
+  power sensors.
 - The legacy Ginlong `/cpro/` portal API is not implemented.
 - S3-WIFI-ST sticks do not expose a local Modbus port. Local reads are a
   possible later transport, not part of this version. See
