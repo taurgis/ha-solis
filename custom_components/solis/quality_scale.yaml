@@ -11,14 +11,15 @@ rules:
       is held to one call every two seconds. CoordinatorEntity does not poll
       on its own.
   brands:
-    status: exempt
+    status: done
     comment: >-
-      This is a custom integration, so its images are not added under
-      core_integrations/ in home-assistant/brands. icon.png (256x256) and
-      icon@2x.png (512x512) ship in custom_components/solis/brand/ and Home
-      Assistant loads that folder locally. The artwork is original and is
-      not the Solis logo. The brands rule has no core exemption; marking
-      this done would require a pull request to home-assistant/brands.
+      icon.png and logo.png are the files already published at
+      home-assistant/brands custom_integrations/solis, copied here unchanged.
+      icon@2x.png (512x512) and logo@2x.png are exact 2x scales, because
+      that repository has no high-DPI files. Home Assistant 2026.3+ loads
+      custom_components/solis/brand/ locally. Older cores use the brands CDN,
+      which serves the same icon and logo. core_integrations/solis does not
+      exist; this domain is a custom integration.
   common-modules:
     status: done
     comment: >-

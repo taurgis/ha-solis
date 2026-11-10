@@ -347,6 +347,29 @@ def _finish_reauth(base: str, token: str) -> None:
         raise CheckError(f"reauth did not finish: {json.dumps(current)[:1500]}")
 
 
+def _version_at_least(version: str, major: int, minor: int) -> bool:
+    numbers = [int(part) for part in version.split(".")[:2]]
+    return (numbers[0], numbers[1]) >= (major, minor)
+
+
+def _assert_local_brand(base: str, token: str) -> None:
+    """Home Assistant 2026.3+ serves custom_components/solis/brand locally."""
+    icon = (ROOT / "custom_components" / "solis" / "brand" / "icon.png").read_bytes()
+    request = urllib.request.Request(
+        f"{base}/api/brands/integration/solis/icon.png",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        body = response.read()
+        status = response.status
+    if status != 200 or body != icon:
+        raise CheckError(
+            f"local brand icon was not served: status {status}, "
+            f"{len(body)} bytes, expected {len(icon)}"
+        )
+    _log("Home Assistant served the local Solis brand icon")
+
+
 def _issues(base: str, token: str) -> list[dict[str, Any]]:
     import websockets
 
@@ -511,6 +534,8 @@ def run_check(version: str) -> None:  # noqa: PLR0915
         )
         _reconfigure(base, token, entry_id)
         _log("Reconfigure accepted the same plants and a plant timezone")
+        if _version_at_least(version, 2026, 3):
+            _assert_local_brand(base, token)
         if total["attributes"].get("state_class") != "total_increasing":
             raise CheckError(f"energy total is not total_increasing: {total['attributes']}")
         if "last_reset" in total["attributes"]:

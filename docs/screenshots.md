@@ -1,6 +1,10 @@
 # Lab screenshots
 
-Home Assistant 2026.11.1 against the mock SolisCloud API.
+Home Assistant 2026.11.1 against the mock SolisCloud API. The integration
+list uses the Solis icon from `custom_components/solis/brand/`, which is the
+image already published in home-assistant/brands.
+
+![Integrations](screenshots/integrations.png)
 
 ![Devices](screenshots/devices.png)
 
