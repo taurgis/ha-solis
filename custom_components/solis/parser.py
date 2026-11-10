@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta, tzinfo
-import math
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -227,23 +226,25 @@ def _phases(data: dict[str, Any]) -> tuple[Phase, ...]:
 
 
 def _battery_power(data: dict[str, Any], current: float | None) -> float | None:
-    power = to_watts(
-        first(data, "batteryPower"),
-        first(data, "batteryPowerStr"),
-        first(data, "batteryPowerPec"),
-        default="kw",
-    )
+    """Return signed battery watts. Positive is charging, negative is discharging.
+
+    ``batteryPowerZheng`` and ``batteryPowerFu`` are the charge and discharge
+    components. A real SolisCloud day sample has ``batteryPower`` equal to
+    Zheng minus Fu. Newer loggers also publish an unsigned ``batteryPower``;
+    ``storageBatteryCurrent`` is then positive while charging and negative
+    while discharging. An already-negative ``batteryPower`` is left as-is.
+    """
+    unit = first(data, "batteryPowerStr")
+    pec = first(data, "batteryPowerPec")
+    power = to_watts(first(data, "batteryPower"), unit, pec, default="kw")
+    charging = to_watts(first(data, "batteryPowerZheng"), unit, default="kw")
+    discharging = to_watts(first(data, "batteryPowerFu"), unit, default="kw")
+    if (charging is not None and charging > 0) or (discharging is not None and discharging > 0):
+        return (charging or 0.0) - (discharging or 0.0)
     if power is None:
         return None
-    if current is not None and current != 0:
-        return math.copysign(abs(power), current)
-    discharge = to_watts(
-        first(data, "batteryPowerFu"),
-        first(data, "batteryPowerStr"),
-        default="kw",
-    )
-    if discharge is not None and discharge > 0 and power == 0:
-        return -abs(discharge)
+    if power > 0 and current is not None and current < 0:
+        return -power
     return power
 
 

@@ -359,8 +359,15 @@ def _details(state: MockState, now: datetime) -> dict[str, dict[str, Any]]:
         elif state.energy_glitch == "spike" and "eTotal" in detail:
             detail["eTotal"] = 250000
             detail["eTotalStr"] = "kWh"
-        if state.force_charge and detail.get("storageBatteryCurrent") is not None:
-            detail["storageBatteryCurrent"] = abs(float(detail["storageBatteryCurrent"]))
+        if state.force_charge:
+            if detail.get("storageBatteryCurrent") is not None:
+                detail["storageBatteryCurrent"] = abs(float(detail["storageBatteryCurrent"]))
+            magnitude = detail.get("batteryPowerFu")
+            if magnitude in (None, 0):
+                magnitude = detail.get("batteryPower")
+            if magnitude not in (None, 0):
+                detail["batteryPowerZheng"] = abs(float(magnitude))
+                detail["batteryPowerFu"] = 0
         kept[serial] = detail
     return kept
 

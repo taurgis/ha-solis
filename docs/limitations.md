@@ -17,9 +17,12 @@
   plant sensors are what the energy dashboard can use for those.
 - Control writes (`/v2/api/control`, `/v2/api/atRead`) are not implemented.
   Polling them has been reported to drop the logger's cloud session.
-- `device_class: energy_storage` is not used. SolisCloud reports battery
-  state of charge and plant capacity in kW, not stored energy in kWh.
-  Deriving kWh from state of charge would invent a number.
+- `device_class: energy_storage` is not used. The 2024 developer portal lists
+  `batteryCapacity` and `inverterBatteryCapacity` as "battery capacity" with
+  no unit. The V2.0.2 samples do not include those fields or a companion
+  unit string. `batteryCapacitySoc` is a percentage. Plant `capacity` is
+  nameplate kW. SoC times an assumed kWh figure would invent stored energy.
+  See the research note.
 - Plants stay in one config entry. Config subentries would split that entry
   and put the existing entity ids at risk. The plant picker already selects
   any number of plants under one API key.

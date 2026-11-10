@@ -47,11 +47,14 @@ can offer that without a second set of sensors here.
 ## Battery
 
 Added when the inverter reports a battery, and kept if a later poll omits the
-fields. Battery power is negative when discharging.
+fields. Battery power is positive when charging and negative when discharging.
+When the cloud sends `batteryPowerZheng` and `batteryPowerFu`, the sensor is
+Zheng minus Fu. Otherwise an unsigned `batteryPower` is negated while
+`storageBatteryCurrent` is negative. A value that is already negative is kept.
 
 | Sensor | Unit | State class | Notes |
 | --- | --- | --- | --- |
-| Battery power | W | measurement | Negative when discharging |
+| Battery power | W | measurement | Positive charging, negative discharging |
 | Battery charging | | | Binary sensor, on when battery power is positive |
 | Battery | % | measurement | State of charge |
 | Battery state of health | % | measurement | Diagnostic, disabled by default |
