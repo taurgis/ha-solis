@@ -9,7 +9,13 @@ secret. It does not send control writes.
 Supported devices are any Solis inverter that appears on a SolisCloud
 account: grid and hybrid, single phase and three phase, with or without a
 battery, plus the plant, the data logger and an export power manager when
-the account has them. Control writes are not supported.
+the account has them. Control writes and the legacy Ginlong portal API are
+not supported.
+
+Once the plants are in Home Assistant you can put lifetime production and
+battery energy on the energy dashboard, automate on the alarm binary sensor,
+and tell a fresh offline reading (`0`) from a failed poll (`unavailable`).
+See [Use cases](use-cases.md).
 
 - [Installation](installation.md)
 - [Configuration](configuration.md)

@@ -14,6 +14,24 @@ Reads use the SolisCloud API key and secret. Inverter control writes are not
 sent. The cloud publishes samples about every five minutes, and the client
 stays under the platform rate limit.
 
+## Supported devices
+
+Any inverter on a SolisCloud account: grid and hybrid, single phase and three
+phase, with or without a battery. The plant, the data logger, and an export
+power manager are devices when the account has them. The legacy Ginlong
+portal API is not supported.
+
+## Use cases
+
+- Energy dashboard solar production from inverter **Energy total**, and
+  battery charge and discharge from the hybrid lifetime totals.
+- A notification when the alarm binary sensor turns on.
+- Automations that run only while the inverter is online and producing.
+  `0` is a fresh offline sample. `unavailable` is a stale sample or a failed
+  poll.
+
+See [docs/use-cases.md](docs/use-cases.md) and [docs/examples.md](docs/examples.md).
+
 ## Install
 
 Requires Home Assistant 2025.10.0 or newer.

@@ -17,6 +17,7 @@ export default defineConfig({
           { text: "Configuration", link: "/configuration" },
           { text: "Entities", link: "/entities" },
           { text: "Data updates", link: "/data-update" },
+          { text: "Use cases", link: "/use-cases" },
           { text: "Examples", link: "/examples" },
           { text: "Limitations", link: "/limitations" },
           { text: "Troubleshooting", link: "/troubleshooting" },

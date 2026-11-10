@@ -37,7 +37,15 @@ jobs:
         run: python -m mypy --strict custom_components/solis
 
       - name: Run tests
-        run: pytest tests/ -v --tb=short --cov=custom_components/solis --cov-report=term-missing --cov-fail-under=95
+        run: >-
+          pytest tests/ -v --tb=short
+          --cov=custom_components/solis
+          --cov-report=term-missing
+          --cov-report=json
+          --cov-fail-under=95
+
+      - name: Per-module coverage
+        run: python scripts/check_module_coverage.py
 
       - name: Config flow coverage
         run: >-

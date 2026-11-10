@@ -34,6 +34,11 @@ _LOGGER = logging.getLogger(__name__)
 _CLEAR_ON_SUCCESS = (ISSUE_AUTH, ISSUE_CLOCK, ISSUE_ABNORMAL, ISSUE_NO_INVERTERS)
 
 
+def _failed(key: str) -> UpdateFailed:
+    """Return a translated update failure. The coordinator logs it once."""
+    return UpdateFailed(translation_domain=DOMAIN, translation_key=key)
+
+
 class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
     """Poll a Solis transport and surface auth and clock failures as repairs."""
 
@@ -57,10 +62,13 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
         self.transport = transport
         self.auth_failed = False
         self._open_issues: set[str] = set()
-        self._failure_signature: str | None = None
 
     async def _async_update_data(self) -> SolisSnapshot:
-        """Fetch a snapshot. Failures make entities unavailable."""
+        """Fetch a snapshot. Failures make entities unavailable.
+
+        The coordinator logs the first failure and the recovery. This method
+        does not log as well, or every poll would repeat the same message.
+        """
         try:
             snapshot = await self.transport.async_read()
         except SolisAuthError as err:
@@ -69,42 +77,23 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
             self._open(ISSUE_AUTH, ir.IssueSeverity.ERROR, fixable=True)
             if not already:
                 self.config_entry.async_start_reauth(self.hass)
-            self._warn_once("auth", f"Solis Cloud rejected the API credentials: {err}")
-            raise UpdateFailed(str(err)) from err
+            raise _failed("update_auth") from err
         except SolisClockError as err:
             self._open(ISSUE_CLOCK, ir.IssueSeverity.ERROR, fixable=False)
-            self._warn_once("clock", f"Solis Cloud rejected the clock: {err}")
-            raise UpdateFailed(str(err)) from err
+            raise _failed("update_clock") from err
         except SolisDataError as err:
             self._open(ISSUE_ABNORMAL, ir.IssueSeverity.WARNING, fixable=False)
-            self._warn_once("abnormal", f"Solis Cloud reported abnormal data: {err}")
-            raise UpdateFailed(str(err)) from err
+            raise _failed("update_abnormal") from err
         except SolisTimeoutError as err:
-            self._warn_once(
-                "timeout",
-                f"Solis Cloud timed out; entities will be unavailable: {err}",
-            )
-            raise UpdateFailed(str(err)) from err
+            raise _failed("update_timeout") from err
         except SolisCloudError as err:
             if "no inverters" in str(err) or "no stations" in str(err):
                 self._open(ISSUE_NO_INVERTERS, ir.IssueSeverity.WARNING, fixable=False)
-            self._warn_once(
-                "cloud",
-                f"Solis Cloud update failed; entities will be unavailable: {err}",
-            )
-            raise UpdateFailed(str(err)) from err
+                raise _failed("update_no_inverters") from err
+            raise _failed("update_failed") from err
         self.auth_failed = False
-        self._failure_signature = None
         self._clear_recovered()
         return snapshot
-
-    def _warn_once(self, signature: str, message: str) -> None:
-        """Log the first poll of a failure at warning and repeats at debug."""
-        if self._failure_signature == signature:
-            _LOGGER.debug(message)
-            return
-        self._failure_signature = signature
-        _LOGGER.warning(message)
 
     def _issue_id(self, key: str) -> str:
         return f"{key}_{self.config_entry.entry_id}"
