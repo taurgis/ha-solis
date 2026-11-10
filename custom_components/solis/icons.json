@@ -1,7 +1,15 @@
 {
   "entity": {
     "sensor": {
-      "status": { "default": "mdi:solar-power" },
+      "status": {
+        "default": "mdi:solar-power",
+        "state": {
+          "offline": "mdi:power-plug-off",
+          "alarm": "mdi:alert",
+          "stale": "mdi:cloud-off-outline",
+          "unknown": "mdi:help-circle-outline"
+        }
+      },
       "ac_power": { "default": "mdi:solar-power" },
       "frequency": { "default": "mdi:sine-wave" },
       "temperature": { "default": "mdi:thermometer" },

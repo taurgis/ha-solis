@@ -8,6 +8,7 @@ from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceEntry
 
+from . import SolisConfigEntry
 from .const import CONF_KEY_ID, CONF_KEY_SECRET
 from .coordinator import SolisCoordinator
 
@@ -29,7 +30,7 @@ TO_REDACT = {
 
 async def async_get_config_entry_diagnostics(
     hass: HomeAssistant,
-    entry: Any,
+    entry: SolisConfigEntry,
 ) -> dict[str, Any]:
     """Return redacted config and the latest snapshot."""
     coordinator: SolisCoordinator = entry.runtime_data
@@ -45,7 +46,7 @@ async def async_get_config_entry_diagnostics(
 
 async def async_get_device_diagnostics(
     hass: HomeAssistant,
-    entry: Any,
+    entry: SolisConfigEntry,
     device: DeviceEntry,
 ) -> dict[str, Any]:
     """Return the snapshot rows that belong to one device."""

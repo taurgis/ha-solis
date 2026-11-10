@@ -13,7 +13,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
-from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers import device_registry as dr, issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import SolisCloudClient
@@ -69,7 +69,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolisConfigEntry) -> boo
         await coordinator.async_config_entry_first_refresh()
     except ConfigEntryNotReady as err:
         if coordinator.auth_failed:
-            raise ConfigEntryAuthFailed("Solis Cloud rejected the API key") from err
+            raise ConfigEntryAuthFailed(
+                translation_domain=DOMAIN,
+                translation_key="update_auth",
+            ) from err
         raise
     async_migrate_devices(
         hass,
@@ -110,6 +113,31 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             data={"entry_id": entry.entry_id},
         )
     return True
+
+
+def _known_device_keys(entry: SolisConfigEntry) -> set[str]:
+    """Return the device identifiers present in the latest snapshot."""
+    data = entry.runtime_data.data
+    if data is None:
+        return set()
+    present = {f"inverter:{inverter.serial}" for inverter in data.inverters}
+    present.update(f"station:{station.station_id}" for station in data.stations)
+    present.update(f"collector:{collector.serial}" for collector in data.collectors)
+    present.update(f"epm:{epm.serial}" for epm in data.epms)
+    return present
+
+
+async def async_remove_config_entry_device(
+    hass: HomeAssistant,
+    entry: SolisConfigEntry,
+    device_entry: dr.DeviceEntry,
+) -> bool:
+    """Let the user delete a device the latest poll no longer contains."""
+    del hass
+    keys = {item[1] for item in device_entry.identifiers if item[0] == DOMAIN}
+    if not keys:
+        return False
+    return keys.isdisjoint(_known_device_keys(entry))
 
 
 async def _reload(hass: HomeAssistant, entry: ConfigEntry) -> None:

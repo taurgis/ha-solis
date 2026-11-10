@@ -31,6 +31,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import StateType
 from homeassistant.util import dt as dt_util
 
+from . import SolisConfigEntry
 from .const import CONF_TIME_ZONE, DOMAIN, MANUFACTURER
 from .coordinator import SolisCoordinator
 from .energy import consider_energy, sanitize_kwh
@@ -790,7 +791,7 @@ _BATTERY_ATTR = {
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: Any,
+    entry: SolisConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Create sensors and keep them aligned with later polls."""
@@ -832,7 +833,7 @@ async def async_setup_entry(
 
 def _remove_missing(
     hass: HomeAssistant,
-    entry: Any,
+    entry: SolisConfigEntry,
     data: SolisSnapshot,
     added: dict[str, SolisSensor],
     wanted_ids: set[str],

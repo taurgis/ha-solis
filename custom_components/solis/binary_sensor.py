@@ -4,7 +4,7 @@ from __future__ import annotations
 
 try:
     from homeassistant.components.binary_sensor.const import BinarySensorDeviceClass
-except ImportError:  # Home Assistant 2025.10, before binary_sensor.const existed
+except ImportError:  # pragma: no cover  # Home Assistant 2025.10
     from homeassistant.components.binary_sensor import (  # type: ignore[attr-defined]
         BinarySensorDeviceClass,
     )
