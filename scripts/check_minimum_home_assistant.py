@@ -5,7 +5,8 @@ The default image is the ``homeassistant`` field in ``hacs.json``. Pass a
 version argument to boot another tag, such as the current stable release.
 
 The check fails unless the config entry loads, AC power matches the mock,
-a 502 makes that sensor unavailable, and recovery restores the value.
+a 502 makes that sensor unavailable, recovery restores the value, a null or
+zero lifetime total does not dip, and an auth failure opens a repair.
 """
 
 from __future__ import annotations
@@ -302,8 +303,8 @@ def _issues(base: str, token: str) -> list[dict[str, Any]]:
     return asyncio.run(_call())
 
 
-def _mock_control(mode: str) -> None:
-    status, body = _http("POST", f"{API_URL}/__control", {"mode": mode}, timeout=10)
+def _mock_control(payload: dict[str, Any]) -> None:
+    status, body = _http("POST", f"{API_URL}/__control", payload, timeout=10)
     if status != 200:
         raise CheckError(f"mock control failed: {status} {body}")
 
@@ -372,7 +373,7 @@ def _start_mock() -> subprocess.Popen[str]:
     while time.monotonic() < deadline:
         try:
             status, body = _http("GET", f"{API_URL}/health", timeout=2)
-        except urllib.error.URLError, TimeoutError, OSError:
+        except (urllib.error.URLError, TimeoutError, OSError):
             if process.poll() is not None:
                 output = process.stdout.read() if process.stdout else ""
                 raise CheckError(f"mock exited: {output}") from None
@@ -438,7 +439,12 @@ def run_check(version: str) -> None:
             f"{battery['entity_id']}={battery['state']} "
             f"{offline['entity_id']}={offline['state']}"
         )
-        _mock_control("server_error")
+        if total["attributes"].get("state_class") != "total_increasing":
+            raise CheckError(f"energy total is not total_increasing: {total['attributes']}")
+        if "last_reset" in total["attributes"]:
+            raise CheckError(f"energy total still publishes last_reset: {total['attributes']}")
+        held = _number(total)
+        _mock_control({"mode": "server_error"})
         _refresh(base, token, str(power["entity_id"]))
         _wait_state(
             base,
@@ -448,7 +454,7 @@ def run_check(version: str) -> None:
             timeout=150,
         )
         _log("Power became unavailable after HTTP 502")
-        _mock_control("ok")
+        _mock_control({"mode": "ok"})
         _refresh(base, token, str(power["entity_id"]))
         _wait_state(
             base,
@@ -457,7 +463,25 @@ def run_check(version: str) -> None:
             lambda item: _number(item) == north["ac_power_w"],
         )
         _log("Power recovered to the mock value")
-        _mock_control("auth_error")
+        _mock_control({"energy_glitch": "null"})
+        _refresh(base, token, str(total["entity_id"]))
+        _wait_state(
+            base,
+            token,
+            str(total["entity_id"]),
+            lambda item: _number(item) == held,
+        )
+        _mock_control({"energy_glitch": "zero"})
+        _refresh(base, token, str(total["entity_id"]))
+        _wait_state(
+            base,
+            token,
+            str(total["entity_id"]),
+            lambda item: _number(item) == held,
+        )
+        _log(f"Lifetime energy stayed at {held} through null and zero samples")
+        _mock_control({"mode": "ok", "energy_glitch": None})
+        _mock_control({"mode": "auth_error"})
         _refresh(base, token, str(power["entity_id"]))
         _wait_state(
             base,

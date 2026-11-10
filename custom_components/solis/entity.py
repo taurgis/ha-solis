@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from typing import Any, cast
+
+from homeassistant.const import MAJOR_VERSION, MINOR_VERSION
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import EntityDescription
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -58,8 +61,7 @@ def inverter_device(
         serial_number=inverter.serial,
         sw_version=inverter.hmi_version,
     )
-    if via_device_id:
-        info["via_device_id"] = via_device_id
+    _attach_via(info, inverter.station_id, via_device_id)
     return info
 
 
@@ -72,8 +74,7 @@ def collector_device(collector: CollectorSnapshot, via_device_id: str | None = N
         name=f"Logger {collector.serial}",
         serial_number=collector.serial,
     )
-    if via_device_id:
-        info["via_device_id"] = via_device_id
+    _attach_via(info, collector.station_id, via_device_id)
     return info
 
 
@@ -86,9 +87,22 @@ def epm_device(epm: EpmSnapshot, via_device_id: str | None = None) -> DeviceInfo
         name=f"EPM {epm.serial}",
         serial_number=epm.serial,
     )
-    if via_device_id:
-        info["via_device_id"] = via_device_id
+    _attach_via(info, epm.station_id, via_device_id)
     return info
+
+
+def _attach_via(info: DeviceInfo, station_id: str | None, device_id: str | None) -> None:
+    """Link a subdevice to its plant on both 2025.10 and current Home Assistant.
+
+    ``via_device_id`` is what ``async_get_or_create`` accepts from 2026.8.
+    2025.10 still takes ``via_device`` as a ``(domain, identifier)`` tuple.
+    """
+    if (MAJOR_VERSION, MINOR_VERSION) >= (2026, 8):
+        if device_id:
+            info["via_device_id"] = device_id
+        return
+    if station_id:
+        cast("dict[str, Any]", info)["via_device"] = (DOMAIN, f"station:{station_id}")
 
 
 def _product_model(value: str | None) -> str:

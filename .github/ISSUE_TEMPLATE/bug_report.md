@@ -11,6 +11,9 @@ labels: bug
 
 ## Integration version and Home Assistant version
 
+Home Assistant timezone, and the plant timezone option if you set one.
+If an energy sensor dipped to 0, say which sensor and the local time.
+
 ## Inverter and stick
 
 Model, single or three phase, hybrid or not, and the data logger

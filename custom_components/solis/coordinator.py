@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import timedelta
 import logging
-from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -58,6 +57,7 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
         self.transport = transport
         self.auth_failed = False
         self._open_issues: set[str] = set()
+        self._failure_signature: str | None = None
 
     async def _async_update_data(self) -> SolisSnapshot:
         """Fetch a snapshot. Failures make entities unavailable."""
@@ -69,27 +69,42 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
             self._open(ISSUE_AUTH, ir.IssueSeverity.ERROR, fixable=True)
             if not already:
                 self.config_entry.async_start_reauth(self.hass)
-            _LOGGER.warning("Solis Cloud rejected the API credentials: %s", err)
+            self._warn_once("auth", f"Solis Cloud rejected the API credentials: {err}")
             raise UpdateFailed(str(err)) from err
         except SolisClockError as err:
             self._open(ISSUE_CLOCK, ir.IssueSeverity.ERROR, fixable=False)
-            _LOGGER.warning("Solis Cloud rejected the clock: %s", err)
+            self._warn_once("clock", f"Solis Cloud rejected the clock: {err}")
             raise UpdateFailed(str(err)) from err
         except SolisDataError as err:
             self._open(ISSUE_ABNORMAL, ir.IssueSeverity.WARNING, fixable=False)
-            _LOGGER.warning("Solis Cloud reported abnormal data: %s", err)
+            self._warn_once("abnormal", f"Solis Cloud reported abnormal data: {err}")
             raise UpdateFailed(str(err)) from err
         except SolisTimeoutError as err:
-            _LOGGER.warning("Solis Cloud timed out; entities will be unavailable: %s", err)
+            self._warn_once(
+                "timeout",
+                f"Solis Cloud timed out; entities will be unavailable: {err}",
+            )
             raise UpdateFailed(str(err)) from err
         except SolisCloudError as err:
             if "no inverters" in str(err) or "no stations" in str(err):
                 self._open(ISSUE_NO_INVERTERS, ir.IssueSeverity.WARNING, fixable=False)
-            _LOGGER.warning("Solis Cloud update failed; entities will be unavailable: %s", err)
+            self._warn_once(
+                "cloud",
+                f"Solis Cloud update failed; entities will be unavailable: {err}",
+            )
             raise UpdateFailed(str(err)) from err
         self.auth_failed = False
+        self._failure_signature = None
         self._clear_recovered()
         return snapshot
+
+    def _warn_once(self, signature: str, message: str) -> None:
+        """Log the first poll of a failure at warning and repeats at debug."""
+        if self._failure_signature == signature:
+            _LOGGER.debug(message)
+            return
+        self._failure_signature = signature
+        _LOGGER.warning(message)
 
     def _issue_id(self, key: str) -> str:
         return f"{key}_{self.config_entry.entry_id}"
@@ -113,9 +128,3 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
             if issue_id in self._open_issues:
                 ir.async_delete_issue(self.hass, DOMAIN, issue_id)
                 self._open_issues.discard(issue_id)
-
-
-def runtime_options(entry: ConfigEntry) -> dict[str, Any]:
-    """Return options with defaults filled in."""
-    scan = int(entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL))
-    return {"scan_interval": scan}

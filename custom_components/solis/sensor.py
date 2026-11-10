@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
+import logging
 from typing import Any
 
 from homeassistant.components.sensor import (
+    RestoreSensor,
     SensorDeviceClass,
     SensorEntity,
     SensorEntityDescription,
@@ -29,12 +31,15 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import StateType
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN
+from .const import CONF_TIME_ZONE, DOMAIN, MANUFACTURER
 from .coordinator import SolisCoordinator
+from .energy import consider_energy, sanitize_kwh
 from .entity import SolisEntity, collector_device, epm_device, inverter_device, station_device
-from .migration import async_migrate_entity_ids, legacy_name_from_entry
+from .migration import async_migrate_devices, async_migrate_entity_ids, legacy_name_from_entry
 from .models import InverterSnapshot, SolisSnapshot
-from .parser import plant_period_start
+from .parser import plant_period_start, resolve_zone
+
+_LOGGER = logging.getLogger(__name__)
 
 PARALLEL_UPDATES = 0
 
@@ -70,7 +75,9 @@ def _measurement(
         period=period,
         device_class=device_class,
         native_unit_of_measurement=unit,
-        state_class=None if options else (SensorStateClass.TOTAL if period else state_class),
+        state_class=(
+            None if options else SensorStateClass.TOTAL_INCREASING if period else state_class
+        ),
         entity_category=category,
         entity_registry_enabled_default=enabled_default,
         suggested_display_precision=precision,
@@ -150,6 +157,7 @@ _INVERTER: tuple[SolisSensorDescription, ...] = (
         unit=None,
         state_class=None,
         category=EntityCategory.DIAGNOSTIC,
+        enabled_default=False,
     ),
     _measurement(
         "grid_power",
@@ -191,6 +199,7 @@ _BATTERY: tuple[SolisSensorDescription, ...] = (
         device_class=SensorDeviceClass.BATTERY,
         unit=PERCENTAGE,
         category=EntityCategory.DIAGNOSTIC,
+        enabled_default=False,
         precision=0,
     ),
     _measurement(
@@ -390,7 +399,7 @@ def _inverter_value(inverter: InverterSnapshot, key: str, now: datetime) -> Stat
     return values.get(key)
 
 
-class SolisSensor(SolisEntity, SensorEntity):
+class SolisSensor(SolisEntity, RestoreSensor, SensorEntity):
     """One Solis sensor."""
 
     entity_description: SolisSensorDescription
@@ -411,8 +420,33 @@ class SolisSensor(SolisEntity, SensorEntity):
         self._serial = serial
         self._station_id = station_id
         self._index = index
+        self._energy_last: float | None = None
+        self._period_key: str | None = None
         if index is not None:
             self._attr_translation_placeholders = {"index": str(index)}
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the last good energy total so a restart cannot open a dip."""
+        await super().async_added_to_hass()
+        if not self._tracks_energy():
+            return
+        restored = await self.async_get_last_sensor_data()
+        if restored is None:
+            return
+        value = sanitize_kwh(
+            restored.native_value if isinstance(restored.native_value, (int, float)) else None
+        )
+        if value is None:
+            return
+        if restored.native_unit_of_measurement != self.native_unit_of_measurement:
+            return
+        if self.entity_description.period:
+            previous = await self.async_get_last_state()
+            start = self._period_start(dt_util.utcnow())
+            if previous is None or previous.last_updated < start:
+                return
+            self._period_key = start.isoformat()
+        self._energy_last = value
 
     @property
     def available(self) -> bool:
@@ -428,8 +462,14 @@ class SolisSensor(SolisEntity, SensorEntity):
 
     @property
     def native_value(self) -> StateType | datetime:
-        """Return the current reading."""
+        """Return the current reading, holding energy across nulls and dips."""
         now = dt_util.utcnow()
+        raw = self._raw_value(now)
+        if not self._tracks_energy():
+            return raw
+        return self._guard_energy(raw, now)
+
+    def _raw_value(self, now: datetime) -> StateType | datetime:
         target = self._target()
         key = self.entity_description.key
         if isinstance(target, InverterSnapshot):
@@ -442,13 +482,49 @@ class SolisSensor(SolisEntity, SensorEntity):
             return None
         return getattr(target, _STATION_ATTR.get(key, key), None)
 
-    @property
-    def last_reset(self) -> datetime | None:
-        """Return the plant-local start of a resetting energy counter."""
+    def _tracks_energy(self) -> bool:
+        description = self.entity_description
+        return (
+            description.device_class is SensorDeviceClass.ENERGY
+            and description.state_class is SensorStateClass.TOTAL_INCREASING
+        )
+
+    def _guard_energy(self, raw: StateType | datetime, now: datetime) -> float | None:
+        value = sanitize_kwh(raw if isinstance(raw, (int, float)) else None)
         period = self.entity_description.period
-        if period is None:
-            return None
-        return plant_period_start(self._offset(), dt_util.utcnow(), period)
+        period_key = None if period is None else self._period_start(now).isoformat()
+        changed = bool(self._period_key) and period_key != self._period_key
+        published = consider_energy(
+            self._energy_last,
+            value,
+            monotonic=period is None,
+            period_changed=changed,
+        )
+        if isinstance(value, float) and published != value:
+            _LOGGER.debug(
+                "Holding %s at %s instead of %s",
+                self.entity_description.key,
+                published,
+                value,
+            )
+        self._period_key = period_key
+        if changed or published is not None:
+            self._energy_last = published
+        return published
+
+    def _period_start(self, now: datetime) -> datetime:
+        zone = resolve_zone(
+            self._offset(),
+            str(self.coordinator.config_entry.options.get(CONF_TIME_ZONE, "")),
+            self.coordinator.hass.config.time_zone,
+            now,
+        )
+        return plant_period_start(
+            self._offset(),
+            now,
+            self.entity_description.period or "day",
+            zone,
+        )
 
     def _target(self) -> Any:
         data = self.coordinator.data
@@ -529,7 +605,7 @@ def _parent_devices(hass: HomeAssistant, entry_id: str, data: SolisSnapshot) -> 
         device = registry.async_get_or_create(
             config_entry_id=entry_id,
             identifiers={(DOMAIN, f"station:{station.station_id}")},
-            manufacturer="Solis",
+            manufacturer=MANUFACTURER,
             name=station.name,
             model="SolisCloud plant",
         )
@@ -537,7 +613,34 @@ def _parent_devices(hass: HomeAssistant, entry_id: str, data: SolisSnapshot) -> 
     return parents
 
 
-def _entities(coordinator: SolisCoordinator, parents: dict[str, str]) -> list[SolisSensor]:
+@dataclass
+class _Seen:
+    """Sensor keys that have appeared, so one null poll does not delete them."""
+
+    battery_keys: dict[str, set[str]] = field(default_factory=dict)
+    phases: dict[str, set[int]] = field(default_factory=dict)
+    strings: dict[str, set[int]] = field(default_factory=dict)
+
+    def retain(self, bucket: dict[str, set[int]], serial: str, current: set[int]) -> set[int]:
+        """Remember indexes and return every index still worth an entity."""
+        known = bucket.setdefault(serial, set())
+        known.update(current)
+        return set(known)
+
+    def drop_absent(self, serials: set[str]) -> None:
+        """Forget devices that the cloud no longer lists."""
+        self.battery_keys = {
+            key: value for key, value in self.battery_keys.items() if key in serials
+        }
+        self.phases = {key: value for key, value in self.phases.items() if key in serials}
+        self.strings = {key: value for key, value in self.strings.items() if key in serials}
+
+
+def _entities(
+    coordinator: SolisCoordinator,
+    parents: dict[str, str],
+    seen: _Seen,
+) -> list[SolisSensor]:
     data: SolisSnapshot = coordinator.data
     entities: list[SolisSensor] = []
     names = {station.station_id: station.name for station in data.stations}
@@ -559,7 +662,7 @@ def _entities(coordinator: SolisCoordinator, parents: dict[str, str]) -> list[So
             names.get(inverter.station_id),
             parents.get(inverter.station_id),
         )
-        entities.extend(_inverter_entities(coordinator, inverter, device))
+        entities.extend(_inverter_entities(coordinator, inverter, device, seen))
     for collector in data.collectors:
         device = collector_device(collector, parents.get(collector.station_id or ""))
         entities.append(
@@ -572,6 +675,7 @@ def _entities(coordinator: SolisCoordinator, parents: dict[str, str]) -> list[So
                     unit="dBm",
                     state_class=SensorStateClass.MEASUREMENT,
                     category=EntityCategory.DIAGNOSTIC,
+                    enabled_default=False,
                 ),
                 f"{collector.serial}_rssi",
                 device,
@@ -603,6 +707,7 @@ def _inverter_entities(
     coordinator: SolisCoordinator,
     inverter: InverterSnapshot,
     device: DeviceInfo,
+    seen: _Seen,
 ) -> list[SolisSensor]:
     rows = [
         SolisSensor(
@@ -614,41 +719,55 @@ def _inverter_entities(
         )
         for description in _INVERTER
     ]
-    if inverter.has_battery:
-        rows.extend(
-            SolisSensor(
-                coordinator,
-                description,
-                f"{inverter.serial}_{description.key}",
-                device,
-                serial=inverter.serial,
-            )
-            for description in _BATTERY
-            if getattr(inverter, _BATTERY_ATTR[description.key]) is not None
-            or description.key == "battery_power"
-        )
-    for phase in inverter.phases:
-        for description in _PHASE.values():
+    if inverter.has_battery or inverter.serial in seen.battery_keys:
+        known = seen.battery_keys.setdefault(inverter.serial, set())
+        for description in _BATTERY:
+            present = getattr(inverter, _BATTERY_ATTR[description.key]) is not None
+            if present or description.key == "battery_power":
+                known.add(description.key)
+            if description.key not in known:
+                continue
             rows.append(
                 SolisSensor(
                     coordinator,
                     description,
-                    f"{inverter.serial}_{description.key}_{phase.index}",
+                    f"{inverter.serial}_{description.key}",
                     device,
                     serial=inverter.serial,
-                    index=phase.index,
                 )
             )
-    for pv in inverter.strings:
-        for description in _STRING.values():
+    phase_indexes = seen.retain(
+        seen.phases,
+        inverter.serial,
+        {phase.index for phase in inverter.phases},
+    )
+    for index in sorted(phase_indexes):
+        for metric, description in _PHASE.items():
             rows.append(
                 SolisSensor(
                     coordinator,
                     description,
-                    f"{inverter.serial}_{description.key}_{pv.index}",
+                    f"{inverter.serial}_phase_{index}_{metric}",
                     device,
                     serial=inverter.serial,
-                    index=pv.index,
+                    index=index,
+                )
+            )
+    string_indexes = seen.retain(
+        seen.strings,
+        inverter.serial,
+        {pv.index for pv in inverter.strings},
+    )
+    for index in sorted(string_indexes):
+        for metric, description in _STRING.items():
+            rows.append(
+                SolisSensor(
+                    coordinator,
+                    description,
+                    f"{inverter.serial}_string_{index}_{metric}",
+                    device,
+                    serial=inverter.serial,
+                    index=index,
                 )
             )
     return rows
@@ -677,32 +796,33 @@ async def async_setup_entry(
     """Create sensors and keep them aligned with later polls."""
     coordinator: SolisCoordinator = entry.runtime_data
     added: dict[str, SolisSensor] = {}
-    migrated = False
+    seen = _Seen()
 
     @callback
     def _sync() -> None:
-        nonlocal migrated
         if coordinator.data is None:
             return
-        if not migrated:
-            serials = {inverter.serial for inverter in coordinator.data.inverters}
-            async_migrate_entity_ids(
-                hass,
-                entry.entry_id,
-                legacy_name_from_entry(entry.data),
-                serials,
-            )
-            migrated = True
+        serials = {inverter.serial for inverter in coordinator.data.inverters}
+        async_migrate_entity_ids(
+            hass,
+            entry.entry_id,
+            legacy_name_from_entry(entry.data),
+            serials,
+            {inverter.serial: inverter.station_id for inverter in coordinator.data.inverters},
+        )
+        async_migrate_devices(hass, entry.entry_id, serials)
+        if not coordinator.data.partial:
+            seen.drop_absent(serials)
         fresh: list[SolisSensor] = []
         parents = _parent_devices(hass, entry.entry_id, coordinator.data)
-        wanted = _entities(coordinator, parents)
+        wanted = _entities(coordinator, parents, seen)
         wanted_ids = {entity.unique_id for entity in wanted if entity.unique_id}
         for entity in wanted:
             if entity.unique_id and entity.unique_id not in added:
                 added[entity.unique_id] = entity
                 fresh.append(entity)
         if not coordinator.data.partial:
-            _remove_missing(hass, entry.entry_id, coordinator.data, added, wanted_ids)
+            _remove_missing(hass, entry, coordinator.data, added, wanted_ids)
         if fresh:
             async_add_entities(fresh)
 
@@ -712,7 +832,7 @@ async def async_setup_entry(
 
 def _remove_missing(
     hass: HomeAssistant,
-    entry_id: str,
+    entry: Any,
     data: SolisSnapshot,
     added: dict[str, SolisSensor],
     wanted_ids: set[str],
@@ -720,8 +840,13 @@ def _remove_missing(
     for unique_id, entity in list(added.items()):
         if unique_id in wanted_ids or entity.hass is None:
             continue
-        hass.async_create_task(entity.async_remove())
+        entry.async_create_background_task(
+            hass,
+            entity.async_remove(),
+            name=f"solis_remove_{unique_id}",
+        )
         del added[unique_id]
+    entry_id = entry.entry_id
     registry = dr.async_get(hass)
     present = {f"inverter:{inverter.serial}" for inverter in data.inverters}
     present.update(f"station:{station.station_id}" for station in data.stations)

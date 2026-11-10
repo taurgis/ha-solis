@@ -39,7 +39,7 @@ async def test_migrates_known_labels_and_leaves_foreign_ids(hass: HomeAssistant)
     cases = {
         legacy_unique_id("SN1", "Roof", "Energy Today"): "SN1_energy_today",
         legacy_unique_id("SN1", "Solis", "Battery Power"): "SN1_battery_power",
-        legacy_unique_id("SN1", "Roof", "Daily On-grid Energy"): "SN1_grid_export_today",
+        legacy_unique_id("SN1", "Roof", "Daily On-grid Energy"): "plant-1_grid_export_today",
     }
     for old in cases:
         registry.async_get_or_create(
@@ -54,29 +54,32 @@ async def test_migrates_known_labels_and_leaves_foreign_ids(hass: HomeAssistant)
         unique_id="leave-me",
         config_entry=entry,
     )
-    async_migrate_entity_ids(hass, entry.entry_id, "Roof", {"SN1"})
+    async_migrate_entity_ids(hass, entry.entry_id, "Roof", {"SN1"}, {"SN1": "plant-1"})
     for old, new in cases.items():
         assert registry.async_get_entity_id("sensor", DOMAIN, old) is None
         assert registry.async_get_entity_id("sensor", DOMAIN, new) is not None
     assert registry.async_get_entity_id("sensor", DOMAIN, "leave-me") is not None
 
 
-async def test_does_not_overwrite_an_existing_stable_id(hass: HomeAssistant) -> None:
-    """If the new id is already registered, the legacy row is left alone."""
+async def test_duplicate_stable_id_keeps_the_legacy_entity(hass: HomeAssistant) -> None:
+    """A second run keeps the legacy entity id, which is the one with history."""
     entry = _entry(hass)
     registry = er.async_get(hass)
     old = legacy_unique_id("SN1", "Solis", "Temperature")
-    registry.async_get_or_create(
+    legacy = registry.async_get_or_create(
         domain="sensor", platform=DOMAIN, unique_id=old, config_entry=entry
     )
-    registry.async_get_or_create(
+    duplicate = registry.async_get_or_create(
         domain="sensor",
         platform=DOMAIN,
         unique_id="SN1_temperature",
         config_entry=entry,
     )
     async_migrate_entity_ids(hass, entry.entry_id, "Solis", {"SN1"})
-    assert registry.async_get_entity_id("sensor", DOMAIN, old) is not None
+    assert registry.async_get_entity_id("sensor", DOMAIN, "SN1_temperature") == legacy.entity_id
+    assert registry.async_get(duplicate.entity_id) is None
+    async_migrate_entity_ids(hass, entry.entry_id, "Solis", {"SN1"})
+    assert registry.async_get_entity_id("sensor", DOMAIN, "SN1_temperature") == legacy.entity_id
 
 
 async def test_device_migration_from_ginlong_name(hass: HomeAssistant) -> None:
@@ -101,6 +104,38 @@ async def test_device_migration_from_ginlong_name(hass: HomeAssistant) -> None:
     )
 
 
+async def test_plant_counter_moves_onto_the_station(hass: HomeAssistant) -> None:
+    """Daily grid energy used to be keyed by the inverter serial."""
+    entry = _entry(hass)
+    registry = er.async_get(hass)
+    old = legacy_unique_id("SN1", "Roof", "Daily On-grid Energy")
+    legacy = registry.async_get_or_create(
+        domain="sensor", platform=DOMAIN, unique_id=old, config_entry=entry
+    )
+    async_migrate_entity_ids(
+        hass,
+        entry.entry_id,
+        "Roof",
+        {"SN1"},
+        {"SN1": "station-9"},
+    )
+    assert registry.async_get_entity_id("sensor", DOMAIN, "station-9_grid_export_today") == (
+        legacy.entity_id
+    )
+
+
+async def test_string_label_migrates(hass: HomeAssistant) -> None:
+    """Upstream PV string sensors use the DC Voltage PV label."""
+    entry = _entry(hass)
+    registry = er.async_get(hass)
+    old = legacy_unique_id("SN1", "Solis", "DC Voltage PV1")
+    registry.async_get_or_create(
+        domain="sensor", platform=DOMAIN, unique_id=old, config_entry=entry
+    )
+    async_migrate_entity_ids(hass, entry.entry_id, "Solis", {"SN1"})
+    assert registry.async_get_entity_id("sensor", DOMAIN, "SN1_string_1_voltage") is not None
+
+
 async def test_device_migration_skips_when_new_id_exists(hass: HomeAssistant) -> None:
     """An inverter that already has the new identifier is not rewritten."""
     entry = _entry(hass)
@@ -117,6 +152,5 @@ async def test_device_migration_skips_when_new_id_exists(hass: HomeAssistant) ->
     )
     async_migrate_devices(hass, entry.entry_id, {"SN9"})
     assert (
-        devices.async_get_device_by_identifier((DOMAIN, "SN9_SolisCloud"), entry.entry_id)
-        is not None
+        devices.async_get_device_by_identifier((DOMAIN, "SN9_SolisCloud"), entry.entry_id) is None
     )

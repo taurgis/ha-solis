@@ -14,6 +14,7 @@ CONF_LEGACY_NAME = "legacy_name"
 CONF_SCAN_INTERVAL = "scan_interval"
 CONF_REQUEST_TIMEOUT = "request_timeout"
 CONF_ENDPOINT_INTERVAL = "endpoint_interval"
+CONF_TIME_ZONE = "time_zone"
 
 DEFAULT_API_URL = "https://www.soliscloud.com:13333"
 DEFAULT_SCAN_INTERVAL = 300

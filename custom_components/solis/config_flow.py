@@ -8,8 +8,11 @@ issue 517 describes.
 from __future__ import annotations
 
 from collections.abc import Mapping
+import ipaddress
 import logging
 from typing import Any, cast
+from urllib.parse import urlsplit, urlunsplit
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import voluptuous as vol
 
@@ -29,6 +32,7 @@ from .const import (
     CONF_REQUEST_TIMEOUT,
     CONF_SCAN_INTERVAL,
     CONF_STATION_IDS,
+    CONF_TIME_ZONE,
     DEFAULT_API_URL,
     DEFAULT_ENDPOINT_INTERVAL,
     DEFAULT_REQUEST_TIMEOUT,
@@ -54,10 +58,41 @@ def _schema(schema: vol.Schema) -> Any:
 
 
 def _normalize_url(url: str) -> str:
+    """Return a URL, upgrading public http hosts to https.
+
+    Loopback, private addresses and single-label names (the lab's ``mock``
+    host) may stay on http. SolisCloud itself is TLS-only.
+    """
     text = url.strip().rstrip("/")
-    if not text.startswith("http"):
+    if not text.startswith(("http://", "https://")):
         text = f"https://{text}"
-    return text
+    parts = urlsplit(text)
+    host = (parts.hostname or "").rstrip(".").lower()
+    if parts.scheme.lower() == "http" and host and not _http_allowed(host):
+        text = urlunsplit(("https", parts.netloc, parts.path, parts.query, parts.fragment))
+    return text.rstrip("/")
+
+
+def _http_allowed(host: str) -> bool:
+    if host in {"localhost", "mock"} or "." not in host:
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return address.is_private or address.is_loopback or address.is_link_local
+
+
+def clean_time_zone(value: object) -> tuple[str, str | None]:
+    """Return a stored timezone preference and a form error key, if any."""
+    text = str(value or "").strip()
+    if text in {"", "plant"}:
+        return text, None
+    try:
+        ZoneInfo(text)
+    except ZoneInfoNotFoundError:
+        return text, "invalid_timezone"
+    return text, None
 
 
 class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -128,6 +163,7 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_SCAN_INTERVAL: DEFAULT_SCAN_INTERVAL,
                     CONF_REQUEST_TIMEOUT: DEFAULT_REQUEST_TIMEOUT,
                     CONF_ENDPOINT_INTERVAL: DEFAULT_ENDPOINT_INTERVAL,
+                    CONF_TIME_ZONE: "",
                 },
             )
         return self.async_show_form(step_id="stations", data_schema=_schema(schema))
@@ -184,7 +220,12 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
             candidate = {**dict(entry.data), CONF_API_URL: url}
             errors = await self._load_stations(candidate)
             station_ids = [str(station_id) for station_id in user_input[CONF_STATION_IDS]]
-            if not errors and station_ids:
+            zone, zone_error = clean_time_zone(
+                user_input.get(CONF_TIME_ZONE, entry.options.get(CONF_TIME_ZONE, ""))
+            )
+            if zone_error:
+                errors = {CONF_TIME_ZONE: zone_error}
+            elif not errors and station_ids:
                 return self.async_update_reload_and_abort(
                     entry,
                     data_updates={CONF_API_URL: url, CONF_STATION_IDS: station_ids},
@@ -193,9 +234,10 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
                         CONF_SCAN_INTERVAL: int(user_input[CONF_SCAN_INTERVAL]),
                         CONF_REQUEST_TIMEOUT: int(user_input[CONF_REQUEST_TIMEOUT]),
                         CONF_ENDPOINT_INTERVAL: float(user_input[CONF_ENDPOINT_INTERVAL]),
+                        CONF_TIME_ZONE: zone,
                     },
                 )
-            if not station_ids:
+            elif not station_ids and not errors:
                 errors = {"base": "no_stations"}
         schema = self._reconfigure_schema(entry)
         return self.async_show_form(
@@ -225,6 +267,10 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_ENDPOINT_INTERVAL,
                     default=options.get(CONF_ENDPOINT_INTERVAL, DEFAULT_ENDPOINT_INTERVAL),
                 ): vol.All(vol.Coerce(float), vol.Range(min=0.5, max=30)),
+                vol.Optional(
+                    CONF_TIME_ZONE,
+                    default=options.get(CONF_TIME_ZONE, ""),
+                ): str,
             }
         )
 
@@ -257,16 +303,24 @@ class SolisOptionsFlow(OptionsFlow):
     """Change polling without re-entering the API secret."""
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """Edit scan interval, timeout and the per-endpoint gap."""
-        if user_input is not None:
-            return self.async_create_entry(
-                data={
-                    CONF_SCAN_INTERVAL: int(user_input[CONF_SCAN_INTERVAL]),
-                    CONF_REQUEST_TIMEOUT: int(user_input[CONF_REQUEST_TIMEOUT]),
-                    CONF_ENDPOINT_INTERVAL: float(user_input[CONF_ENDPOINT_INTERVAL]),
-                }
-            )
+        """Edit scan interval, timeout, the per-endpoint gap and the timezone."""
+        errors: dict[str, str] = {}
         options = self.config_entry.options
+        if user_input is not None:
+            zone, zone_error = clean_time_zone(
+                user_input.get(CONF_TIME_ZONE, options.get(CONF_TIME_ZONE, ""))
+            )
+            if zone_error:
+                errors[CONF_TIME_ZONE] = zone_error
+            else:
+                return self.async_create_entry(
+                    data={
+                        CONF_SCAN_INTERVAL: int(user_input[CONF_SCAN_INTERVAL]),
+                        CONF_REQUEST_TIMEOUT: int(user_input[CONF_REQUEST_TIMEOUT]),
+                        CONF_ENDPOINT_INTERVAL: float(user_input[CONF_ENDPOINT_INTERVAL]),
+                        CONF_TIME_ZONE: zone,
+                    }
+                )
         schema = vol.Schema(
             {
                 vol.Required(
@@ -281,9 +335,13 @@ class SolisOptionsFlow(OptionsFlow):
                     CONF_ENDPOINT_INTERVAL,
                     default=options.get(CONF_ENDPOINT_INTERVAL, DEFAULT_ENDPOINT_INTERVAL),
                 ): vol.All(vol.Coerce(float), vol.Range(min=0.5, max=30)),
+                vol.Optional(
+                    CONF_TIME_ZONE,
+                    default=options.get(CONF_TIME_ZONE, ""),
+                ): str,
             }
         )
-        return self.async_show_form(step_id="init", data_schema=_schema(schema))
+        return self.async_show_form(step_id="init", data_schema=_schema(schema), errors=errors)
 
 
 async def _fetch_stations(hass: Any, data: Mapping[str, Any]) -> dict[str, str]:
@@ -334,5 +392,6 @@ def migrate_entry_data(
         CONF_ENDPOINT_INTERVAL: float(
             options.get(CONF_ENDPOINT_INTERVAL, DEFAULT_ENDPOINT_INTERVAL)
         ),
+        CONF_TIME_ZONE: str(options.get(CONF_TIME_ZONE, "")),
     }
     return new_data, new_options

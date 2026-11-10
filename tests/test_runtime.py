@@ -55,6 +55,59 @@ async def test_entities_match_mock(hass: HomeAssistant, solis_server: tuple[Any,
     assert _state(hass, "binary_sensor.north_roof_s6_gr1p5k_alarm") == "off"
     assert hass.states.get("sensor.barn_hybrid_phase_2_voltage") is not None
     assert hass.states.get("sensor.north_roof_s6_gr1p5k_phase_2_voltage") is None
+    total = hass.states.get("sensor.north_roof_s6_gr1p5k_energy_total")
+    assert total is not None
+    assert total.attributes["state_class"] == "total_increasing"
+    assert "last_reset" not in total.attributes
+    today = hass.states.get("sensor.north_roof_s6_gr1p5k_energy_today")
+    assert today is not None
+    assert today.attributes["state_class"] == "total_increasing"
+
+
+async def test_null_and_zero_energy_do_not_dip(
+    hass: HomeAssistant, solis_server: tuple[Any, str]
+) -> None:
+    """A cloud null or zero after a real total does not publish a dip."""
+    state, url = solis_server
+    entry = await _setup(hass, url)
+    entity = "sensor.north_roof_s6_gr1p5k_energy_total"
+    today = "sensor.north_roof_s6_gr1p5k_energy_today"
+    assert _number(hass, entity) == 12500
+    assert _number(hass, today) == 4.321
+    state.energy_glitch = "null"
+    await _refresh(hass, entry)
+    assert _number(hass, entity) == 12500
+    assert _number(hass, today) == 4.321
+    state.energy_glitch = "zero"
+    await _refresh(hass, entry)
+    assert _number(hass, entity) == 12500
+    assert _number(hass, today) == 4.321
+
+
+async def test_inverter_missing_on_first_poll_migrates_later(
+    hass: HomeAssistant, solis_server: tuple[Any, str]
+) -> None:
+    """Unique-id migration runs again when an inverter appears after startup."""
+    state, url = solis_server
+    entry = mock_entry(url)
+    entry.add_to_hass(hass)
+    registry = er.async_get(hass)
+    old = legacy_unique_id(NORTH_SERIAL, "Solis", "Energy Total")
+    legacy = registry.async_get_or_create(
+        domain="sensor",
+        platform=DOMAIN,
+        unique_id=old,
+        config_entry=entry,
+    )
+    state.skip_serials = {NORTH_SERIAL}
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert registry.async_get_entity_id("sensor", DOMAIN, old) == legacy.entity_id
+    state.skip_serials = set()
+    await _refresh(hass, entry)
+    assert registry.async_get_entity_id("sensor", DOMAIN, f"{NORTH_SERIAL}_energy_total") == (
+        legacy.entity_id
+    )
 
 
 async def test_failure_then_recovery(hass: HomeAssistant, solis_server: tuple[Any, str]) -> None:
@@ -92,6 +145,7 @@ async def test_diagnostics_redact(hass: HomeAssistant, solis_server: tuple[Any, 
 
     payload = await async_get_config_entry_diagnostics(hass, entry)
     assert payload["entry"]["data"]["key_secret"] == "**REDACTED**"
+    assert payload["entry"]["unique_id"] == "**REDACTED**"
     assert payload["snapshot"]["stations"][0]["latitude"] == "**REDACTED**"
     assert payload["snapshot"]["inverters"]
 
@@ -136,6 +190,24 @@ async def test_unique_id_and_device_migration(
         )
         is None
     )
+
+
+async def test_unload_clears_auth_repair(
+    hass: HomeAssistant, solis_server: tuple[Any, str]
+) -> None:
+    """Unloading the entry removes the auth repair opened by a failed poll."""
+    state, url = solis_server
+    entry = await _setup(hass, url)
+    state.mode = "auth_error"
+    await _refresh(hass, entry)
+    from homeassistant.helpers import issue_registry as ir
+
+    issues = ir.async_get(hass).issues
+    assert any(issue_id.startswith("invalid_auth") for (_domain, issue_id) in issues)
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    issues = ir.async_get(hass).issues
+    assert not any(issue_id.startswith("invalid_auth") for (_domain, issue_id) in issues)
 
 
 async def test_auth_failure_starts_reauth(

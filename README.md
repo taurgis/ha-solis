@@ -16,37 +16,49 @@ stays under the platform rate limit.
 
 ## Install
 
-[HACS](https://hacs.xyz/) as a custom repository, or copy
-`custom_components/solis` into your config directory and restart.
+Requires Home Assistant 2025.10.0 or newer.
 
-Requires Home Assistant 2026.10.4 or newer.
+1. In SolisCloud, open Account → API management and create a key. Solis
+   sometimes enables that page only after a support ticket. Copy the key id
+   and the secret. A portal username is not used.
+2. Install with [HACS](https://hacs.xyz/) as a custom repository
+   (`https://github.com/taurgis/ha-solis`), or copy `custom_components/solis`
+   into the config directory.
+3. Restart Home Assistant.
+4. Add the Solis integration. The international API URL is
+   `https://www.soliscloud.com:13333`. An account created against
+   `https://v3.soliscloud.com:13333` should keep that host.
+5. Select the plants to follow.
 
-In SolisCloud, open Account → API management and create a key. Add the Solis
-integration and paste the API URL (the international default is
-`https://www.soliscloud.com:13333`), the key id and the secret. Choose the
-plants to follow.
+Public `http://` URLs are stored as `https://`. Loopback, private addresses
+and single-label hosts such as the lab's `mock` may stay on `http`.
+
+## Migrating from hultenvp/solis-sensor
+
+Remove the upstream custom component, install this one, and restart. Config
+entries from solis-sensor 4.x are migrated on startup. Entity unique ids of
+the form `{serial}{config name} {sensor label}` are rewritten to
+`{serial}_{key}` when they are still in the registry, including phase and PV
+string sensors. Plant import, export and load move onto the plant device and
+keep the old entity id. If a new entity was already created beside the legacy
+one, the legacy entity id is kept and the duplicate is removed. Migration
+runs again when an inverter that was missing at startup appears later.
+
+The control API is not migrated. A repair explains that. Battery schedules
+already stored on the inverter are left as they are.
 
 ## Remove
 
 Delete the Solis entry under Settings → Devices & services. Entity history
 for that entry is removed with it. The API key on SolisCloud is unchanged.
+Revoke the key there if this Home Assistant instance should stop reading the
+account.
 
 ## Development
 
-```bash
-python3.14 -m venv .venv
-.venv/bin/pip install -r requirements_test.txt
-.venv/bin/pytest
-.venv/bin/ruff check custom_components tests tools scripts
-.venv/bin/mypy --strict custom_components/solis
-```
-
-The mock SolisCloud server checks the real HMAC signature:
+See [CONTRIBUTING.md](CONTRIBUTING.md). The mock SolisCloud server checks the
+real HMAC signature:
 
 ```bash
 PYTHONPATH=. .venv/bin/python -m mock_soliscloud --port 8765
 ```
-
-`lab/docker-compose.yml` boots current stable Home Assistant next to that
-mock. `scripts/check_minimum_home_assistant.py` boots the minimum Core version
-from `hacs.json` and checks entity values, a 502 and recovery.

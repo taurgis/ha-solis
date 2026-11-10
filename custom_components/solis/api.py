@@ -78,6 +78,7 @@ class SolisCloudClient:
         self._attempts = attempts
         self._clock = clock or (lambda: datetime.now(UTC))
         self._limiter = _EndpointLimiter(endpoint_interval)
+        self._clock_offset = timedelta(0)
 
     async def user_station_list(self) -> list[dict[str, Any]]:
         """Return every station on the account."""
@@ -109,13 +110,18 @@ class SolisCloudClient:
             "/v1/api/stationDayEnergyList",
             {"time": day, "stationIds": station_id},
         )
-        for row in rows:
-            if str(row.get("id")) == station_id or str(row.get("stationId") or "") in {
-                "",
-                station_id,
-            }:
-                return row
-        return rows[0] if rows else None
+        exact = [
+            row
+            for row in rows
+            if station_id in {str(row.get("id") or ""), str(row.get("stationId") or "")}
+        ]
+        if exact:
+            return exact[0]
+        # A single unlabeled row is the station we asked for. A list that
+        # starts with a blank id must not steal another plant's energy.
+        if len(rows) == 1:
+            return rows[0]
+        return None
 
     async def alarm_list(self) -> list[dict[str, Any]]:
         """Return alarm rows for the account."""
@@ -144,23 +150,42 @@ class SolisCloudClient:
         return rows
 
     async def post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        """POST ``path`` and return a successful JSON object, retrying 429 and 5xx."""
+        """POST ``path`` and return a successful JSON object.
+
+        HTTP 429, timeouts and 5xx are retried. A clock rejection is retried
+        once against the Date header the platform sent. Other 4xx responses
+        are not retried.
+        """
         body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
         delay = 1.0
-        for attempt in range(self._attempts):
+        attempt = 0
+        clock_retried = False
+        while attempt < self._attempts:
             await self._limiter.wait(path)
             try:
                 return await self._post_once(path, body)
+            except SolisClockError as err:
+                if clock_retried or err.server_date is None:
+                    raise
+                self._align_clock(err.server_date)
+                clock_retried = True
             except SolisRateLimitError as err:
-                if attempt == self._attempts - 1:
+                attempt += 1
+                if attempt >= self._attempts:
                     raise
                 await asyncio.sleep(err.retry_after)
-            except SolisServerError:
-                if attempt == self._attempts - 1:
+            except (SolisServerError, SolisTimeoutError):
+                attempt += 1
+                if attempt >= self._attempts:
                     raise
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, 8.0)
         raise SolisCloudError(f"{path} failed")
+
+    def _align_clock(self, server_date: datetime) -> None:
+        """Sign later requests with the platform's clock."""
+        server = server_date if server_date.tzinfo else server_date.replace(tzinfo=UTC)
+        self._clock_offset = server - self._clock()
 
     async def _post_once(self, path: str, body: bytes) -> dict[str, Any]:
         headers = signed_headers(
@@ -168,7 +193,7 @@ class SolisCloudClient:
             secret=self._secret,
             path=path,
             body=body,
-            moment=self._clock(),
+            moment=self._clock() + self._clock_offset,
         )
         timeout = ClientTimeout(total=self._timeout)
         try:
@@ -180,34 +205,61 @@ class SolisCloudClient:
             ) as response:
                 raw = await response.read()
                 status = response.status
-                retry_after = _retry_after(response.headers.get("Retry-After"))
+                retry_after = _retry_after(response.headers.get("Retry-After"), now=self._clock())
+                server_date = _http_date(response.headers.get("Date"))
         except TimeoutError as err:
             raise SolisTimeoutError(f"{path} timed out after {self._timeout}s") from err
         except ClientError as err:
             raise SolisServerError(f"{path} connection failed: {err}") from err
-        return _interpret(path, status, raw, retry_after)
+        return _interpret(path, status, raw, retry_after, server_date)
 
 
-def _retry_after(header: str | None) -> float:
+def _retry_after(header: str | None, *, now: datetime | None = None) -> float:
     if header is None:
         return 2.0
     try:
         return max(0.0, float(header))
     except ValueError:
-        return 2.0
+        parsed = _http_date(header)
+        if parsed is None or now is None:
+            return 2.0
+        current = now if now.tzinfo else now.replace(tzinfo=UTC)
+        return max(0.0, (parsed - current).total_seconds())
 
 
-def _interpret(path: str, status: int, raw: bytes, retry_after: float) -> dict[str, Any]:
+def _http_date(header: str | None) -> datetime | None:
+    if not header:
+        return None
+    try:
+        parsed = parsedate_to_datetime(header)
+    except (TypeError, ValueError, IndexError):
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _interpret(
+    path: str,
+    status: int,
+    raw: bytes,
+    retry_after: float,
+    server_date: datetime | None,
+) -> dict[str, Any]:
     if status == 429:
         raise SolisRateLimitError(f"{path} rate limited", retry_after=retry_after or 2.0)
     if status == 408:
-        raise SolisClockError(f"{path} rejected the Date header", code="408")
+        raise SolisClockError(
+            f"{path} rejected the Date header",
+            code="408",
+            server_date=server_date,
+        )
     if status in {401, 403}:
         raise SolisAuthError(f"{path} rejected the API key", code=str(status))
     if status >= 500:
         raise SolisServerError(f"{path} returned HTTP {status}", code=str(status))
     if status != 200:
-        raise SolisServerError(f"{path} returned HTTP {status}", code=str(status))
+        raise SolisCloudError(f"{path} returned HTTP {status}", code=str(status))
     try:
         payload = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as err:
@@ -215,7 +267,7 @@ def _interpret(path: str, status: int, raw: bytes, retry_after: float) -> dict[s
     if not isinstance(payload, dict):
         raise SolisServerError(f"{path} returned a non-object body")
     _raise_for_code(path, payload)
-    _raise_for_clock_message(path, payload)
+    _raise_for_clock_message(path, payload, server_date)
     return payload
 
 
@@ -231,17 +283,21 @@ def _raise_for_code(path: str, payload: dict[str, Any]) -> None:
     raise SolisCloudError(f"{path} {code}: {message}", code=code)
 
 
-def _raise_for_clock_message(path: str, payload: dict[str, Any]) -> None:
+def _raise_for_clock_message(
+    path: str,
+    payload: dict[str, Any],
+    server_date: datetime | None,
+) -> None:
     message = str(payload.get("msg") or "")
     if "time" in message.lower() and "15" in message:
-        raise SolisClockError(f"{path}: {message}")
+        raise SolisClockError(f"{path}: {message}", server_date=server_date)
 
 
 def date_is_skewed(date_header: str, *, now: datetime, window: timedelta) -> bool:
     """Return whether a Date header is outside Solis's acceptance window."""
     try:
         parsed = parsedate_to_datetime(date_header)
-    except TypeError, ValueError, IndexError:
+    except (TypeError, ValueError, IndexError):
         return True
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)

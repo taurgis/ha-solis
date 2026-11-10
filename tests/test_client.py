@@ -10,7 +10,6 @@ import pytest
 from custom_components.solis.api import SolisCloudClient
 from custom_components.solis.errors import (
     SolisAuthError,
-    SolisClockError,
     SolisDataError,
     SolisRateLimitError,
     SolisServerError,
@@ -58,7 +57,7 @@ async def test_bad_secret_is_auth(solis_server: tuple[object, str]) -> None:
 
 
 async def test_clock_skew(solis_server: tuple[object, str]) -> None:
-    """Dates more than 15 minutes off are HTTP 408."""
+    """A skewed local clock is resigned against the Date header and then accepted."""
     _state, url = solis_server
 
     def past() -> datetime:
@@ -66,8 +65,8 @@ async def test_clock_skew(solis_server: tuple[object, str]) -> None:
 
     async with ClientSession() as session:
         client = _client(url, session, clock=past, attempts=1)
-        with pytest.raises(SolisClockError):
-            await client.user_station_list()
+        stations = await client.user_station_list()
+    assert {row["stationName"] for row in stations} == {"North Roof", "Barn"}
 
 
 async def test_rate_limit_and_server_errors(solis_server: tuple[object, str]) -> None:

@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-STALE_AFTER = timedelta(minutes=15)
+from .const import STALE_AFTER
 
 
 @dataclass(frozen=True, slots=True)

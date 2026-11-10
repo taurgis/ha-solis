@@ -93,8 +93,10 @@ def to_kilowatt_hours(
         return None
     number = apply_pec(number, pec)
     key = unit_key(unit) or default
-    if key == "kw":
-        key = "kwh"
+    # The station sample labels generator energy as kW. MW and GW show up the
+    # same way on larger plants: an energy field whose unit is only a power
+    # unit is read as the matching watt-hour unit.
+    key = {"kw": "kwh", "mw": "mwh", "gw": "gwh"}.get(key, key)
     converted = _convert(number, key, _ENERGY_TO_KWH, default)
     if converted is None or converted < 0:
         return None

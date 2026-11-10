@@ -6,4 +6,5 @@ and stays under the platform rate limit.
 
 Replacing `hultenvp/solis-sensor` keeps the `solis` domain. Uninstall that
 copy before installing this one. Existing entity ids are migrated when the
-old unique id is still in the registry.
+old unique id is still in the registry. Requires Home Assistant 2025.10.0
+or newer.

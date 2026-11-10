@@ -36,20 +36,30 @@
           "station_ids": "Plants",
           "scan_interval": "Poll interval (seconds)",
           "request_timeout": "Request timeout (seconds)",
-          "endpoint_interval": "Minimum gap per endpoint (seconds)"
+          "endpoint_interval": "Minimum gap per endpoint (seconds)",
+          "time_zone": "Plant timezone"
+        },
+        "data_description": {
+          "time_zone": "Leave empty to follow Home Assistant when it is within an hour of the plant offset. Use an IANA name such as Europe/London to force one, or plant to keep the numeric offset from Solis."
         }
       },
       "init": {
         "title": "Solis options",
+        "description": "Polling and the timezone used for today, this month and this year.",
         "data": {
           "scan_interval": "Poll interval (seconds)",
           "request_timeout": "Request timeout (seconds)",
-          "endpoint_interval": "Minimum gap per endpoint (seconds)"
+          "endpoint_interval": "Minimum gap per endpoint (seconds)",
+          "time_zone": "Plant timezone"
+        },
+        "data_description": {
+          "time_zone": "Leave empty to follow Home Assistant when it is within an hour of the plant offset. Use an IANA name such as Europe/London to force one, or plant to keep the numeric offset from Solis."
         }
       }
     },
     "error": {
       "invalid_auth": "SolisCloud rejected the API key id or secret.",
+      "invalid_timezone": "Enter an IANA timezone such as Europe/London, or plant to keep the Solis offset.",
       "clock_skew": "SolisCloud rejected the request time. The clock must be within 15 minutes of UTC.",
       "timeout": "SolisCloud did not answer before the timeout.",
       "cannot_connect": "Could not reach SolisCloud.",

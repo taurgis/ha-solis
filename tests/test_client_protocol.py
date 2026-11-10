@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 from aiohttp import ClientSession, web
 import pytest
@@ -19,6 +20,7 @@ from custom_components.solis.errors import (
     SolisCloudError,
     SolisDataError,
     SolisServerError,
+    SolisTimeoutError,
 )
 from custom_components.solis.signing import content_md5, signed_headers, string_to_sign
 
@@ -65,6 +67,8 @@ def test_retry_after_and_clock_window() -> None:
     assert _retry_after("4") == 4.0
     assert _retry_after("soon") == 2.0
     assert _retry_after("-3") == 0.0
+    moment = datetime(2015, 10, 21, 7, 28, tzinfo=UTC)
+    assert _retry_after("Wed, 21 Oct 2015 07:28:10 GMT", now=moment) == 10
     now = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
     window = timedelta(minutes=15)
     assert date_is_skewed("not a date", now=now, window=window)
@@ -128,8 +132,9 @@ async def test_http_status_mapping(raw_api: tuple[Any, str]) -> None:
     async def bad_request(_request: web.Request) -> web.Response:
         return web.Response(status=400, text="no")
 
-    with pytest.raises(SolisServerError):
-        await _post(raw_api, bad_request)
+    with pytest.raises(SolisCloudError, match="HTTP 400") as raised:
+        await _post(raw_api, bad_request, attempts=3)
+    assert not isinstance(raised.value, SolisServerError)
 
     async def not_object(_request: web.Request) -> web.Response:
         return web.Response(status=200, body=b"[1]", content_type="application/json")
@@ -200,3 +205,77 @@ async def test_retries_then_reads_every_page(raw_api: tuple[Any, str]) -> None:
     # A short page stops pagination. The 502 is still retried before that page is kept.
     assert rows == [{"id": "p1", "stationName": "Plant 1"}]
     assert state["calls"] == 2
+
+
+async def test_clock_rejection_realigns_to_the_server_date(raw_api: tuple[Any, str]) -> None:
+    """A 408 with a Date header is signed again at the platform's clock."""
+    dates: list[str] = []
+
+    async def clock_then_ok(request: web.Request) -> web.Response:
+        dates.append(request.headers.get("Date", ""))
+        if len(dates) == 1:
+            return web.Response(
+                status=408,
+                text="clock",
+                headers={"Date": "Wed, 21 Oct 2015 07:28:00 GMT"},
+            )
+        return web.json_response(
+            {"code": "0", "msg": "success", "data": {"page": {"records": [], "pages": 1}}}
+        )
+
+    await _post(raw_api, clock_then_ok, attempts=1)
+    assert len(dates) == 2
+    assert dates[1] == "Wed, 21 Oct 2015 07:28:00 GMT"
+
+
+async def test_timeout_is_retried() -> None:
+    """A timed-out call is attempted again before the error escapes."""
+    calls = {"n": 0}
+
+    async def post_once(path: str, body: bytes) -> dict[str, Any]:
+        del path, body
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise SolisTimeoutError("slow")
+        return {"code": "0", "data": {"page": {"records": [], "pages": 1}}}
+
+    async with ClientSession() as session:
+        client = _client("http://127.0.0.1", session, attempts=2)
+        client._post_once = post_once  # type: ignore[method-assign]
+        with patch("custom_components.solis.api.asyncio.sleep", new=AsyncMock()):
+            assert await client.user_station_list() == []
+    assert calls["n"] == 2
+
+
+async def test_day_energy_ignores_a_blank_foreign_row(raw_api: tuple[Any, str]) -> None:
+    """An unlabeled first row must not hide the requested station."""
+
+    async def rows(_request: web.Request) -> web.Response:
+        return web.json_response(
+            {
+                "code": "0",
+                "msg": "success",
+                "data": {
+                    "page": {
+                        "records": [
+                            {"id": "", "energy": 999, "energyStr": "kWh"},
+                            {
+                                "id": "plant-1",
+                                "stationId": "plant-1",
+                                "energy": 4,
+                                "energyStr": "kWh",
+                            },
+                        ],
+                        "pages": 1,
+                    }
+                },
+            }
+        )
+
+    app, url = raw_api
+    app["responder"] = rows
+    async with ClientSession() as session:
+        client = _client(url, session, attempts=1)
+        row = await client.station_day_energy("plant-1", "2026-07-15")
+    assert row is not None
+    assert row["energy"] == 4
