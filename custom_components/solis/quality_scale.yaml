@@ -8,29 +8,70 @@ rules:
     comment: >-
       The coordinator polls every 300 seconds by default (minimum 60).
       SolisCloud publishes a sample about every five minutes, and each path
-      is held to one call every two seconds.
+      is held to one call every two seconds. CoordinatorEntity does not poll
+      on its own.
   brands:
     status: done
     comment: >-
-      custom_components/solis/brand ships icon.png at 256x256 and
-      icon@2x.png at 512x512. Home Assistant loads that folder for a custom
-      integration. The artwork is original and is not the Solis logo.
-  common-modules: done
+      icon.png and logo.png are the files already published at
+      home-assistant/brands custom_integrations/solis, copied here unchanged.
+      icon@2x.png (512x512) and logo@2x.png are exact 2x scales, because
+      that repository has no high-DPI files. Home Assistant 2026.3+ loads
+      custom_components/solis/brand/ locally. Older cores use the brands CDN,
+      which serves the same icon and logo. core_integrations/solis does not
+      exist; this domain is a custom integration.
+  common-modules:
+    status: done
+    comment: >-
+      The coordinator is coordinator.py. Shared DeviceInfo and the entity
+      base are entity.py.
+  config-flow:
+    status: done
+    comment: >-
+      User, plant selection, reauth, and reconfigure steps. Field context
+      is in data_description. Credentials and plant ids live in entry data.
+      Polling and the timezone live in options.
   config-flow-test-coverage:
     status: done
     comment: >-
-      config_flow.py is at 100%, and CI fails below that.
-  config-flow: done
-  dependency-transparency: done
+      config_flow.py is at 100%, and CI fails below that, separately from
+      the per-module 95% floor.
+  dependency-transparency:
+    status: exempt
+    comment: >-
+      manifest.json requirements is empty. The SolisCloud client is part of
+      this integration, not a PyPI package.
   docs-actions:
     status: exempt
     comment: No actions or services are registered.
-  docs-high-level-description: done
-  docs-installation-instructions: done
-  docs-removal-instructions: done
+  docs-conditions:
+    status: exempt
+    comment: The integration provides no condition platform.
+  docs-high-level-description:
+    status: done
+    comment: >-
+      README and docs/index.md describe SolisCloud plants and inverters,
+      read-only API access, and the relationship to hultenvp/solis-sensor.
+  docs-installation-instructions:
+    status: done
+    comment: >-
+      README and docs/installation.md cover the API key prerequisite, HACS,
+      manual install, and the minimum Home Assistant version.
+  docs-removal-instructions:
+    status: done
+    comment: >-
+      README and docs/removal.md cover deleting the config entry, what
+      happens to history, uninstalling the component, and the API key
+      staying on SolisCloud.
+  docs-triggers:
+    status: exempt
+    comment: The integration provides no trigger platform.
   entity-event-setup:
     status: exempt
-    comment: The integration does not fire custom events.
+    comment: >-
+      Entities do not subscribe to Home Assistant events. CoordinatorEntity
+      attaches to the coordinator in async_added_to_hass, and the platform
+      listeners are removed with async_on_unload.
   entity-unique-id: done
   has-entity-name: done
   runtime-data: done
@@ -43,55 +84,121 @@ rules:
     status: exempt
     comment: No actions or services are registered.
   config-entry-unloading: done
-  docs-configuration-parameters: done
-  docs-installation-parameters: done
+  docs-configuration-parameters:
+    status: done
+    comment: >-
+      docs/configuration.md lists every options-flow field, including the
+      plant timezone, with the default and the allowed range.
+  docs-installation-parameters:
+    status: done
+    comment: >-
+      docs/configuration.md and docs/installation.md describe the API URL,
+      key id, secret, and plant selection asked for during setup.
   entity-unavailable: done
-  integration-owner: done
+  integration-owner:
+    status: done
+    comment: manifest.json codeowners is @taurgis.
   log-when-unavailable:
     status: done
     comment: >-
-      The first poll of an auth, clock, timeout or cloud failure is logged
-      at warning. Repeats of the same failure are debug until a poll succeeds.
-  parallel-updates: done
+      Update failures raise UpdateFailed and are not logged again in
+      _async_update_data. DataUpdateCoordinator logs the first failure and
+      logs once at info when the next poll succeeds.
+  parallel-updates:
+    status: done
+    comment: >-
+      sensor.py and binary_sensor.py set PARALLEL_UPDATES = 0. Every value
+      comes from the shared coordinator.
   reauthentication-flow: done
   test-coverage:
     status: done
-    comment: CI fails below 95% (--cov-fail-under=95).
+    comment: >-
+      CI fails unless every module under custom_components/solis is above
+      95 percent. config_flow.py is held to 100 percent separately.
 
   # Gold
-  devices: done
+  devices:
+    status: done
+    comment: >-
+      Plants, inverters, data loggers, and export meters are devices.
+      Inverters carry manufacturer, model, serial number, and HMI firmware.
+      Subdevices link to the plant with via_device_id on Home Assistant
+      2026.8 and newer, and with via_device on 2025.10.
   diagnostics: done
-  discovery-update-info:
-    status: exempt
-    comment: SolisCloud accounts are not discoverable on the local network.
   discovery:
     status: exempt
-    comment: SolisCloud accounts are not discoverable on the local network. A future local transport could add Modbus discovery.
+    comment: >-
+      A SolisCloud account is not discoverable on the local network. A
+      future local transport could add Modbus discovery.
+  discovery-update-info:
+    status: exempt
+    comment: >-
+      There is no network address to refresh. The API host is chosen in
+      the config flow and can be changed with reconfigure.
   docs-data-update: done
   docs-examples: done
   docs-known-limitations: done
-  docs-supported-devices: done
+  docs-supported-devices:
+    status: done
+    comment: >-
+      README and docs/index.md name the supported SolisCloud devices and
+      state that control writes and the legacy Ginlong portal are not
+      supported.
   docs-supported-functions: done
   docs-troubleshooting: done
-  dynamic-devices: done
+  docs-use-cases:
+    status: done
+    comment: >-
+      README and docs/use-cases.md describe the energy dashboard, alarm
+      automations, and stale versus offline power.
+  dynamic-devices:
+    status: done
+    comment: >-
+      Sensor and binary sensor platforms listen to the coordinator and add
+      entities when a new inverter, string, logger, or export meter appears.
   entity-category: done
   entity-device-class: done
   entity-disabled-by-default:
     status: done
     comment: >-
       Measurement time, battery state of health, force-charge and
-      overdischarge SOC, string power and logger RSSI are disabled by
+      overdischarge SOC, string power, and logger RSSI are disabled by
       default.
   entity-translations: done
   exception-translations:
-    status: exempt
-    comment: Failures are reported with config-flow error keys and repair issues. The integration does not raise HomeAssistantError.
-  icon-translations: done
+    status: done
+    comment: >-
+      UpdateFailed and ConfigEntryAuthFailed use translation_key. The
+      messages are in the exceptions section of strings.json. Config-flow
+      errors and repairs use their own translation keys.
+  icon-translations:
+    status: done
+    comment: >-
+      icons.json covers entity translation keys, including status state
+      icons. Device-class icons are left to the device class.
   reconfiguration-flow: done
   repair-issues: done
-  stale-devices: done
+  stale-devices:
+    status: done
+    comment: >-
+      A complete poll removes devices that are no longer in the snapshot.
+      async_remove_config_entry_device allows the user to delete a device
+      the latest snapshot does not contain. A partial poll does not delete.
 
   # Platinum
-  async-dependency: done
-  inject-websession: done
-  strict-typing: done
+  async-dependency:
+    status: done
+    comment: >-
+      The SolisCloud client uses aiohttp on the Home Assistant session.
+      There is no synchronous HTTP library.
+  inject-websession:
+    status: done
+    comment: >-
+      SolisCloudClient takes the session from async_get_clientsession. It
+      does not create its own ClientSession inside the integration.
+  strict-typing:
+    status: done
+    comment: >-
+      CI runs mypy --strict on custom_components/solis. py.typed marks the
+      package. There is no separate library. A custom integration is not
+      listed in core's .strict-typing file.

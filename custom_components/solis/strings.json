@@ -10,7 +10,9 @@
           "key_secret": "API key secret"
         },
         "data_description": {
-          "api_url": "Use the host that issued the key, including the port. The international service listens on port 13333."
+          "api_url": "Use the host that issued the key, including the port. The international service listens on port 13333.",
+          "key_id": "The key id from SolisCloud API management. This is not the portal username.",
+          "key_secret": "Shown once when the key is created. Stored in the config entry and redacted from diagnostics."
         }
       },
       "stations": {
@@ -18,6 +20,9 @@
         "description": "Select the SolisCloud plants this entry should follow.",
         "data": {
           "station_ids": "Plants"
+        },
+        "data_description": {
+          "station_ids": "Only the selected plants are polled. Change the set later with reconfigure."
         }
       },
       "reauth_confirm": {
@@ -26,6 +31,10 @@
         "data": {
           "key_id": "API key ID",
           "key_secret": "API key secret"
+        },
+        "data_description": {
+          "key_id": "The key id from SolisCloud API management. This is not the portal username.",
+          "key_secret": "Shown once when the key is created. Stored in the config entry and redacted from diagnostics."
         }
       },
       "reconfigure": {
@@ -40,7 +49,12 @@
           "time_zone": "Plant timezone"
         },
         "data_description": {
-          "time_zone": "Leave empty to follow Home Assistant when it is within an hour of the plant offset. Use an IANA name such as Europe/London to force one, or plant to keep the numeric offset from Solis."
+          "time_zone": "Leave empty to follow Home Assistant when it is within an hour of the plant offset. Use an IANA name such as Europe/London to force one, or plant to keep the numeric offset from Solis.",
+          "scan_interval": "Seconds between polls. The cloud sample is about five minutes, so the default is 300. Minimum 60.",
+          "request_timeout": "Seconds to wait for one HTTP call. Default 30.",
+          "endpoint_interval": "Minimum seconds between calls to the same API path. Default 2, which stays under the published limit of two calls per second.",
+          "api_url": "Use the host that issued the key, including the port. The international service listens on port 13333.",
+          "station_ids": "Only the selected plants are polled. Change the set later with reconfigure."
         }
       },
       "init": {
@@ -53,7 +67,10 @@
           "time_zone": "Plant timezone"
         },
         "data_description": {
-          "time_zone": "Leave empty to follow Home Assistant when it is within an hour of the plant offset. Use an IANA name such as Europe/London to force one, or plant to keep the numeric offset from Solis."
+          "time_zone": "Leave empty to follow Home Assistant when it is within an hour of the plant offset. Use an IANA name such as Europe/London to force one, or plant to keep the numeric offset from Solis.",
+          "scan_interval": "Seconds between polls. The cloud sample is about five minutes, so the default is 300. Minimum 60.",
+          "request_timeout": "Seconds to wait for one HTTP call. Default 30.",
+          "endpoint_interval": "Minimum seconds between calls to the same API path. Default 2, which stays under the published limit of two calls per second."
         }
       }
     },
@@ -108,42 +125,130 @@
           "unknown": "Unknown"
         }
       },
-      "ac_power": { "name": "AC power" },
-      "frequency": { "name": "Frequency" },
-      "temperature": { "name": "Temperature" },
-      "energy_today": { "name": "Energy today" },
-      "energy_month": { "name": "Energy this month" },
-      "energy_year": { "name": "Energy this year" },
-      "energy_total": { "name": "Energy total" },
-      "data_timestamp": { "name": "Measurement time" },
-      "grid_power": { "name": "Grid power" },
-      "consumption_power": { "name": "Consumption power" },
-      "battery_power": { "name": "Battery power" },
-      "battery_soc": { "name": "Battery" },
-      "battery_soh": { "name": "Battery state of health" },
-      "battery_voltage": { "name": "Battery voltage" },
-      "battery_current": { "name": "Battery current" },
-      "battery_charge_today": { "name": "Battery charged today" },
-      "battery_discharge_today": { "name": "Battery discharged today" },
-      "battery_charge_total": { "name": "Battery charged total" },
-      "battery_discharge_total": { "name": "Battery discharged total" },
-      "force_charge_soc": { "name": "Force charge SOC" },
-      "force_discharge_soc": { "name": "Overdischarge SOC" },
-      "phase_voltage": { "name": "Phase {index} voltage" },
-      "phase_current": { "name": "Phase {index} current" },
-      "phase_power": { "name": "Phase {index} power" },
-      "string_voltage": { "name": "String {index} voltage" },
-      "string_current": { "name": "String {index} current" },
-      "string_power": { "name": "String {index} power" },
-      "day_energy": { "name": "Energy today" },
-      "grid_import_today": { "name": "Grid import today" },
-      "grid_export_today": { "name": "Grid export today" },
-      "load_today": { "name": "Load today" },
-      "rssi": { "name": "Signal strength" },
-      "power": { "name": "Power" }
+      "ac_power": {
+        "name": "AC power"
+      },
+      "frequency": {
+        "name": "Frequency"
+      },
+      "temperature": {
+        "name": "Temperature"
+      },
+      "energy_today": {
+        "name": "Energy today"
+      },
+      "energy_month": {
+        "name": "Energy this month"
+      },
+      "energy_year": {
+        "name": "Energy this year"
+      },
+      "energy_total": {
+        "name": "Energy total"
+      },
+      "data_timestamp": {
+        "name": "Measurement time"
+      },
+      "grid_power": {
+        "name": "Grid power"
+      },
+      "consumption_power": {
+        "name": "Consumption power"
+      },
+      "battery_power": {
+        "name": "Battery power"
+      },
+      "battery_soc": {
+        "name": "Battery"
+      },
+      "battery_soh": {
+        "name": "Battery state of health"
+      },
+      "battery_voltage": {
+        "name": "Battery voltage"
+      },
+      "battery_current": {
+        "name": "Battery current"
+      },
+      "battery_charge_today": {
+        "name": "Battery charged today"
+      },
+      "battery_discharge_today": {
+        "name": "Battery discharged today"
+      },
+      "battery_charge_total": {
+        "name": "Battery charged total"
+      },
+      "battery_discharge_total": {
+        "name": "Battery discharged total"
+      },
+      "force_charge_soc": {
+        "name": "Force charge SOC"
+      },
+      "force_discharge_soc": {
+        "name": "Overdischarge SOC"
+      },
+      "phase_voltage": {
+        "name": "Phase {index} voltage"
+      },
+      "phase_current": {
+        "name": "Phase {index} current"
+      },
+      "phase_power": {
+        "name": "Phase {index} power"
+      },
+      "string_voltage": {
+        "name": "String {index} voltage"
+      },
+      "string_current": {
+        "name": "String {index} current"
+      },
+      "string_power": {
+        "name": "String {index} power"
+      },
+      "day_energy": {
+        "name": "Energy today"
+      },
+      "grid_import_today": {
+        "name": "Grid import today"
+      },
+      "grid_export_today": {
+        "name": "Grid export today"
+      },
+      "load_today": {
+        "name": "Load today"
+      },
+      "rssi": {
+        "name": "Signal strength"
+      },
+      "power": {
+        "name": "Power"
+      }
     },
     "binary_sensor": {
-      "alarm": { "name": "Alarm" }
+      "alarm": {
+        "name": "Alarm"
+      }
+    }
+  },
+  "exceptions": {
+    "update_auth": {
+      "message": "SolisCloud rejected the API key."
+    },
+    "update_clock": {
+      "message": "SolisCloud rejected the request time. The clock must be within 15 minutes of UTC."
+    },
+    "update_abnormal": {
+      "message": "SolisCloud returned abnormal data."
+    },
+    "update_timeout": {
+      "message": "SolisCloud did not answer before the timeout."
+    },
+    "update_no_inverters": {
+      "message": "SolisCloud returned no inverters."
+    },
+    "update_failed": {
+      "message": "SolisCloud update failed."
     }
   }
 }

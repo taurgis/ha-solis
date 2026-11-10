@@ -277,6 +277,99 @@ def _wait_state(
     raise CheckError(f"{entity_id} did not reach the expected state; last {last}")
 
 
+def _ws(base: str, token: str, message: dict[str, Any]) -> Any:
+    import websockets
+
+    async def _call() -> Any:
+        url = base.replace("http://", "ws://") + "/api/websocket"
+        async with websockets.connect(url) as socket:
+            await socket.recv()
+            await socket.send(json.dumps({"type": "auth", "access_token": token}))
+            auth = json.loads(await socket.recv())
+            if auth.get("type") != "auth_ok":
+                raise CheckError(f"websocket auth failed: {auth}")
+            await socket.send(json.dumps({"id": 1, **message}))
+            while True:
+                payload = json.loads(await socket.recv())
+                if payload.get("id") != 1:
+                    continue
+                if not payload.get("success"):
+                    raise CheckError(f"websocket {message['type']} failed: {payload}")
+                return payload.get("result")
+
+    return asyncio.run(_call())
+
+
+def _reconfigure(base: str, token: str, entry_id: str) -> None:
+    status, started = _http(
+        "POST",
+        f"{base}/api/config/config_entries/flow",
+        {"handler": "solis", "show_advanced_options": False, "entry_id": entry_id},
+        token=token,
+    )
+    if status != 200 or not isinstance(started, dict):
+        raise CheckError(f"reconfigure did not start: {status} {started}")
+    current = _advance(
+        base,
+        token,
+        str(started.get("flow_id") or ""),
+        {
+            "api_url": API_URL,
+            "station_ids": [NORTH, BARN],
+            "scan_interval": 300,
+            "request_timeout": 30,
+            "endpoint_interval": 2,
+            "time_zone": "plant",
+        },
+    )
+    if current.get("type") != "abort" or current.get("reason") != "reconfigure_successful":
+        raise CheckError(f"reconfigure failed: {json.dumps(current)[:1500]}")
+
+
+def _finish_reauth(base: str, token: str) -> None:
+    progress = _ws(base, token, {"type": "config_entries/flow/progress"})
+    if not isinstance(progress, list):
+        raise CheckError(f"reauth progress was not a list: {progress}")
+    flow_id = ""
+    for flow in progress:
+        if isinstance(flow, dict) and flow.get("handler") == "solis":
+            flow_id = str(flow.get("flow_id") or "")
+            break
+    if not flow_id:
+        raise CheckError(f"reauth flow was not in progress: {progress}")
+    current = _advance(
+        base,
+        token,
+        flow_id,
+        {"key_id": "test-key", "key_secret": "test-secret"},
+    )
+    if current.get("type") != "abort" or current.get("reason") != "reauth_successful":
+        raise CheckError(f"reauth did not finish: {json.dumps(current)[:1500]}")
+
+
+def _version_at_least(version: str, major: int, minor: int) -> bool:
+    numbers = [int(part) for part in version.split(".")[:2]]
+    return (numbers[0], numbers[1]) >= (major, minor)
+
+
+def _assert_local_brand(base: str, token: str) -> None:
+    """Home Assistant 2026.3+ serves custom_components/solis/brand locally."""
+    icon = (ROOT / "custom_components" / "solis" / "brand" / "icon.png").read_bytes()
+    request = urllib.request.Request(
+        f"{base}/api/brands/integration/solis/icon.png",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        body = response.read()
+        status = response.status
+    if status != 200 or body != icon:
+        raise CheckError(
+            f"local brand icon was not served: status {status}, "
+            f"{len(body)} bytes, expected {len(icon)}"
+        )
+    _log("Home Assistant served the local Solis brand icon")
+
+
 def _issues(base: str, token: str) -> list[dict[str, Any]]:
     import websockets
 
@@ -385,7 +478,7 @@ def _start_mock() -> subprocess.Popen[str]:
     raise CheckError("mock SolisCloud did not become healthy")
 
 
-def run_check(version: str) -> None:
+def run_check(version: str) -> None:  # noqa: PLR0915
     """Boot one Core version and exercise load, failure and recovery."""
     config = _config_dir()
     mock = _start_mock()
@@ -439,6 +532,10 @@ def run_check(version: str) -> None:
             f"{battery['entity_id']}={battery['state']} "
             f"{offline['entity_id']}={offline['state']}"
         )
+        _reconfigure(base, token, entry_id)
+        _log("Reconfigure accepted the same plants and a plant timezone")
+        if _version_at_least(version, 2026, 3):
+            _assert_local_brand(base, token)
         if total["attributes"].get("state_class") != "total_increasing":
             raise CheckError(f"energy total is not total_increasing: {total['attributes']}")
         if "last_reset" in total["attributes"]:
@@ -493,7 +590,16 @@ def run_check(version: str) -> None:
         blob = json.dumps(issue_rows)
         if "invalid_auth" not in blob:
             raise CheckError(f"reauth repair was not opened: {blob[:1500]}")
-        _log(f"Home Assistant {version} loaded Solis, recovered from 502, and opened reauth")
+        _mock_control({"mode": "ok"})
+        _finish_reauth(base, token)
+        _refresh(base, token, str(power["entity_id"]))
+        _wait_state(
+            base,
+            token,
+            str(power["entity_id"]),
+            lambda item: _number(item) == north["ac_power_w"],
+        )
+        _log(f"Home Assistant {version} loaded Solis, recovered from 502, and completed reauth")
         (ROOT / "lab").mkdir(exist_ok=True)
         (ROOT / "lab" / f"states-{version}.json").write_text(
             json.dumps(_states(base, token), indent=2),
