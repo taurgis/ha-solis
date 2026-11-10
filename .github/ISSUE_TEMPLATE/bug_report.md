@@ -1,0 +1,22 @@
+---
+name: Bug report
+about: A Solis entity, config flow or poll is wrong
+title: ""
+labels: bug
+---
+
+## What happened
+
+## What you expected
+
+## Integration version and Home Assistant version
+
+## Inverter and stick
+
+Model, single or three phase, hybrid or not, and the data logger
+(S2-WL-ST, S3-WIFI-ST, DLS-W, other).
+
+## Logs
+
+Enable debug for `custom_components.solis` and paste the relevant lines.
+Redact the API key and secret.

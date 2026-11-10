@@ -1,0 +1,21 @@
+ha-solis
+Copyright 2026 taurgis and contributors
+
+This project is a rewrite of the Home Assistant integration published as
+hultenvp/solis-sensor (https://github.com/hultenvp/solis-sensor), which is
+licensed under the Apache License, Version 2.0. It is not a GitHub fork of
+that repository.
+
+The SolisCloud request signing, unit handling and sensor vocabulary follow
+that project and its contributors, including the SolisCloud work credited
+there to LucidityCrash. Portions of the Platform API behaviour described in
+docs/research/solis-api.md are drawn from SolisCloud Platform API Document
+V2.0 and the earlier API PDFs distributed with hultenvp/solis-sensor.
+
+This project is not affiliated with Ginlong Technologies or Solis.
+Solis, SolisCloud and Ginlong are trademarks of their respective owners.
+The icons under custom_components/solis/brand/ are original and are not
+the Solis logo.
+
+You may use, modify and redistribute this project under the Apache License,
+Version 2.0. See the LICENSE file.

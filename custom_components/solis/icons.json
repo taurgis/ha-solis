@@ -1,0 +1,43 @@
+{
+  "entity": {
+    "sensor": {
+      "status": { "default": "mdi:solar-power" },
+      "ac_power": { "default": "mdi:solar-power" },
+      "frequency": { "default": "mdi:sine-wave" },
+      "temperature": { "default": "mdi:thermometer" },
+      "energy_today": { "default": "mdi:solar-power-variant" },
+      "energy_month": { "default": "mdi:solar-power-variant" },
+      "energy_year": { "default": "mdi:solar-power-variant" },
+      "energy_total": { "default": "mdi:solar-power-variant" },
+      "data_timestamp": { "default": "mdi:clock-outline" },
+      "grid_power": { "default": "mdi:transmission-tower" },
+      "consumption_power": { "default": "mdi:home-lightning-bolt" },
+      "battery_power": { "default": "mdi:battery-charging" },
+      "battery_soc": { "default": "mdi:battery" },
+      "battery_soh": { "default": "mdi:battery-heart" },
+      "battery_voltage": { "default": "mdi:battery" },
+      "battery_current": { "default": "mdi:battery" },
+      "battery_charge_today": { "default": "mdi:battery-plus" },
+      "battery_discharge_today": { "default": "mdi:battery-minus" },
+      "battery_charge_total": { "default": "mdi:battery-plus" },
+      "battery_discharge_total": { "default": "mdi:battery-minus" },
+      "force_charge_soc": { "default": "mdi:battery-arrow-up" },
+      "force_discharge_soc": { "default": "mdi:battery-arrow-down" },
+      "phase_voltage": { "default": "mdi:flash" },
+      "phase_current": { "default": "mdi:flash" },
+      "phase_power": { "default": "mdi:flash" },
+      "string_voltage": { "default": "mdi:solar-panel" },
+      "string_current": { "default": "mdi:solar-panel" },
+      "string_power": { "default": "mdi:solar-panel" },
+      "day_energy": { "default": "mdi:solar-power-variant" },
+      "grid_import_today": { "default": "mdi:transmission-tower-import" },
+      "grid_export_today": { "default": "mdi:transmission-tower-export" },
+      "load_today": { "default": "mdi:home-lightning-bolt" },
+      "rssi": { "default": "mdi:wifi" },
+      "power": { "default": "mdi:meter-electric" }
+    },
+    "binary_sensor": {
+      "alarm": { "default": "mdi:alert" }
+    }
+  }
+}

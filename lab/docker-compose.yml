@@ -1,0 +1,30 @@
+# Home Assistant plus the mock SolisCloud API.
+# From the repo root:
+#   docker compose -f lab/docker-compose.yml up --build
+# Then add the Solis integration with API URL http://mock:8765,
+# key id test-key and secret test-secret.
+
+services:
+  mock:
+    image: python:3.12-alpine
+    command: ["python", "-m", "mock_soliscloud", "--host", "0.0.0.0", "--port", "8765"]
+    working_dir: /opt/solis/tools
+    volumes:
+      - ..:/opt/solis:ro
+    environment:
+      PYTHONPATH: /opt/solis:/opt/solis/tools
+    ports:
+      - "8765:8765"
+
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:2026.11.1
+    ports:
+      - "8123:8123"
+    volumes:
+      - ha_config:/config
+      - ../custom_components/solis:/config/custom_components/solis:ro
+    depends_on:
+      - mock
+
+volumes:
+  ha_config:
