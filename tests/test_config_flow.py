@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from homeassistant.core import HomeAssistant
@@ -121,6 +122,57 @@ async def test_options_flow_keeps_timeout(
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert entry.options["request_timeout"] == 40
     assert entry.options["scan_interval"] == 180
+
+
+async def test_cloud_options_reject_a_30_second_poll(
+    hass: HomeAssistant, solis_server: tuple[Any, str]
+) -> None:
+    """A cloud entry cannot be polled faster than every 60 seconds."""
+    from homeassistant.data_entry_flow import InvalidData
+
+    _state, url = solis_server
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data=entry_data(url),
+        options=entry_options(),
+        unique_id=KEY_ID,
+        version=2,
+    )
+    entry.add_to_hass(hass)
+    started = await hass.config_entries.options.async_init(entry.entry_id)
+    with pytest.raises(InvalidData):
+        await hass.config_entries.options.async_configure(
+            started["flow_id"],
+            {"scan_interval": 30, "request_timeout": 40, "endpoint_interval": 2},
+        )
+
+
+async def test_local_options_allow_a_30_second_poll(hass: HomeAssistant) -> None:
+    """A local logger may poll every 30 seconds."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"source": "local", "logger_host": "127.0.0.1", "logger_serial": "1"},
+        options={
+            "scan_interval": 60,
+            "request_timeout": 30,
+            "endpoint_interval": 2,
+            "time_zone": "",
+        },
+        version=3,
+    )
+    entry.add_to_hass(hass)
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            "scan_interval": 30,
+            "request_timeout": 30,
+            "endpoint_interval": 2,
+            "time_zone": "",
+        },
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options["scan_interval"] == 30
 
 
 async def test_migrate_legacy_entry(hass: HomeAssistant, solis_server: tuple[Any, str]) -> None:

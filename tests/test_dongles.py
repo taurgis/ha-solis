@@ -19,6 +19,7 @@ from custom_components.solis.const import (
     DOMAIN,
     LOGGER_MBTCP,
     LOGGER_RTU,
+    LOGGER_S2,
     LOGGER_S5,
     REASON_CLOSED,
     REASON_GARBAGE,
@@ -193,12 +194,11 @@ class MbapBox:
             while True:
                 header = await asyncio.wait_for(reader.readexactly(6), timeout=2)
                 length = int.from_bytes(header[4:6], "big")
-                await asyncio.wait_for(reader.readexactly(length), timeout=2)
+                rest = await asyncio.wait_for(reader.readexactly(length), timeout=2)
                 function = 4
                 pdu = bytes((function | 0x80, self.code))
-                payload = (
-                    header[:2] + b"\x00\x00" + (len(pdu) + 1).to_bytes(2, "big") + b"\x01" + pdu
-                )
+                unit = rest[:1] or b"\x01"
+                payload = header[:2] + b"\x00\x00" + (len(pdu) + 1).to_bytes(2, "big") + unit + pdu
                 writer.write(payload)
                 await writer.drain()
         except (asyncio.IncompleteReadError, TimeoutError, ConnectionError, OSError):
@@ -466,7 +466,7 @@ async def test_rtu_resync_close_and_plain_exception(socket_enabled: None) -> Non
         with pytest.raises(ModbusException) as coded:
             await client.read_input(1, 3004, 2)
 
-        async def _boom(_reader: asyncio.StreamReader) -> bytes:
+        async def _boom(_reader: asyncio.StreamReader, *, echo: bytes = b"") -> bytes:
             raise ValueError("not a frame")
 
         client._read_frame = _boom  # type: ignore[method-assign]
@@ -730,3 +730,149 @@ async def test_rtu_flow_rejects_a_closed_port(hass: HomeAssistant, socket_enable
         {"logger_kind": LOGGER_RTU, "logger_host": "127.0.0.1", "logger_port": "1"},
     )
     assert failed["errors"]["base"] == "logger_gateway"
+
+
+async def test_mbap_rejects_short_and_foreign_unit(socket_enabled: None) -> None:
+    """A short body must not become missing registers, and the unit id has to match."""
+    from custom_components.solis.solarman import ModbusTcpClient
+
+    async def _serve(mode: str) -> tuple[asyncio.Server, int]:
+        async def _client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            header = await reader.readexactly(6)
+            length = int.from_bytes(header[4:6], "big")
+            body = await reader.readexactly(length)
+            frame = header + body
+            function = frame[7]
+            pdu = bytes((function, 2, 0x00, 0x01))
+            unit = b"\x09" if mode == "unit" else frame[6:7]
+            writer.write(frame[:2] + b"\x00\x00" + (len(pdu) + 1).to_bytes(2, "big") + unit + pdu)
+            await writer.drain()
+            writer.close()
+
+        server = await asyncio.start_server(_client, "127.0.0.1", 0)
+        return server, server.sockets[0].getsockname()[1]  # type: ignore[index]
+
+    short, short_port = await _serve("short")
+    foreign, foreign_port = await _serve("unit")
+    try:
+        client = ModbusTcpClient("127.0.0.1", port=short_port, timeout=1, gap=0)
+        with pytest.raises(SolisLoggerOffline) as short_err:
+            await client.read_input(1, 3004, 2)
+        await client.close()
+        other = ModbusTcpClient("127.0.0.1", port=foreign_port, timeout=1, gap=0)
+        with pytest.raises(SolisLoggerOffline) as unit_err:
+            await other.read_input(1, 3004, 2)
+        await other.close()
+    finally:
+        short.close()
+        foreign.close()
+        await short.wait_closed()
+        await foreign.wait_closed()
+    assert short_err.value.reason == REASON_GARBAGE
+    assert unit_err.value.reason == REASON_WRONG_SLAVE
+
+
+async def test_rtu_skips_an_echo_and_a_stale_buffer(socket_enabled: None) -> None:
+    """A transparent bridge that echoes the request still yields the real registers."""
+
+    async def _client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        request = await reader.readexactly(8)
+        writer.write(request + _rtu_reply(request[0], request[1], [60, 61]))
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_server(_client, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]  # type: ignore[index]
+    client = RtuTcpClient("127.0.0.1", port=port, timeout=1, gap=0)
+    client._buffer = _rtu_reply(1, 4, [1])
+    try:
+        assert await client.read_input(1, 3004, 2) == [60, 61]
+    finally:
+        await client.close()
+        server.close()
+        await server.wait_closed()
+
+    async def _short(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await reader.readexactly(8)
+        writer.write(_rtu_reply(1, 4, [60]))
+        await writer.drain()
+        writer.close()
+
+    short = await asyncio.start_server(_short, "127.0.0.1", 0)
+    short_port = short.sockets[0].getsockname()[1]  # type: ignore[index]
+    short_client = RtuTcpClient("127.0.0.1", port=short_port, timeout=1, gap=0)
+    try:
+        with pytest.raises(SolisLoggerOffline) as truncated:
+            await short_client.read_input(1, 3004, 2)
+    finally:
+        await short_client.close()
+        short.close()
+        await short.wait_closed()
+    assert truncated.value.reason == REASON_WRONG_PROTOCOL
+
+
+async def test_modbus_exception_during_a_poll_does_not_zero_energy(
+    socket_enabled: None,
+) -> None:
+    """Exception 3 after a good poll pauses the session and keeps the last total."""
+    from mock_soliscloud.stick import captured_registers
+
+    registers = captured_registers()
+    calls = {"n": 0}
+
+    async def _client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        try:
+            while True:
+                header = await reader.readexactly(6)
+                length = int.from_bytes(header[4:6], "big")
+                body = await reader.readexactly(length)
+                frame = header + body
+                calls["n"] += 1
+                function = frame[7]
+                address = int.from_bytes(frame[8:10], "big")
+                count = int.from_bytes(frame[10:12], "big")
+                if calls["n"] > 3 or address >= 33000:
+                    pdu = bytes((function | 0x80, 2 if address >= 33000 else 3))
+                else:
+                    values = [
+                        registers.get(address + offset, 0) & 0xFFFF for offset in range(count)
+                    ]
+                    pdu = bytes((function, len(values) * 2))
+                    for value in values:
+                        pdu += value.to_bytes(2, "big")
+                writer.write(
+                    frame[:2] + b"\x00\x00" + (len(pdu) + 1).to_bytes(2, "big") + frame[6:7] + pdu
+                )
+                await writer.drain()
+        except (asyncio.IncompleteReadError, ConnectionError, OSError):
+            writer.close()
+
+    server = await asyncio.start_server(_client, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]  # type: ignore[index]
+    transport = SolisLocalTransport(
+        "127.0.0.1",
+        0,
+        slave=1,
+        register_map="string",
+        inverter_serial="SOLIS001",
+        protocol="mbtcp",
+        serial_unsupported=True,
+        timeout=2,
+        gap=0,
+        port=port,
+        kind=LOGGER_S2,
+        stick_serial="5A",
+    )
+    try:
+        first = await transport.async_read()
+        assert first.inverters[0].energy_total_kwh == 21970
+        with pytest.raises(SolisLoggerBusy) as busy:
+            await transport.async_read()
+    finally:
+        await transport.close()
+        server.close()
+        await server.wait_closed()
+    assert busy.value.reason == REASON_UNSUPPORTED
+    assert transport.last_snapshot is not None
+    assert transport.last_snapshot.inverters[0].energy_total_kwh == 21970
+    assert transport.last_snapshot.inverters[0].ac_power_w == first.inverters[0].ac_power_w

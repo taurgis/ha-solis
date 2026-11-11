@@ -53,6 +53,7 @@ from .const import (
     LOGGER_MBTCP,
     LOGGER_S2,
     LOGGER_SOLARMAN,
+    MIN_CLOUD_SCAN_INTERVAL,
     MIN_LOCAL_SCAN_INTERVAL,
     SOLARMAN_OUI,
     SOURCE_BOTH,
@@ -97,6 +98,20 @@ _USER_SCHEMA = vol.Schema(
 def _schema(schema: vol.Schema) -> Any:
     """Adapt a voluptuous schema to the config-flow type of this Home Assistant."""
     return cast(Any, schema)
+
+
+def _scan_bounds(entry: ConfigEntry) -> tuple[int, int]:
+    """Cloud stays at 60 seconds or slower. A local logger may poll every 30."""
+    source = str(entry.data.get(CONF_SOURCE, SOURCE_CLOUD))
+    if source == SOURCE_CLOUD:
+        return MIN_CLOUD_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
+    return MIN_LOCAL_SCAN_INTERVAL, DEFAULT_LOCAL_SCAN_INTERVAL
+
+
+def _shown_scan(entry: ConfigEntry) -> int:
+    floor, default = _scan_bounds(entry)
+    saved = int(entry.options.get(CONF_SCAN_INTERVAL, default))
+    return max(floor, min(3600, saved))
 
 
 def _normalize_url(url: str) -> str:
@@ -334,6 +349,7 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
 
     def _reconfigure_schema(self, entry: ConfigEntry) -> vol.Schema:
         options = entry.options
+        floor, _default_scan = _scan_bounds(entry)
         return vol.Schema(
             {
                 vol.Required(
@@ -345,8 +361,8 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
                 ): cv.multi_select(self._discovered),
                 vol.Required(
                     CONF_SCAN_INTERVAL,
-                    default=options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
-                ): vol.All(vol.Coerce(int), vol.Range(min=MIN_LOCAL_SCAN_INTERVAL, max=3600)),
+                    default=_shown_scan(entry),
+                ): vol.All(vol.Coerce(int), vol.Range(min=floor, max=3600)),
                 vol.Required(
                     CONF_REQUEST_TIMEOUT,
                     default=options.get(CONF_REQUEST_TIMEOUT, DEFAULT_REQUEST_TIMEOUT),
@@ -467,22 +483,12 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
         """Ask which device answered port 502 when the web page did not."""
         pending = self._choice
         assert pending is not None
-        request, probe, source = pending
+        _request, probe, _source = pending
         errors: dict[str, str] = {}
         suggested = probe.suggested_kind or LOGGER_S2
         if user_input is not None:
             chosen = str(user_input.get(CONF_LOGGER_KIND) or suggested)
-            detection = "confirmed_s2_wl_st" if chosen == LOGGER_S2 else "confirmed_modbus_tcp"
-            chosen_probe = replace(
-                probe,
-                kind=chosen,
-                needs_choice=False,
-                confidence="confirmed",
-                detection=detection,
-            )
-            mac = _mac_for(self._sticks, request.logger_serial, chosen_probe.kind)
-            fields, unique = logger_setup(request, chosen_probe, mac=mac, source=source)
-            return await self._finish_logger(fields, unique)
+            return await self._finish_choice(pending, chosen)
         schema = vol.Schema({**_choice_field(suggested)})
         return self.async_show_form(
             step_id="logger_choice",
@@ -490,6 +496,24 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
             errors=errors,
             description_placeholders={"note": probe.identify_note},
         )
+
+    async def _finish_choice(
+        self,
+        pending: tuple[LoggerRequest, LoggerProbe, str],
+        chosen: str,
+    ) -> ConfigFlowResult:
+        request, probe, source = pending
+        detection = "confirmed_s2_wl_st" if chosen == LOGGER_S2 else "confirmed_modbus_tcp"
+        chosen_probe = replace(
+            probe,
+            kind=chosen,
+            needs_choice=False,
+            confidence="confirmed",
+            detection=detection,
+        )
+        mac = _mac_for(self._sticks, request.logger_serial, chosen_probe.kind)
+        fields, unique = logger_setup(request, chosen_probe, mac=mac, source=source)
+        return await self._finish_logger(fields, unique)
 
     async def _logger_updates(
         self, user_input: Mapping[str, Any], *, source: str
@@ -601,6 +625,7 @@ class SolisOptionsFlow(OptionsFlow):
         """Edit scan interval, timeout, the per-endpoint gap and the timezone."""
         errors: dict[str, str] = {}
         options = self.config_entry.options
+        floor, _default_scan = _scan_bounds(self.config_entry)
         if user_input is not None:
             zone, zone_error = clean_time_zone(
                 user_input.get(CONF_TIME_ZONE, options.get(CONF_TIME_ZONE, ""))
@@ -620,8 +645,8 @@ class SolisOptionsFlow(OptionsFlow):
             {
                 vol.Required(
                     CONF_SCAN_INTERVAL,
-                    default=options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
-                ): vol.All(vol.Coerce(int), vol.Range(min=MIN_LOCAL_SCAN_INTERVAL, max=3600)),
+                    default=_shown_scan(self.config_entry),
+                ): vol.All(vol.Coerce(int), vol.Range(min=floor, max=3600)),
                 vol.Required(
                     CONF_REQUEST_TIMEOUT,
                     default=options.get(CONF_REQUEST_TIMEOUT, DEFAULT_REQUEST_TIMEOUT),

@@ -57,10 +57,12 @@ from .errors import (
     SolisCloudError,
     SolisDataError,
     SolisLoggerBusy,
+    SolisLoggerOffline,
     SolisRateLimitError,
     SolisServerError,
     SolisTimeoutError,
 )
+from .local_transport import asleep_snapshot
 from .loggers import detection_why
 from .models import SolisSnapshot, snapshot_from_dict, snapshot_to_dict
 from .transport import SolisTransport
@@ -307,6 +309,8 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
             return await self._hold(err)
         except SolisLoggerBusy as err:
             return await self._hold_degraded(err)
+        except SolisLoggerOffline as err:
+            return await self._hold_offline(err)
         except SolisCloudError as err:
             self._recover_pace()
             if "no inverters" in str(err) or "no stations" in str(err):
@@ -394,6 +398,8 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
         self._note_degraded()
         held = self._last_good
         if held is None:
+            held = await self._load_stored()
+        if held is None:
             raise _failed(_BUSY_UPDATE.get(self._reason, "update_logger_busy")) from err
         degraded = replace(
             held,
@@ -405,6 +411,20 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
         )
         self._last_good = degraded
         return degraded
+
+    async def _hold_offline(self, err: SolisLoggerOffline) -> SolisSnapshot:
+        """After a restart, night keeps the stored totals instead of failing setup."""
+        held = self._last_good
+        if held is None:
+            held = await self._load_stored()
+        if held is None:
+            raise _failed("update_failed") from err
+        self._clear_logger_lock()
+        self._slow_for_sleep()
+        asleep = asleep_snapshot(held)
+        self._last_good = asleep
+        await self._persist(asleep)
+        return asleep
 
     def _recover_pace(self) -> None:
         self._transient_failures = 0

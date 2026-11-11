@@ -12,7 +12,7 @@ import struct
 
 from ..const import REASON_CLOSED, REASON_WRONG_PROTOCOL, REASON_WRONG_SLAVE
 from ..errors import SolisLoggerBusy, SolisLoggerOffline
-from ..solarman import ModbusException, _PacedClient, classify_io, crc16
+from ..solarman import ModbusException, _PacedClient, classify_io, crc16, host_gate
 
 _IO_ERRORS = (TimeoutError, ConnectionError, OSError, asyncio.IncompleteReadError, ValueError)
 
@@ -92,7 +92,7 @@ class RtuTcpClient(_PacedClient):
 
     async def read_input(self, slave: int, address: int, count: int) -> list[int]:
         """Read input registers. Exception 1 retries the fallback function once."""
-        async with self._lock:
+        async with host_gate(self.host, self._port), self._lock:
             await self._pace()
             try:
                 return await self._exchange(slave, address, count, self.function)
@@ -107,9 +107,12 @@ class RtuTcpClient(_PacedClient):
     async def _exchange(self, slave: int, address: int, count: int, function: int) -> list[int]:
         reader, writer = await self._ensure()
         request = rtu_request(slave, function, address, count)
+        # Bytes left from the previous reply are not this reply. A transparent
+        # bridge often echoes the request; that echo is not a register read.
+        self._buffer = b""
         try:
             await self._send(writer, request)
-            frame = await self._read_frame(reader)
+            frame = await self._read_frame(reader, echo=request)
         except (SolisLoggerBusy, SolisLoggerOffline):
             await self.close()
             raise
@@ -124,7 +127,10 @@ class RtuTcpClient(_PacedClient):
                 reason=REASON_WRONG_SLAVE,
             )
         try:
-            return decode_rtu(frame, function)
+            words = decode_rtu(frame, function)
+            if len(words) != count:
+                raise ValueError("rtu register count does not match")
+            return words
         except ModbusException:
             raise
         except ValueError as err:
@@ -135,8 +141,14 @@ class RtuTcpClient(_PacedClient):
                 reason=REASON_WRONG_PROTOCOL,
             ) from err
 
-    async def _read_frame(self, reader: asyncio.StreamReader) -> bytes:
+    async def _read_frame(self, reader: asyncio.StreamReader, *, echo: bytes = b"") -> bytes:
         while True:
+            if echo and (self._buffer.startswith(echo) or echo.startswith(self._buffer)):
+                if len(self._buffer) < len(echo):
+                    self._buffer += await self._read_chunk(reader)
+                    continue
+                self._buffer = self._buffer[len(echo) :]
+                continue
             frame, rest = take_rtu(self._buffer)
             if frame is not None:
                 self._buffer = rest
@@ -144,14 +156,17 @@ class RtuTcpClient(_PacedClient):
             if rest is not self._buffer:
                 self._buffer = rest
                 continue
-            try:
-                chunk = await asyncio.wait_for(reader.read(256), timeout=self._timeout)
-            except (TimeoutError, ConnectionError, OSError) as err:
-                raise classify_io(err, connected=True) from err
-            if not chunk:
-                raise SolisLoggerOffline(
-                    "logger closed the connection",
-                    connected=True,
-                    reason=REASON_CLOSED,
-                )
-            self._buffer += chunk
+            self._buffer += await self._read_chunk(reader)
+
+    async def _read_chunk(self, reader: asyncio.StreamReader) -> bytes:
+        try:
+            chunk = await asyncio.wait_for(reader.read(256), timeout=self._timeout)
+        except (TimeoutError, ConnectionError, OSError) as err:
+            raise classify_io(err, connected=True) from err
+        if not chunk:
+            raise SolisLoggerOffline(
+                "logger closed the connection",
+                connected=True,
+                reason=REASON_CLOSED,
+            )
+        return chunk

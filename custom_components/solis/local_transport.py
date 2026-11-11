@@ -83,7 +83,13 @@ from .registers import (
     decode_string,
     serial_from_words,
 )
-from .solarman import ModbusException, ModbusTcpClient, SolarmanClient, discover_sticks
+from .solarman import (
+    ModbusException,
+    ModbusTcpClient,
+    SolarmanClient,
+    discover_sticks,
+    host_gate,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -328,12 +334,10 @@ class SolisLocalTransport:
     async def _s2_offline(self, err: SolisLoggerOffline | None) -> SolisSnapshot:
         """A closed port or a silent socket is a firmware fault, not night."""
         failure = _s2_busy(self._host, err)
-        if (
-            failure is not None
-            and self._kind == LOGGER_S5
-            and failure.reason == REASON_TCP_DISABLED
-        ):
-            failure = SolisLoggerBusy(str(failure), reason=REASON_S5_CLOSED)
+        if self._kind == LOGGER_S5 and err is not None and (failure is not None or err.connected):
+            # A closed S5 port is firmware, including a socket that was open and
+            # then reset. S2 still treats that close as the inverter powering off.
+            failure = SolisLoggerBusy(str(err), reason=REASON_S5_CLOSED)
         if failure is not None:
             self.degraded_reason = failure.reason
             self._arm_backoff()
@@ -385,6 +389,10 @@ class SolisLocalTransport:
 
     async def _read_words(self) -> dict[int, int]:
         last_offline: SolisLoggerOffline | None = None
+        async with host_gate(self._host, self._port):
+            return await self._read_words_locked(last_offline)
+
+    async def _read_words_locked(self, last_offline: SolisLoggerOffline | None) -> dict[int, int]:
         for protocol in self._candidates():
             client = await self._open(protocol)
             try:
@@ -392,6 +400,12 @@ class SolisLocalTransport:
             except SolisLoggerBusy:
                 await self._drop()
                 raise
+            except ModbusException as err:
+                await self._drop()
+                raise SolisLoggerBusy(
+                    f"{self._host} returned Modbus exception {err.code}",
+                    reason=REASON_UNSUPPORTED,
+                ) from err
             except SolisLoggerOffline as err:
                 await self._drop()
                 last_offline = err
@@ -754,6 +768,32 @@ async def probe_logger(
     """Find the framing, slave and register map. One attempt, then stop on a reset."""
     order = (protocol,) if protocol in _PROTOCOLS else _PROTOCOLS
     slaves = (only_slave,) if only_slave is not None else (1, 2, 3)
+    async with host_gate(host, port):
+        return await _probe_locked(
+            host,
+            logger_serial,
+            order=order,
+            slaves=slaves,
+            timeout=timeout,
+            port=port,
+            inverter_serial=inverter_serial,
+            serial_unsupported=serial_unsupported,
+            gap=gap,
+        )
+
+
+async def _probe_locked(
+    host: str,
+    logger_serial: int,
+    *,
+    order: tuple[str, ...],
+    slaves: tuple[int, ...],
+    timeout: float,
+    port: int,
+    inverter_serial: str,
+    serial_unsupported: bool,
+    gap: float,
+) -> LoggerProbe:
     last_offline: SolisLoggerOffline | None = None
     for framing in order:
         client = _client(host, logger_serial, framing, port=port, timeout=timeout, gap=gap)
@@ -1217,6 +1257,13 @@ async def _probe_named_solarman(request: LoggerRequest, *, serial_unsupported: b
 
 async def _probe_s2(request: LoggerRequest, *, serial_unsupported: bool) -> LoggerProbe:
     port = request.port or S2_PORT
+    async with host_gate(request.host, port):
+        return await _probe_s2_locked(request, port=port, serial_unsupported=serial_unsupported)
+
+
+async def _probe_s2_locked(
+    request: LoggerRequest, *, port: int, serial_unsupported: bool
+) -> LoggerProbe:
     numeric = int(request.logger_serial) if request.logger_serial.isdigit() else 0
     client = ModbusTcpClient(
         request.host,

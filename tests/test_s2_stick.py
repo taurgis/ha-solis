@@ -17,6 +17,7 @@ from .conftest import entry_options
 from custom_components.solis.const import (
     DOMAIN,
     LOGGER_S2,
+    LOGGER_S5,
     REASON_SILENT,
     REASON_TCP_DISABLED,
     SOURCE_BOTH,
@@ -163,6 +164,17 @@ async def test_s2_without_a_sample_stays_offline() -> None:
     assert await transport._find_stick() is None
     with pytest.raises(SolisLoggerOffline):
         await transport._s2_offline(SolisLoggerOffline("closed", connected=True, reason="closed"))
+    s5 = SolisLocalTransport(
+        "127.0.0.1",
+        0,
+        slave=1,
+        register_map="string",
+        inverter_serial="S5LOCAL1",
+        kind=LOGGER_S5,
+    )
+    with pytest.raises(SolisLoggerBusy) as closed_port:
+        await s5._s2_offline(SolisLoggerOffline("fin", connected=True, reason="closed"))
+    assert closed_port.value.reason == "s5_port_closed"
 
 
 async def test_night_keeps_totals(socket_enabled: None) -> None:
@@ -196,10 +208,8 @@ async def test_night_keeps_totals(socket_enabled: None) -> None:
 
 
 async def test_one_extra_connection_is_reset(socket_enabled: None) -> None:
-    """The stick allows one Modbus client. The next session is reset."""
-    emulator, port = await _s2_port(
-        StickState(kind="s2", tcp_port=0, udp_port=0, max_clients=1, slow=1)
-    )
+    """A second client waits. The stick never sees two sockets at once."""
+    emulator, port = await _s2_port(StickState(kind="s2", tcp_port=0, udp_port=0, slow=1))
     first = ModbusTcpClient("127.0.0.1", port=port, timeout=3, gap=0)
 
     async def _hold() -> None:
@@ -210,14 +220,15 @@ async def test_one_extra_connection_is_reset(socket_enabled: None) -> None:
 
     task = asyncio.create_task(_hold())
     await asyncio.sleep(0.05)
-    second = ModbusTcpClient("127.0.0.1", port=port, timeout=0.5, gap=0)
+    second = ModbusTcpClient("127.0.0.1", port=port, timeout=2, gap=0)
     try:
-        with pytest.raises(SolisLoggerBusy):
-            await second.read_input(1, 3004, 1)
+        second_words = await second.read_input(1, 3004, 1)
         await task
     finally:
         await second.close()
         await emulator.close()
+    assert second_words
+    assert emulator.max_open == 1
 
 
 async def test_closing_the_session_can_shut_port_502(socket_enabled: None) -> None:
