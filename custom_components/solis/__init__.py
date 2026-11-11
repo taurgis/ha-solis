@@ -21,9 +21,16 @@ from .config_flow import migrate_entry_data
 from .const import (
     CONF_API_URL,
     CONF_ENDPOINT_INTERVAL,
+    CONF_INVERTER_SERIAL,
     CONF_KEY_ID,
     CONF_KEY_SECRET,
+    CONF_LOGGER_HOST,
+    CONF_LOGGER_MAC,
+    CONF_LOGGER_SERIAL,
+    CONF_REGISTER_MAP,
     CONF_REQUEST_TIMEOUT,
+    CONF_SLAVE_ID,
+    CONF_SOURCE,
     CONF_STATION_IDS,
     CONF_TIME_ZONE,
     DEFAULT_ENDPOINT_INTERVAL,
@@ -31,8 +38,12 @@ from .const import (
     DOMAIN,
     ISSUE_LEGACY_CONTROL,
     POLL_REPAIRS,
+    REGISTER_STRING,
+    SOURCE_BOTH,
+    SOURCE_CLOUD,
 )
 from .coordinator import SolisCoordinator
+from .local_transport import SolisLocalTransport, SolisPriorityTransport
 from .migration import async_migrate_devices
 from .transport import SolisCloudTransport
 
@@ -44,23 +55,8 @@ type SolisConfigEntry = ConfigEntry[SolisCoordinator]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: SolisConfigEntry) -> bool:
-    """Set up one SolisCloud account."""
-    client = SolisCloudClient(
-        async_get_clientsession(hass),
-        base_url=entry.data[CONF_API_URL],
-        key_id=entry.data[CONF_KEY_ID],
-        secret=entry.data[CONF_KEY_SECRET],
-        timeout=float(entry.options.get(CONF_REQUEST_TIMEOUT, DEFAULT_REQUEST_TIMEOUT)),
-        endpoint_interval=float(
-            entry.options.get(CONF_ENDPOINT_INTERVAL, DEFAULT_ENDPOINT_INTERVAL)
-        ),
-    )
-    transport = SolisCloudTransport(
-        client,
-        set(entry.data.get(CONF_STATION_IDS, [])),
-        time_zone=str(entry.options.get(CONF_TIME_ZONE, "")),
-        hass_time_zone=hass.config.time_zone,
-    )
+    """Set up one Solis account, local logger first when it is configured."""
+    transport = _build_transport(hass, entry)
     coordinator = SolisCoordinator(hass, entry, transport)
     try:
         await coordinator.async_config_entry_first_refresh()
@@ -91,14 +87,73 @@ async def async_unload_entry(hass: HomeAssistant, entry: SolisConfigEntry) -> bo
     return unloaded
 
 
-async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Migrate a solis-sensor 4.x entry to version 2."""
-    _LOGGER.info("Migrating Solis config entry from version %s", entry.version)
-    had_control = bool(entry.data.get("portal_control_api"))
-    data, options = migrate_entry_data(entry.data, entry.options)
-    hass.config_entries.async_update_entry(
-        entry, data=data, options=options, version=2, minor_version=1
+def _build_transport(
+    hass: HomeAssistant, entry: SolisConfigEntry
+) -> SolisCloudTransport | SolisPriorityTransport:
+    """Cloud only, local only, or local with cloud totals as a fallback."""
+    source = str(entry.data.get(CONF_SOURCE, SOURCE_CLOUD))
+    cloud: SolisCloudTransport | None = None
+    if source in {SOURCE_CLOUD, SOURCE_BOTH} and entry.data.get(CONF_KEY_ID):
+        client = SolisCloudClient(
+            async_get_clientsession(hass),
+            base_url=entry.data[CONF_API_URL],
+            key_id=entry.data[CONF_KEY_ID],
+            secret=entry.data[CONF_KEY_SECRET],
+            timeout=float(entry.options.get(CONF_REQUEST_TIMEOUT, DEFAULT_REQUEST_TIMEOUT)),
+            endpoint_interval=float(
+                entry.options.get(CONF_ENDPOINT_INTERVAL, DEFAULT_ENDPOINT_INTERVAL)
+            ),
+        )
+        cloud = SolisCloudTransport(
+            client,
+            set(entry.data.get(CONF_STATION_IDS, [])),
+            time_zone=str(entry.options.get(CONF_TIME_ZONE, "")),
+            hass_time_zone=hass.config.time_zone,
+        )
+    if source == SOURCE_CLOUD or not entry.data.get(CONF_LOGGER_HOST):
+        if cloud is None:
+            raise ConfigEntryNotReady("Solis has no cloud account or local logger")
+        return cloud
+    local = SolisLocalTransport(
+        str(entry.data[CONF_LOGGER_HOST]),
+        int(entry.data[CONF_LOGGER_SERIAL]),
+        slave=int(entry.data.get(CONF_SLAVE_ID, 1)),
+        register_map=str(entry.data.get(CONF_REGISTER_MAP, REGISTER_STRING)),
+        inverter_serial=str(entry.data.get(CONF_INVERTER_SERIAL) or ""),
+        mac=str(entry.data.get(CONF_LOGGER_MAC) or ""),
+        timeout=float(entry.options.get(CONF_REQUEST_TIMEOUT, DEFAULT_REQUEST_TIMEOUT)),
+        on_host=lambda host, mac: _store_logger_host(hass, entry, host, mac),
     )
+    return SolisPriorityTransport(source, local, cloud)
+
+
+def _store_logger_host(hass: HomeAssistant, entry: SolisConfigEntry, host: str, mac: str) -> None:
+    """Persist a DHCP or discovery address change. Logged once per new address."""
+    if entry.data.get(CONF_LOGGER_HOST) == host and (
+        not mac or entry.data.get(CONF_LOGGER_MAC) == mac
+    ):
+        return
+    _LOGGER.info("Solarman logger %s is now at %s", entry.data.get(CONF_LOGGER_SERIAL), host)
+    data = {**entry.data, CONF_LOGGER_HOST: host}
+    if mac:
+        data[CONF_LOGGER_MAC] = mac
+    hass.config_entries.async_update_entry(entry, data=data)
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Migrate a solis-sensor 4.x entry, then mark cloud-only entries as version 3."""
+    _LOGGER.info("Migrating Solis config entry from version %s", entry.version)
+    if entry.version < 2:
+        had_control = bool(entry.data.get("portal_control_api"))
+        data, options = migrate_entry_data(entry.data, entry.options)
+        hass.config_entries.async_update_entry(
+            entry, data=data, options=options, version=2, minor_version=1
+        )
+    else:
+        had_control = False
+    if entry.version < 3:
+        data = {**entry.data, CONF_SOURCE: entry.data.get(CONF_SOURCE, SOURCE_CLOUD)}
+        hass.config_entries.async_update_entry(entry, data=data, version=3, minor_version=1)
     if had_control:
         ir.async_create_issue(
             hass,

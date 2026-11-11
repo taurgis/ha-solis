@@ -112,6 +112,7 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
         self.auth_failed = False
         self._open_issues: set[str] = set()
         self._transient_failures = 0
+        self._asleep_polls = 0
         self._last_good: SolisSnapshot | None = None
         self._store: Store[dict[str, Any]] = Store(
             hass,
@@ -157,6 +158,12 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
         return await self._accept(snapshot)
 
     async def _accept(self, snapshot: SolisSnapshot) -> SolisSnapshot:
+        if snapshot.source == "asleep":
+            self._slow_for_sleep()
+            self._last_good = snapshot
+            await self._persist(snapshot)
+            return snapshot
+        self._asleep_polls = 0
         self._recover_pace()
         self._last_good = snapshot
         self.auth_failed = False
@@ -165,6 +172,13 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
         self._clear_recovered()
         await self._persist(snapshot)
         return snapshot
+
+    def _slow_for_sleep(self) -> None:
+        """Back off while the logger is powered down. Do not open a repair."""
+        self._asleep_polls += 1
+        base = self._base_interval.total_seconds()
+        delay = min(900.0, max(base, 60.0 * float(2 ** min(self._asleep_polls, 4))))
+        self.update_interval = timedelta(seconds=delay)
 
     def _recover_pace(self) -> None:
         self._transient_failures = 0

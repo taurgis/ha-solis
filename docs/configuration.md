@@ -2,7 +2,10 @@
 
 | Field | Where | Meaning |
 | --- | --- | --- |
+| Connection | Entry | `cloud`, `local`, or `both`. Cloud is the default. `local` is the Solarman logger. `both` reads the logger first and lets SolisCloud fill energy totals the logger left empty. |
 | API URL | Entry | SolisCloud host, including the port. Public http is upgraded to https. |
+| Logger address | Entry | Current IP of the stick. Discovery fills it in. A later DHCP lease is written back into this field. |
+| Logger serial | Entry | Solarman serial. This, with the MAC, is the identity of the stick. The config-entry unique id for a local or fallback entry is this serial. |
 | API key ID | Entry | Key id from API management. Also the config-entry unique id. Diagnostics redact it. |
 | API key secret | Entry | Key secret. Stored in the config entry. Diagnostics redact it. It is not written to the log. |
 | Plants | Entry | Which stations to poll. Reconfigure to change the set. |
@@ -13,7 +16,28 @@
 
 Reauthentication replaces the key id and secret and refuses a key that
 belongs to a different account. Reconfigure changes the URL, the plant
-selection, the polling numbers and the timezone. Saving options does not
-drop the timeout or the timezone.
+selection, the polling numbers and the timezone. A cloud entry can gain a
+logger from the same form. Saving options does not drop the timeout or the
+timezone.
+
+## Local logger
+
+Choose `local` or `both` on the first step. The inverter has to be
+producing: the stick is powered by the inverter, and at night it disappears
+from the LAN. Discovery listens for the IGEN UDP 48899 reply and fills in
+the address and the serial. Type the address and the serial yourself when
+discovery finds nothing and you already know them. The connection test picks
+the Modbus slave (1, then 2,
+then 3) and the register map.
+
+The same stick cannot be added twice. DHCP on MAC prefix `BC:54:F9`, and a
+failed connect that is followed by a discovery reply with the same serial,
+update the stored address. The log line is `Solarman logger <serial> is now
+at <ip>`.
+
+`both` uses the stick for live readings. Cloud numbers are used only for
+energy totals the stick left empty. A stick that is off for the night stays
+on the last local totals and publishes live power as 0. The dashboard stays
+on that asleep sample.
 
 The same API key cannot be added twice.

@@ -65,5 +65,13 @@ class SolisTimeoutError(SolisCloudError):
     """The platform did not answer before the configured timeout."""
 
 
+class SolisLoggerOffline(SolisCloudError):
+    """The Solarman logger is unreachable.
+
+    The stick is powered by the inverter. At night both are off, so TCP and
+    discovery time out. That is an asleep inverter, not a bad API key.
+    """
+
+
 class SolisDataError(SolisCloudError):
     """The platform returned its 'abnormal data' failure (often code ``1``)."""

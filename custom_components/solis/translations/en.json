@@ -3,16 +3,30 @@
     "step": {
       "user": {
         "title": "Connect to SolisCloud",
-        "description": "Use the API key id and secret from SolisCloud account settings. A portal username is not required.",
+        "description": "Choose cloud, the Solarman logger, or local first with SolisCloud as a fallback. Local discovery only works while the inverter is producing, because the stick is powered by the inverter and is off at night.",
         "data": {
+          "source": "Connection",
           "api_url": "API URL",
           "key_id": "API key ID",
           "key_secret": "API key secret"
         },
         "data_description": {
-          "api_url": "Use the host that issued the key, including the port. The international service listens on port 13333.",
-          "key_id": "The key id from SolisCloud API management. This is not the portal username.",
+          "source": "Cloud only, the Solarman logger on your network, or local first with SolisCloud as a fallback. Local discovery only works while the inverter is producing.",
+          "api_url": "Use the host that issued the key, including the port. The international service listens on port 13333. Leave this unused for a local-only setup.",
+          "key_id": "The key id from SolisCloud API management. This is not the portal username. Leave it empty for local only.",
           "key_secret": "Shown once when the key is created. Stored in the config entry and redacted from diagnostics."
+        }
+      },
+      "logger": {
+        "title": "Solarman logger",
+        "description": "Discovered loggers: {found}. The inverter must be producing. If nothing is listed, it is night or the stick is off: type the IP and the logger serial from the Solarman or SolisCloud device page.",
+        "data": {
+          "logger_host": "Logger IP",
+          "logger_serial": "Logger serial"
+        },
+        "data_description": {
+          "logger_host": "Current DHCP address. The integration finds the stick again by serial when this changes.",
+          "logger_serial": "The numeric serial printed on the stick and returned by UDP discovery."
         }
       },
       "stations": {
@@ -41,6 +55,9 @@
         "title": "Reconfigure Solis",
         "description": "Update the API host, the plants to follow, and how often to poll.",
         "data": {
+          "source": "Connection",
+          "logger_host": "Logger IP",
+          "logger_serial": "Logger serial",
           "api_url": "API URL",
           "station_ids": "Plants",
           "scan_interval": "Poll interval (seconds)",
@@ -53,6 +70,9 @@
           "scan_interval": "Seconds between polls. The cloud sample is about five minutes, so the default is 300. Minimum 60.",
           "request_timeout": "Seconds to wait for one HTTP call. Default 30.",
           "endpoint_interval": "Minimum seconds between calls to the same API path. Default 2, which stays under the published limit of two calls per second.",
+          "source": "Cloud only, local only, or local with SolisCloud fallback.",
+          "logger_host": "Current logger IP. Leave empty to keep the saved address.",
+          "logger_serial": "Logger serial. Fill this together with the IP to attach a stick to an existing cloud entry.",
           "api_url": "Use the host that issued the key, including the port. The international service listens on port 13333.",
           "station_ids": "Only the selected plants are polled. Change the set later with reconfigure."
         }
@@ -81,13 +101,16 @@
       "timeout": "SolisCloud did not answer before the timeout.",
       "cannot_connect": "Could not reach SolisCloud.",
       "no_stations": "The account returned no plants. Check the API key and that the plant has an id.",
-      "unknown": "Unexpected SolisCloud error."
+      "unknown": "Unexpected SolisCloud error.",
+      "logger_asleep": "The logger did not answer. The inverter has to be producing; at night the stick has no power and discovery finds nothing."
     },
     "abort": {
       "already_configured": "This API key is already configured.",
       "reauth_successful": "Authentication refreshed.",
       "reconfigure_successful": "Configuration updated.",
       "cannot_connect": "Could not reach SolisCloud to load plants.",
+      "not_solis_logger": "That device is not a Solarman logger.",
+      "logger_not_setup": "No Solis entry is using this logger yet.",
       "wrong_account": "That API key belongs to a different account."
     }
   },
@@ -119,6 +142,14 @@
   },
   "entity": {
     "sensor": {
+      "data_source": {
+        "name": "Data source",
+        "state": {
+          "local": "Local logger",
+          "cloud": "SolisCloud",
+          "asleep": "Inverter asleep"
+        }
+      },
       "status": {
         "name": "Status",
         "state": {

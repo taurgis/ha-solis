@@ -33,7 +33,18 @@ failed while the rest of the account was readable. Energy totals keep the
 last value. Status reads `stale`. A restart during an outage loads those
 totals again from the last snapshot and from RestoreSensor.
 
-**Power is 0.** The inverter state is offline and the sample is fresh.
+**Power is 0.** The inverter state is offline and the sample is fresh. On a
+local logger that is also what you see at night: the data-source sensor
+reads `asleep`, energy totals stay, and no repair is opened.
+
+**Discovery found nothing.** The inverter has to be producing. The stick is
+powered by the inverter, so a night-time setup cannot see it. Run the flow
+again after sunrise, or type the address and the logger serial.
+
+**The logger changed address.** DHCP can hand the stick a new lease after it
+wakes. The integration finds it by serial (UDP 48899) or by MAC prefix
+`BC:54:F9` and updates the existing entry. One info log names the new
+address. You do not add the stick again.
 
 **Energy dropped to 0 in the middle of the day.** A null or zero sample is
 held at the last good value for that period. If the number still falls, the

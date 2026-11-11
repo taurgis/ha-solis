@@ -27,6 +27,11 @@ faster than the configured interval. The first setup with no saved snapshot
 raises `ConfigEntryNotReady`, so Home Assistant retries instead of failing
 the entry permanently.
 
+A Solarman logger is polled on the same interval. While the stick is off
+with the inverter, the interval backs off from one minute and stops at 15
+minutes. The next successful connect, including one that finds the stick on
+a new address, returns to the configured interval.
+
 A failed inverter list keeps the previous inverters. An empty list is ignored
 for two polls before it is believed. One inverter's detail can fail while
 the others update; that inverter's live sensors go unavailable and its energy

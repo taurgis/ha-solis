@@ -51,7 +51,8 @@ rules:
     status: done
     comment: >-
       README and docs/index.md describe SolisCloud plants and inverters,
-      read-only API access, and the relationship to hultenvp/solis-sensor.
+      the optional Solarman logger, read-only access, and the relationship
+      to hultenvp/solis-sensor.
   docs-installation-instructions:
     status: done
     comment: >-
@@ -133,15 +134,17 @@ rules:
       2026.8 and newer, and with via_device on 2025.10.
   diagnostics: done
   discovery:
-    status: exempt
+    status: done
     comment: >-
-      A SolisCloud account is not discoverable on the local network. A
-      future local transport could add Modbus discovery.
+      Solarman loggers are found with the IGEN UDP 48899 broadcast
+      (WIFIKIT-214028-READ and HF-A11ASSISTHREAD). DHCP watches the
+      BC:54:F9 OUI and updates an existing entry's address.
   discovery-update-info:
-    status: exempt
+    status: done
     comment: >-
-      There is no network address to refresh. The API host is chosen in
-      the config flow and can be changed with reconfigure.
+      The logger is identified by its serial and MAC. UDP discovery and
+      DHCP both write the current IP into the config entry and reload it.
+      The change is logged once at info.
   docs-data-update: done
   docs-examples: done
   docs-known-limitations: done

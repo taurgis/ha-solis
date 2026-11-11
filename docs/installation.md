@@ -25,6 +25,10 @@ Use the host that issued the key, including the port:
 The config flow offers the international URL. A migrated entry keeps the host
 it already had. A public `http://` URL is stored as `https://`.
 
+A Solarman stick on the same LAN can be added on that first step. Discovery
+only works while the inverter is producing. Details are in
+[Configuration](configuration.md).
+
 ## HACS
 
 Add `https://github.com/taurgis/ha-solis` as a custom repository, category

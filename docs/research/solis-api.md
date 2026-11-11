@@ -529,30 +529,14 @@ SolisCloud, and writing holdings from a map for a different HMI.
 | ha-solarman / pysolarmanv5 | DLS-W and other V5 sticks on 8899 | Yes | Depends on the definition | Poll interval | S3 has no 8899. OTA can close it. |
 | Direct RS485 bridge | Adapter on the COM port | Yes | Yes | Seconds | Bus collisions with the stock stick. Wrong register map. |
 
-### Should ha-solis grow a local mode?
+### Local mode
 
-Not in this change. Cloud is what solis-sensor users have today, and it is the
-only no-hardware path for an S3-WIFI-ST. A local mode is worth a follow-up
-for people who already run Pho3niX90 or a Waveshare bridge and want one
-integration, but it should not try to replace Pho3niX90's register maintenance
-on day one.
-
-If it happens, the shape should be:
-
-1. Another `SolisTransport` that returns the same `SolisSnapshot`. Entities
-   already depend on that object, not on HTTP.
-2. Read-only Modbus TCP (port 502) and a Solarman V5 reader (port 8899) as
-   separate modules, selected in the config flow. Writes stay behind an
-   explicit switch that is off by default, with the issue 437 warning.
-3. The mock's fixture catalog (`tools/mock_soliscloud/catalog.py`) is the
-   contract: single-phase grid, three-phase hybrid with battery, second
-   three-phase inverter, stale and offline. A Modbus or V5 emulator should
-   emit those same snapshot fields. It should not pretend to be the HTTP
-   mock. The HTTP mock only exists because the cloud API is HTTP and it
-   checks the HMAC.
-
-The HTTP mock's `POST /__control` is a test hook, not a Solis API, and not the
-extension point for Modbus.
+Solarman V5 on TCP 8899 is implemented, read-only, and preferred when a
+logger is configured. Cloud remains the path for an S3-WIFI-ST, which has no
+local port. The protocol, the register check against a real stick, the night
+model, and why the client lives in this repo are in
+[solarman-local.md](solarman-local.md). Modbus TCP on port 502 is a later
+dongle behind the same snapshot type. Writes stay out.
 
 ## What Thomas should decide
 

@@ -96,6 +96,15 @@ _INVERTER: tuple[SolisSensorDescription, ...] = (
         options=["online", "offline", "alarm", "stale", "unknown"],
     ),
     _measurement(
+        "data_source",
+        kind="inverter",
+        device_class=SensorDeviceClass.ENUM,
+        unit=None,
+        state_class=None,
+        options=["local", "cloud", "asleep"],
+        category=EntityCategory.DIAGNOSTIC,
+    ),
+    _measurement(
         "ac_power",
         kind="inverter",
         device_class=SensorDeviceClass.POWER,
@@ -375,6 +384,7 @@ def _inverter_value(inverter: InverterSnapshot, key: str, now: datetime) -> Stat
     condition = inverter.condition(now)
     values: dict[str, Any] = {
         "status": condition,
+        "data_source": inverter.data_source,
         "ac_power": _power(inverter.ac_power_w, condition),
         "frequency": None if condition == "stale" else inverter.frequency_hz,
         "temperature": None if condition == "stale" else inverter.temperature_c,

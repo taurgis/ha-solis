@@ -15,6 +15,23 @@ CONF_SCAN_INTERVAL = "scan_interval"
 CONF_REQUEST_TIMEOUT = "request_timeout"
 CONF_ENDPOINT_INTERVAL = "endpoint_interval"
 CONF_TIME_ZONE = "time_zone"
+CONF_SOURCE = "source"
+CONF_LOGGER_HOST = "logger_host"
+CONF_LOGGER_SERIAL = "logger_serial"
+CONF_LOGGER_MAC = "logger_mac"
+CONF_SLAVE_ID = "slave_id"
+CONF_REGISTER_MAP = "register_map"
+CONF_INVERTER_SERIAL = "inverter_serial"
+
+SOURCE_CLOUD = "cloud"
+SOURCE_LOCAL = "local"
+SOURCE_BOTH = "both"
+REGISTER_STRING = "string"
+REGISTER_HYBRID = "hybrid"
+
+# IGEN / Solarman Wi-Fi sticks. The user's stick answered discovery as
+# bc:54:f9:f5:7b:5c.
+SOLARMAN_OUI = "bc:54:f9"
 
 DEFAULT_API_URL = "https://www.soliscloud.com:13333"
 DEFAULT_SCAN_INTERVAL = 300

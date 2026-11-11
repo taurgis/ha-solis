@@ -4,7 +4,8 @@ SolisCloud monitoring for Home Assistant: plants, inverters, batteries,
 alarms, data loggers and export meters.
 
 The integration polls the SolisCloud Platform API v2 with the API key and
-secret. It does not send control writes.
+secret, and can read a Solarman logger on the LAN while the inverter is
+producing. It does not send control writes.
 
 Supported devices are any Solis inverter that appears on a SolisCloud
 account: grid and hybrid, single phase and three phase, with or without a

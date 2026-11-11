@@ -26,11 +26,18 @@ from .api import SolisCloudClient
 from .const import (
     CONF_API_URL,
     CONF_ENDPOINT_INTERVAL,
+    CONF_INVERTER_SERIAL,
     CONF_KEY_ID,
     CONF_KEY_SECRET,
     CONF_LEGACY_NAME,
+    CONF_LOGGER_HOST,
+    CONF_LOGGER_MAC,
+    CONF_LOGGER_SERIAL,
+    CONF_REGISTER_MAP,
     CONF_REQUEST_TIMEOUT,
     CONF_SCAN_INTERVAL,
+    CONF_SLAVE_ID,
+    CONF_SOURCE,
     CONF_STATION_IDS,
     CONF_TIME_ZONE,
     DEFAULT_API_URL,
@@ -38,16 +45,31 @@ from .const import (
     DEFAULT_REQUEST_TIMEOUT,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
+    SOLARMAN_OUI,
+    SOURCE_BOTH,
+    SOURCE_CLOUD,
+    SOURCE_LOCAL,
 )
-from .errors import SolisAuthError, SolisClockError, SolisCloudError, SolisTimeoutError
+from .errors import (
+    SolisAuthError,
+    SolisClockError,
+    SolisCloudError,
+    SolisLoggerOffline,
+    SolisTimeoutError,
+)
+from .local_transport import probe_logger
+from .solarman import Stick, discover_sticks, format_mac
 
 _LOGGER = logging.getLogger(__name__)
 
 _USER_SCHEMA = vol.Schema(
     {
+        vol.Optional(CONF_SOURCE, default=SOURCE_CLOUD): vol.In(
+            [SOURCE_CLOUD, SOURCE_LOCAL, SOURCE_BOTH]
+        ),
         vol.Required(CONF_API_URL, default=DEFAULT_API_URL): str,
-        vol.Required(CONF_KEY_ID): str,
-        vol.Required(CONF_KEY_SECRET): str,
+        vol.Optional(CONF_KEY_ID, default=""): str,
+        vol.Optional(CONF_KEY_SECRET, default=""): str,
     }
 )
 
@@ -98,12 +120,14 @@ def clean_time_zone(value: object) -> tuple[str, str | None]:
 class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a Solis config flow."""
 
-    VERSION = 2
+    VERSION = 3
 
     def __init__(self) -> None:
         """Prepare discovered-station state."""
         self._discovered: dict[str, str] = {}
         self._credentials: dict[str, Any] = {}
+        self._source = SOURCE_CLOUD
+        self._sticks: list[Stick] = []
 
     @staticmethod
     @callback
@@ -115,16 +139,25 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
         """Ask for the API URL and key."""
         errors: dict[str, str] = {}
         if user_input is not None:
-            user_input = {
-                **user_input,
-                CONF_API_URL: _normalize_url(str(user_input[CONF_API_URL])),
-                CONF_KEY_ID: str(user_input[CONF_KEY_ID]).strip(),
-                CONF_KEY_SECRET: str(user_input[CONF_KEY_SECRET]).strip(),
-            }
-            errors = await self._load_stations(user_input)
-            if not errors:
-                self._credentials = user_input
-                return await self.async_step_stations()
+            self._source = str(user_input.get(CONF_SOURCE) or SOURCE_CLOUD)
+            if self._source == SOURCE_LOCAL:
+                return await self.async_step_logger()
+            if not str(user_input.get(CONF_KEY_ID) or "").strip():
+                errors["base"] = "invalid_auth"
+            else:
+                user_input = {
+                    **user_input,
+                    CONF_API_URL: _normalize_url(
+                        str(user_input.get(CONF_API_URL) or DEFAULT_API_URL)
+                    ),
+                    CONF_KEY_ID: str(user_input[CONF_KEY_ID]).strip(),
+                    CONF_KEY_SECRET: str(user_input.get(CONF_KEY_SECRET) or "").strip(),
+                    CONF_SOURCE: self._source,
+                }
+                errors = await self._load_stations(user_input)
+                if not errors:
+                    self._credentials = user_input
+                    return await self.async_step_stations()
         return self.async_show_form(
             step_id="user", data_schema=_schema(_USER_SCHEMA), errors=errors
         )
@@ -148,17 +181,22 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
                     data_schema=_schema(schema),
                     errors={"base": "no_stations"},
                 )
+            title = self._title(station_ids)
+            data = {
+                CONF_API_URL: self._credentials[CONF_API_URL],
+                CONF_KEY_ID: self._credentials[CONF_KEY_ID],
+                CONF_KEY_SECRET: self._credentials[CONF_KEY_SECRET],
+                CONF_STATION_IDS: station_ids,
+                CONF_SOURCE: self._source,
+            }
+            if self._source == SOURCE_BOTH:
+                self._credentials = data
+                return await self.async_step_logger()
             await self.async_set_unique_id(self._credentials[CONF_KEY_ID])
             self._abort_if_unique_id_configured()
-            title = self._title(station_ids)
             return self.async_create_entry(
                 title=title,
-                data={
-                    CONF_API_URL: self._credentials[CONF_API_URL],
-                    CONF_KEY_ID: self._credentials[CONF_KEY_ID],
-                    CONF_KEY_SECRET: self._credentials[CONF_KEY_SECRET],
-                    CONF_STATION_IDS: station_ids,
-                },
+                data=data,
                 options={
                     CONF_SCAN_INTERVAL: DEFAULT_SCAN_INTERVAL,
                     CONF_REQUEST_TIMEOUT: DEFAULT_REQUEST_TIMEOUT,
@@ -210,6 +248,10 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Update the URL, station selection and polling knobs."""
         entry = self._get_reconfigure_entry()
+        if user_input is None and str(entry.data.get(CONF_SOURCE, SOURCE_CLOUD)) == SOURCE_LOCAL:
+            self._source = SOURCE_LOCAL
+            self._credentials = dict(entry.data)
+            return await self.async_step_logger()
         errors: dict[str, str] = {}
         if not self._discovered:
             errors = await self._load_stations(dict(entry.data))
@@ -226,17 +268,50 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
             if zone_error:
                 errors = {CONF_TIME_ZONE: zone_error}
             elif not errors and station_ids:
-                return self.async_update_reload_and_abort(
-                    entry,
-                    data_updates={CONF_API_URL: url, CONF_STATION_IDS: station_ids},
-                    options={
+                data_updates: dict[str, Any] = {
+                    CONF_API_URL: url,
+                    CONF_STATION_IDS: station_ids,
+                }
+                unique_id: str | None = None
+                host = str(user_input.get(CONF_LOGGER_HOST) or "").strip()
+                serial_text = str(user_input.get(CONF_LOGGER_SERIAL) or "").strip()
+                if host and serial_text:
+                    try:
+                        probed = await probe_logger(host, int(serial_text))
+                    except (SolisLoggerOffline, ValueError):
+                        errors["base"] = "logger_asleep"
+                    else:
+                        data_updates.update(
+                            {
+                                CONF_SOURCE: SOURCE_BOTH,
+                                CONF_LOGGER_HOST: host,
+                                CONF_LOGGER_SERIAL: serial_text,
+                                CONF_SLAVE_ID: probed.slave,
+                                CONF_REGISTER_MAP: probed.register_map,
+                                CONF_INVERTER_SERIAL: probed.inverter_serial,
+                            }
+                        )
+                        unique_id = serial_text
+                if not errors:
+                    options = {
                         **entry.options,
                         CONF_SCAN_INTERVAL: int(user_input[CONF_SCAN_INTERVAL]),
                         CONF_REQUEST_TIMEOUT: int(user_input[CONF_REQUEST_TIMEOUT]),
                         CONF_ENDPOINT_INTERVAL: float(user_input[CONF_ENDPOINT_INTERVAL]),
                         CONF_TIME_ZONE: zone,
-                    },
-                )
+                    }
+                    if unique_id is None:
+                        return self.async_update_reload_and_abort(
+                            entry,
+                            data_updates=data_updates,
+                            options=options,
+                        )
+                    return self.async_update_reload_and_abort(
+                        entry,
+                        data_updates=data_updates,
+                        unique_id=unique_id,
+                        options=options,
+                    )
             elif not station_ids and not errors:
                 errors = {"base": "no_stations"}
         schema = self._reconfigure_schema(entry)
@@ -271,6 +346,15 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_TIME_ZONE,
                     default=options.get(CONF_TIME_ZONE, ""),
                 ): str,
+                vol.Optional(
+                    CONF_SOURCE, default=str(entry.data.get(CONF_SOURCE, SOURCE_CLOUD))
+                ): vol.In([SOURCE_CLOUD, SOURCE_LOCAL, SOURCE_BOTH]),
+                vol.Optional(
+                    CONF_LOGGER_HOST, default=str(entry.data.get(CONF_LOGGER_HOST, ""))
+                ): str,
+                vol.Optional(
+                    CONF_LOGGER_SERIAL, default=str(entry.data.get(CONF_LOGGER_SERIAL, ""))
+                ): str,
             }
         )
 
@@ -291,6 +375,102 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
             return {"base": "no_stations"}
         self._discovered = stations
         return {}
+
+    async def async_step_logger(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Confirm a Solarman logger. The inverter has to be producing."""
+        errors: dict[str, str] = {}
+        if user_input is None:
+            self._sticks = await discover_sticks(timeout=1.2)
+        else:
+            try:
+                serial = int(str(user_input[CONF_LOGGER_SERIAL]).strip())
+                host = str(user_input[CONF_LOGGER_HOST]).strip()
+                probe = await probe_logger(host, serial)
+            except (SolisLoggerOffline, ValueError, TimeoutError):
+                errors["base"] = "logger_asleep"
+            else:
+                return await self._finish_logger(host, serial, probe)
+        found = self._sticks[0] if self._sticks else None
+        schema = vol.Schema(
+            {
+                vol.Required(CONF_LOGGER_HOST, default="" if found is None else found.host): str,
+                vol.Required(
+                    CONF_LOGGER_SERIAL, default="" if found is None else str(found.serial)
+                ): str,
+            }
+        )
+        return self.async_show_form(
+            step_id="logger",
+            data_schema=_schema(schema),
+            errors=errors,
+            description_placeholders={
+                "found": ", ".join(f"{stick.host} ({stick.serial})" for stick in self._sticks)
+                or "none",
+            },
+        )
+
+    async def _finish_logger(self, host: str, serial: int, probe: Any) -> ConfigFlowResult:
+        mac = ""
+        for stick in self._sticks:
+            if stick.serial == serial:
+                mac = stick.mac
+                break
+        logger_data = {
+            CONF_LOGGER_HOST: host,
+            CONF_LOGGER_SERIAL: str(serial),
+            CONF_LOGGER_MAC: mac,
+            CONF_SLAVE_ID: probe.slave,
+            CONF_REGISTER_MAP: probe.register_map,
+            CONF_INVERTER_SERIAL: probe.inverter_serial,
+            CONF_SOURCE: self._source,
+        }
+        await self.async_set_unique_id(str(serial))
+        if self.source == "reconfigure":
+            entry = self._get_reconfigure_entry()
+            base = dict(entry.data)
+            base.update(logger_data)
+            return self.async_update_reload_and_abort(
+                entry,
+                data=base,
+                unique_id=str(serial),
+            )
+        self._abort_if_unique_id_configured(updates={CONF_LOGGER_HOST: host})
+        data = {**self._credentials, **logger_data}
+        title = data.get(CONF_INVERTER_SERIAL) or f"Solis {serial}"
+        return self.async_create_entry(
+            title=str(title),
+            data=data,
+            options={
+                CONF_SCAN_INTERVAL: DEFAULT_SCAN_INTERVAL,
+                CONF_REQUEST_TIMEOUT: DEFAULT_REQUEST_TIMEOUT,
+                CONF_ENDPOINT_INTERVAL: DEFAULT_ENDPOINT_INTERVAL,
+                CONF_TIME_ZONE: "",
+            },
+        )
+
+    async def async_step_dhcp(self, discovery_info: Any) -> ConfigFlowResult:
+        """Update a known logger when DHCP hands it a new address."""
+        mac = format_mac(str(_info(discovery_info, "macaddress")))
+        host = str(_info(discovery_info, "ip"))
+        if not mac.startswith(SOLARMAN_OUI):
+            return self.async_abort(reason="not_solis_logger")
+        for entry in self._async_current_entries():
+            stored = format_mac(str(entry.data.get(CONF_LOGGER_MAC) or ""))
+            serial = str(entry.data.get(CONF_LOGGER_SERIAL) or "")
+            if not stored or stored != mac:
+                continue
+            if entry.data.get(CONF_LOGGER_HOST) == host:
+                return self.async_abort(reason="already_configured")
+            _LOGGER.info("Solarman logger %s is now at %s", serial, host)
+            if str(entry.unique_id) == serial:
+                await self.async_set_unique_id(serial)
+                self._abort_if_unique_id_configured(updates={CONF_LOGGER_HOST: host})
+            return self.async_update_reload_and_abort(
+                entry,
+                data_updates={CONF_LOGGER_HOST: host},
+                reason="already_configured",
+            )
+        return self.async_abort(reason="logger_not_setup")
 
     def _title(self, station_ids: list[str]) -> str:
         names = [self._discovered.get(station_id, station_id) for station_id in station_ids]
@@ -362,6 +542,12 @@ async def _fetch_stations(hass: Any, data: Mapping[str, Any]) -> dict[str, str]:
             continue
         stations[station_id] = str(row.get("stationName") or row.get("sno") or station_id)
     return stations
+
+
+def _info(discovery: Any, key: str) -> Any:
+    if isinstance(discovery, Mapping):
+        return discovery.get(key, "")
+    return getattr(discovery, key, "")
 
 
 def migrate_entry_data(
