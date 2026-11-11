@@ -94,16 +94,23 @@ rules:
     comment: >-
       docs/configuration.md and docs/installation.md describe the API URL,
       key id, secret, and plant selection asked for during setup.
-  entity-unavailable: done
+  entity-unavailable:
+    status: done
+    comment: >-
+      Instant sensors are unavailable when the sample is stale or that
+      inverter could not be read. A sustained cloud outage hides live
+      readings the same way. Energy totals stay at the last good value.
+      With no snapshot yet, the update fails and entities are not created.
   integration-owner:
     status: done
     comment: manifest.json codeowners is @taurgis.
   log-when-unavailable:
     status: done
     comment: >-
-      Update failures raise UpdateFailed and are not logged again in
-      _async_update_data. DataUpdateCoordinator logs the first failure and
-      logs once at info when the next poll succeeds.
+      A sustained outage logs one warning when its repair opens, and one
+      info line when the cloud returns. Polls in between are not logged.
+      UpdateFailed is used when there is no snapshot to hold, and
+      DataUpdateCoordinator logs that first failure and the recovery once.
   parallel-updates:
     status: done
     comment: >-
@@ -177,7 +184,12 @@ rules:
       icons.json covers entity translation keys, including status state
       icons. Device-class icons are left to the device class.
   reconfiguration-flow: done
-  repair-issues: done
+  repair-issues:
+    status: done
+    comment: >-
+      Auth, clock, abnormal data, an empty plant, legacy control, and a
+      sustained SolisCloud outage open repairs. The outage repair is removed
+      when a poll succeeds. Unloading the entry removes the poll repairs.
   stale-devices:
     status: done
     comment: >-

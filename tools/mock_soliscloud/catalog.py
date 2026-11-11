@@ -190,6 +190,8 @@ def inverter_details() -> dict[str, dict[str, Any]]:
             "batteryPower": 1.2,
             "batteryPowerStr": "kW",
             "batteryPowerPec": "1",
+            "batteryPowerZheng": 0,
+            "batteryPowerFu": 1.2,
             "storageBatteryCurrent": -4.0,
             "storageBatteryCurrentStr": "A",
             "storageBatteryVoltage": 51.2,

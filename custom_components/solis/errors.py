@@ -47,7 +47,18 @@ class SolisRateLimitError(SolisCloudError):
 
 
 class SolisServerError(SolisCloudError):
-    """HTTP 5xx or an equivalent gateway failure."""
+    """HTTP 5xx, an HTML error page, or an equivalent gateway failure."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str | None = None,
+        retry_after: float | None = None,
+    ) -> None:
+        """Store a Retry-After hint when the gateway sent one."""
+        super().__init__(message, code=code)
+        self.retry_after = retry_after
 
 
 class SolisTimeoutError(SolisCloudError):

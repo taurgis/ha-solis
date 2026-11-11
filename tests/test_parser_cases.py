@@ -77,6 +77,63 @@ def test_battery_discharge_without_current_uses_fu() -> None:
     assert parsed.has_battery
 
 
+def test_battery_direction_fields_outrank_current() -> None:
+    """Zheng minus Fu is the signed power even when current disagrees."""
+    charging = parse_inverter(
+        _detail(
+            batteryPower=1.2,
+            batteryPowerStr="kW",
+            batteryPowerZheng=1.2,
+            batteryPowerFu=0,
+            storageBatteryCurrent=-4,
+            storageBatteryCurrentStr="A",
+        )
+    )
+    discharging = parse_inverter(
+        _detail(
+            batteryPower=1.2,
+            batteryPowerStr="kW",
+            batteryPowerZheng=0,
+            batteryPowerFu=1.2,
+            storageBatteryCurrent=4,
+            storageBatteryCurrentStr="A",
+        )
+    )
+    assert charging.battery_power_w == 1200
+    assert discharging.battery_power_w == -1200
+
+
+def test_unsigned_battery_power_takes_the_current_sign() -> None:
+    """A positive-only batteryPower is negated only while current is negative."""
+    discharging = parse_inverter(
+        _detail(
+            batteryPower=1.2,
+            batteryPowerStr="kW",
+            storageBatteryCurrent=-4,
+            storageBatteryCurrentStr="A",
+        )
+    )
+    charging = parse_inverter(
+        _detail(
+            batteryPower=1.2,
+            batteryPowerStr="kW",
+            storageBatteryCurrent=9.3,
+            storageBatteryCurrentStr="A",
+        )
+    )
+    already_signed = parse_inverter(
+        _detail(
+            batteryPower=-0.375,
+            batteryPowerStr="kW",
+            storageBatteryCurrent=9.3,
+            storageBatteryCurrentStr="A",
+        )
+    )
+    assert discharging.battery_power_w == -1200
+    assert charging.battery_power_w == 1200
+    assert already_signed.battery_power_w == -375
+
+
 def test_epoch_seconds_and_month_boundary() -> None:
     """Second-resolution timestamps parse, and month start uses the plant offset."""
     assert parse_epoch(1_700_000_000) == datetime.fromtimestamp(1_700_000_000, UTC)

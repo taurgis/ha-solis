@@ -17,6 +17,21 @@
   plant sensors are what the energy dashboard can use for those.
 - Control writes (`/v2/api/control`, `/v2/api/atRead`) are not implemented.
   Polling them has been reported to drop the logger's cloud session.
+- `device_class: energy_storage` is not used. The 2024 developer portal lists
+  `batteryCapacity` and `inverterBatteryCapacity` as "battery capacity" with
+  no unit. The V2.0.2 samples do not include those fields or a companion
+  unit string. `batteryCapacitySoc` is a percentage. Plant `capacity` is
+  nameplate kW. SoC times an assumed kWh figure would invent stored energy.
+  See the research note.
+- Plants stay in one config entry. Config subentries would split that entry
+  and put the existing entity ids at risk. The plant picker already selects
+  any number of plants under one API key.
+- No purpose-specific trigger or condition platform is registered. Battery
+  and energy device classes already supply Home Assistant's built-in triggers
+  where the core version has them.
+- The integration does not add its own derived energy sensors. From Home
+  Assistant 2026.11 the energy dashboard can derive those from the existing
+  power sensors.
 - The legacy Ginlong `/cpro/` portal API is not implemented.
 - S3-WIFI-ST sticks do not expose a local Modbus port. Local reads are a
   possible later transport, not part of this version. See

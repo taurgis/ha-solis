@@ -20,14 +20,18 @@ README documents.
 fault. Disabling and recreating the API key, or a Solis ticket, is what
 clears it.
 
-**Entities unavailable.** The last poll failed after retries (timeout or HTTP
-5xx). They return when a poll succeeds. A single failed `inverterList` does
-not delete inverters that were already known. The same failure is logged once
-at warning.
+**SolisCloud is unreachable.** The repair `cloud_outage` opens after three
+failed polls, or immediately when the last good snapshot is already more than
+15 minutes old. Live readings are hidden. Energy totals stay put. The repair
+clears itself on the next successful poll. A single blip does not open it and
+does not start reauthentication. An HTML 403 from a gateway is this case, not
+a bad key.
 
 **Power unavailable while energy is still there.** The inverter's
-`dataTimestamp` is older than 15 minutes. Energy totals keep the last value.
-Status reads `stale`.
+`dataTimestamp` is older than 15 minutes, or that inverter's detail call
+failed while the rest of the account was readable. Energy totals keep the
+last value. Status reads `stale`. A restart during an outage loads those
+totals again from the last snapshot and from RestoreSensor.
 
 **Power is 0.** The inverter state is offline and the sample is fresh.
 

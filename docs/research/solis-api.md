@@ -188,10 +188,13 @@ Rules implemented here:
   a zero into statistics (issues 382, 421, 533). A lifetime total also
   ignores a later reading that is smaller or that jumps by more than
   100 000 kWh.
-- `storageBatteryCurrent` is signed. Battery power is given the sign of that
-  current, which is the fix solis-sensor applied for issue 158. The PDF also
-  has `batteryPowerZheng` / `batteryPowerFu` and a typo field `bstteryCurrent`.
-  The typo is accepted as a fallback.
+- Battery power is positive when the battery is charging and negative when
+  it is discharging. The cloud does not document that sign in one sentence,
+  but the same split shows up in a real `inverterDay` sample, in measured
+  `storageBatteryCurrent`, and in the local Modbus map. Details are in
+  [Battery power sign](#battery-power-sign) below. `bstteryCurrent` is the
+  typo in the V2.0.2 field table and is accepted as a fallback for
+  `storageBatteryCurrent`.
 - `dataTimestamp` is documented as "under UTC+8" but the samples are Unix
   epoch milliseconds (`1687846773000`). The companion `dataTimestampStr` is the
   part rendered in China time. We parse the number as an epoch and ignore the
@@ -210,11 +213,101 @@ Rules implemented here:
   Leaving the previous `pac` in place is the stale-generation bug in issue
   366. A timestamp older than 15 minutes, or a missing timestamp, marks
   instantaneous sensors unavailable and the status sensor `stale`, while
-  energy totals keep their last good value. A failed poll (timeout, 5xx, auth)
-  marks the whole coordinator unavailable. Those are different states.
+  energy totals keep their last good value. A short cloud outage keeps the
+  last snapshot. A sustained one hides live readings, holds energy totals,
+  and opens the `cloud_outage` repair. An auth failure still fails the update.
 - `code` `1` with the Chinese message for abnormal data (`数据异常`) is an
   account-side fault. The upstream README says recreating the API key or a
   Solis ticket is what clears it. We surface a repair and do not spin on it.
+
+### Battery power sign
+
+Positive battery power means the battery is charging. Negative means it is
+discharging. The charging binary sensor is on only when that signed value is
+greater than zero.
+
+The V2.0.2 PDF names `batteryPower` as "Battery power" and does not say which
+sign is which. It does ship two extra numbers in the inverter-detail sample,
+with no description: `batteryPowerZheng` and `batteryPowerFu`. A published
+`inverterDay` row from a Solis hybrid shows how they fit together. While the
+signed power was −382.69, `batteryPowerFu` was 382.69 and `batteryPowerZheng`
+was 0. On the same row, grid `psum` of +18 matched `psumZheng` 18 and
+`psumFu` 0. So Zheng is the positive component and Fu is the magnitude of
+the negative component, and the signed value is Zheng minus Fu.
+
+Source: [hultenvp/solis-sensor discussion 71](https://github.com/hultenvp/solis-sensor/discussions/71),
+the 14 February 2022 `inverterDay` payload.
+
+`storageBatteryCurrent` carries the same direction when `batteryPower` itself
+is unsigned. jmason measured +9.3 A while the SolisCloud screen showed
+charging, and −2.7 A while it showed discharging
+([issue 158](https://github.com/hultenvp/solis-sensor/issues/158)). Newer data
+loggers report `batteryPower` as a positive magnitude in both directions
+([pull 227](https://github.com/hultenvp/solis-sensor/pull/227)). solis-sensor
+3.2.0 therefore negates a positive power when current is negative, and does
+not flip a power that is already negative. viking2010 confirmed the result:
+charge stays positive, discharge becomes negative
+([issue 158, after 3.2.0](https://github.com/hultenvp/solis-sensor/issues/158)).
+
+Order used here:
+
+1. If `batteryPowerZheng` or `batteryPowerFu` is greater than zero, publish
+   Zheng minus Fu, in the unit of `batteryPowerStr` (kW when that string is
+   missing). This wins over current, including when the two disagree.
+2. Otherwise, if `batteryPower` is already negative, keep it. Older loggers
+   publish a signed value.
+3. Otherwise, if `batteryPower` is positive and `storageBatteryCurrent` (or
+   `bstteryCurrent` / `batteryCurrent`) is negative, negate it.
+
+Local Modbus agrees with that direction, and it is not what this cloud
+integration reads. Solis hybrid register 33135 is "battery current direction",
+0 = charging and 1 = discharging. Register 33134 is signed battery current.
+Register pair 33149–33150 is battery power and is often a positive magnitude
+even while discharging, so the direction register has to supply the sign.
+Sources: the Solis S5/S6 map on
+[Modbus Connect](https://modbusconnect.com/configurations/solis-s5-s6),
+the S5-EH1P register export in
+[peufeu2/GrugBus](https://github.com/peufeu2/GrugBus/blob/main/grugbus/devices/Solis_S5_EH1P_6K_2020.csv)
+(33135 text: charging and discharging direction; 33149 noted as looking
+always positive while discharging), and
+[fskelly's hybrid reader](https://gist.github.com/fskelly/06780abe32e90a4e0c09bb428b1bfec6)
+which treats 33135 as 0 = charge and 1 = discharge.
+[Pho3niX90/solis_modbus](https://github.com/Pho3niX90/solis_modbus)
+polls that battery block (voltage, current, state of charge, power) as one
+group. There is no official Home Assistant core Solis integration; Solarman
+is a different stick protocol.
+
+[wills106/homeassistant-solax-modbus](https://github.com/wills106/homeassistant-solax-modbus)
+has a Solis plugin and uses the same polarity for battery power in its
+control docs: positive charges, negative discharges
+([SolaX remote-control calculations](https://homeassistant-solax-modbus.readthedocs.io/en/latest/solax-remote-control-redesigned/),
+which the Solis plugin shares as the battery-interface convention).
+
+Confidence: high for "positive = charging, negative = discharging", because
+the day-sample components, the measured current, the solis-sensor 3.2.0
+behaviour, and Modbus register 33135 all say the same thing. Medium for
+applying `batteryPowerStr` to Zheng and Fu: the day sample used the same
+number for the signed value and for Fu, and the PDF does not give those two
+fields their own unit string.
+
+### Stored battery energy
+
+No `energy_storage` sensor is published.
+
+The [2024 Solis developer portal](https://developer.soliscloud.com/guide/data-access-user.html)
+lists `batteryCapacity` on inverter detail and both `batteryCapacity` and
+`inverterBatteryCapacity` on plant detail, each described only as "Battery
+capacity". The V2.0.2 PDF samples do not include those fields and do not
+give them a unit string. `batteryCapacitySoc` is state of charge in percent.
+Plant `capacity` / `capacityStr` is installed inverter capacity, and the
+samples use kW. Discussion 71 maps the old "remaining battery capacity"
+sensor to `batteryCapacitySoc`, not to a kWh field.
+
+[aspeakman/SolisControl](https://github.com/aspeakman/SolisControl) asks the
+user to type nominal battery kWh. It does not read that number from the API.
+SoC multiplied by `batteryCapacity` would require assuming the undocumented
+field is kWh. That assumption is not in the Solis documents, so the sensor
+is not derived.
 
 ### Error codes in Appendix 1
 

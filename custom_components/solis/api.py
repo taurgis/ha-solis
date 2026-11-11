@@ -12,6 +12,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 import json
+import random
 from typing import Any
 
 from aiohttp import ClientError, ClientSession, ClientTimeout
@@ -29,8 +30,14 @@ from .parser import extract_records, page_count
 from .signing import signed_headers
 
 _AUTH_CODES = {"R0000", "I0012", "B0011"}
+_AUTH_WORDS = ("password", "signature", "api key", "key id")
 _MAX_PAGES = 20
 _PAGE_SIZE = 100
+_RETRY_CAP = 8.0
+_RETRY_AFTER_CAP = 60.0
+_BREAKER_THRESHOLD = 4
+_BREAKER_BASE = 30.0
+_BREAKER_CAP = 300.0
 
 
 class _EndpointLimiter:
@@ -79,6 +86,8 @@ class SolisCloudClient:
         self._clock = clock or (lambda: datetime.now(UTC))
         self._limiter = _EndpointLimiter(endpoint_interval)
         self._clock_offset = timedelta(0)
+        self._breaker_failures = 0
+        self._breaker_until = 0.0
 
     async def user_station_list(self) -> list[dict[str, Any]]:
         """Return every station on the account."""
@@ -152,10 +161,36 @@ class SolisCloudClient:
     async def post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         """POST ``path`` and return a successful JSON object.
 
-        HTTP 429, timeouts and 5xx are retried. A clock rejection is retried
-        once against the Date header the platform sent. Other 4xx responses
-        are not retried.
+        HTTP 429, timeouts and 5xx are retried with jitter. A clock rejection
+        is retried once against the Date header the platform sent. Other 4xx
+        responses are not retried. After repeated gateway failures the circuit
+        opens and further calls fail without touching the network.
         """
+        if self._circuit_open():
+            raise SolisServerError(f"{path} skipped; SolisCloud circuit is open")
+        try:
+            result = await self._post_attempts(path, payload)
+        except (SolisServerError, SolisTimeoutError):
+            self._trip_breaker()
+            raise
+        self._breaker_failures = 0
+        self._breaker_until = 0.0
+        return result
+
+    def _circuit_open(self) -> bool:
+        return asyncio.get_running_loop().time() < self._breaker_until
+
+    def _trip_breaker(self) -> None:
+        """Open the circuit once gateway failures stack up."""
+        self._breaker_failures += 1
+        if self._breaker_failures < _BREAKER_THRESHOLD:
+            return
+        steps = min(self._breaker_failures - _BREAKER_THRESHOLD, 3)
+        cooldown = min(_BREAKER_CAP, _BREAKER_BASE * (2**steps))
+        cooldown *= random.uniform(0.8, 1.2)
+        self._breaker_until = asyncio.get_running_loop().time() + min(_BREAKER_CAP, cooldown)
+
+    async def _post_attempts(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
         delay = 1.0
         attempt = 0
@@ -173,13 +208,22 @@ class SolisCloudClient:
                 attempt += 1
                 if attempt >= self._attempts:
                     raise
-                await asyncio.sleep(err.retry_after)
-            except (SolisServerError, SolisTimeoutError):
+                await asyncio.sleep(_honor_retry_after(err.retry_after))
+            except SolisServerError as err:
                 attempt += 1
                 if attempt >= self._attempts:
                     raise
-                await asyncio.sleep(delay)
-                delay = min(delay * 2, 8.0)
+                wait = err.retry_after if err.retry_after is not None else delay
+                await asyncio.sleep(
+                    _jittered(wait) if err.retry_after is None else _honor_retry_after(wait)
+                )
+                delay = min(delay * 2, _RETRY_CAP)
+            except SolisTimeoutError:
+                attempt += 1
+                if attempt >= self._attempts:
+                    raise
+                await asyncio.sleep(_jittered(delay))
+                delay = min(delay * 2, _RETRY_CAP)
         raise SolisCloudError(f"{path} failed")
 
     def _align_clock(self, server_date: datetime) -> None:
@@ -205,13 +249,17 @@ class SolisCloudClient:
             ) as response:
                 raw = await response.read()
                 status = response.status
-                retry_after = _retry_after(response.headers.get("Retry-After"), now=self._clock())
+                retry_header = response.headers.get("Retry-After")
+                content_type = response.content_type
                 server_date = _http_date(response.headers.get("Date"))
         except TimeoutError as err:
             raise SolisTimeoutError(f"{path} timed out after {self._timeout}s") from err
+        except asyncio.CancelledError:
+            raise
         except ClientError as err:
             raise SolisServerError(f"{path} connection failed: {err}") from err
-        return _interpret(path, status, raw, retry_after, server_date)
+        retry_after = _retry_after(retry_header, now=self._clock()) if retry_header else None
+        return _interpret(path, status, raw, retry_after, server_date, content_type)
 
 
 def _retry_after(header: str | None, *, now: datetime | None = None) -> float:
@@ -239,12 +287,27 @@ def _http_date(header: str | None) -> datetime | None:
     return parsed.astimezone(UTC)
 
 
+def _jittered(delay: float) -> float:
+    """Return an exponential-backoff sleep with jitter, capped."""
+    if delay <= 0:
+        return 0.0
+    return min(_RETRY_CAP, delay * random.uniform(0.5, 1.0))
+
+
+def _honor_retry_after(delay: float) -> float:
+    """Wait at least as long as Retry-After asked, with a little jitter."""
+    if delay <= 0:
+        return 0.0
+    return min(_RETRY_AFTER_CAP, delay * random.uniform(1.0, 1.25))
+
+
 def _interpret(
     path: str,
     status: int,
     raw: bytes,
-    retry_after: float,
+    retry_after: float | None,
     server_date: datetime | None,
+    content_type: str | None = None,
 ) -> dict[str, Any]:
     if status == 429:
         raise SolisRateLimitError(f"{path} rate limited", retry_after=retry_after or 2.0)
@@ -254,21 +317,73 @@ def _interpret(
             code="408",
             server_date=server_date,
         )
-    if status in {401, 403}:
-        raise SolisAuthError(f"{path} rejected the API key", code=str(status))
     if status >= 500:
-        raise SolisServerError(f"{path} returned HTTP {status}", code=str(status))
+        raise SolisServerError(
+            f"{path} returned HTTP {status}",
+            code=str(status),
+            retry_after=retry_after,
+        )
+    payload = _json_object(raw)
+    if status in {401, 403}:
+        _raise_for_status_auth(path, status, payload, raw, content_type)
     if status != 200:
         raise SolisCloudError(f"{path} returned HTTP {status}", code=str(status))
+    if _looks_like_html(raw, content_type):
+        raise SolisServerError(f"{path} returned an HTML error page")
     try:
-        payload = json.loads(raw.decode("utf-8"))
+        decoded = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as err:
         raise SolisServerError(f"{path} returned invalid JSON") from err
-    if not isinstance(payload, dict):
+    if not isinstance(decoded, dict):
         raise SolisServerError(f"{path} returned a non-object body")
-    _raise_for_code(path, payload)
-    _raise_for_clock_message(path, payload, server_date)
+    _raise_for_code(path, decoded)
+    _raise_for_clock_message(path, decoded, server_date)
+    return decoded
+
+
+def _json_object(raw: bytes) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
     return payload
+
+
+def _looks_like_html(raw: bytes, content_type: str | None) -> bool:
+    if content_type and "html" in content_type.lower():
+        return True
+    stripped = raw.lstrip().lower()
+    return stripped.startswith((b"<html", b"<!doctype"))
+
+
+def _raise_for_status_auth(
+    path: str,
+    status: int,
+    payload: dict[str, Any] | None,
+    raw: bytes,
+    content_type: str | None,
+) -> None:
+    """Reject a key only when the body is the Solis auth envelope.
+
+    An HTML 401 or 403 from a gateway is a transient outage. Starting
+    reauthentication for that would lock the entry on a bad day at the cloud.
+    """
+    if _looks_like_html(raw, content_type):
+        raise SolisServerError(f"{path} returned an HTML error page", code=str(status))
+    if payload is not None and status == 403 and not _is_auth_payload(payload):
+        raise SolisCloudError(f"{path} returned HTTP {status}", code=str(status))
+    code = str(status if payload is None else payload.get("code") or status)
+    raise SolisAuthError(f"{path} rejected the API key", code=code)
+
+
+def _is_auth_payload(payload: dict[str, Any]) -> bool:
+    code = str(payload.get("code", ""))
+    if code in _AUTH_CODES:
+        return True
+    message = str(payload.get("msg") or "").lower()
+    return any(word in message for word in _AUTH_WORDS)
 
 
 def _raise_for_code(path: str, payload: dict[str, Any]) -> None:

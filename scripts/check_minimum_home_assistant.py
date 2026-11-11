@@ -5,8 +5,10 @@ The default image is the ``homeassistant`` field in ``hacs.json``. Pass a
 version argument to boot another tag, such as the current stable release.
 
 The check fails unless the config entry loads, AC power matches the mock,
-a 502 makes that sensor unavailable, recovery restores the value, a null or
-zero lifetime total does not dip, and an auth failure opens a repair.
+a short 502 keeps that power, a sustained 502 hides it and opens a repair
+that clears on recovery, one inverter can fail on its own, bad bodies do not
+start reauthentication, and a null, zero, reset or spike does not move the
+lifetime total backwards.
 """
 
 from __future__ import annotations
@@ -396,6 +398,125 @@ def _issues(base: str, token: str) -> list[dict[str, Any]]:
     return asyncio.run(_call())
 
 
+def _require_energy(base: str, token: str, entity_id: str, held: float) -> None:
+    """Fail if the lifetime total moved off the last good mock value."""
+    matched = _wait_state(
+        base,
+        token,
+        entity_id,
+        lambda item: _number(item) == held,
+    )
+    if _number(matched) != held:
+        raise CheckError(f"lifetime energy moved: {matched}")
+
+
+def _cloud_faults(
+    base: str,
+    token: str,
+    power_id: str,
+    total_id: str,
+    battery_id: str,
+    held: float,
+    north_power: float,
+    hybrid_battery: float,
+) -> None:
+    """Exercise the mock fault modes against a running Home Assistant."""
+    _mock_control({"fault": "outage"})
+    _refresh(base, token, power_id)
+    _wait_state(base, token, power_id, lambda item: _number(item) == north_power, timeout=150)
+    _refresh(base, token, power_id)
+    _wait_state(base, token, power_id, lambda item: _number(item) == north_power, timeout=150)
+    _refresh(base, token, power_id)
+    _wait_state(
+        base,
+        token,
+        power_id,
+        lambda item: item.get("state") == "unavailable",
+        timeout=150,
+    )
+    _require_energy(base, token, total_id, held)
+    if "cloud_outage" not in json.dumps(_issues(base, token)):
+        raise CheckError("sustained outage did not open a repair")
+    _log("Sustained 502 hid live power, held energy, and opened a repair")
+    _mock_control({"fault": "ok"})
+    _refresh(base, token, power_id)
+    _wait_state(base, token, power_id, lambda item: _number(item) == north_power, timeout=150)
+    _require_energy(base, token, total_id, held)
+    if "cloud_outage" in json.dumps(_issues(base, token)):
+        raise CheckError("outage repair was still open after recovery")
+    _log("Power recovered to the mock value and the repair cleared")
+    _mock_control({"fault": "partial"})
+    _refresh(base, token, power_id)
+    _wait_state(
+        base,
+        token,
+        power_id,
+        lambda item: item.get("state") == "unavailable",
+        timeout=150,
+    )
+    _wait_state(
+        base,
+        token,
+        battery_id,
+        lambda item: _number(item) == hybrid_battery,
+        timeout=150,
+    )
+    _require_energy(base, token, total_id, held)
+    _log("One inverter failed while the other kept its mock battery power")
+    _mock_control({"fault": "ok"})
+    _refresh(base, token, power_id)
+    _wait_state(base, token, power_id, lambda item: _number(item) == north_power, timeout=150)
+    for fault in ("garbage", "html", "partial_json", "unavailable", "rate_limit"):
+        _mock_control({"fault": fault})
+        _refresh(base, token, power_id)
+        _wait_state(
+            base,
+            token,
+            power_id,
+            lambda item: _number(item) == north_power,
+            timeout=150,
+        )
+        _require_energy(base, token, total_id, held)
+        if "invalid_auth" in json.dumps(_issues(base, token)):
+            raise CheckError(f"{fault} started reauthentication")
+        _mock_control({"fault": "ok"})
+        _refresh(base, token, power_id)
+        _wait_state(
+            base,
+            token,
+            power_id,
+            lambda item: _number(item) == north_power,
+            timeout=150,
+        )
+    _log("Garbage, HTML, 503 and 429 kept the last good values")
+    _mock_control({"fault": "stale"})
+    _refresh(base, token, power_id)
+    _wait_state(base, token, power_id, lambda item: _number(item) == north_power, timeout=150)
+    _require_energy(base, token, total_id, held)
+    _mock_control({"fault": "ok"})
+    _refresh(base, token, power_id)
+    _wait_state(base, token, power_id, lambda item: _number(item) == north_power, timeout=150)
+    _mock_control({"fault": "spike"})
+    _refresh(base, token, total_id)
+    _require_energy(base, token, total_id, held)
+    _mock_control({"fault": "reset"})
+    _refresh(base, token, total_id)
+    _require_energy(base, token, total_id, held)
+    _log(f"Lifetime energy stayed at {held} through stale, spike and reset samples")
+    _mock_control({"fault": "ok"})
+    _mock_control({"fault": "slow", "slow_seconds": 0.2})
+    _refresh(base, token, power_id)
+    _wait_state(base, token, power_id, lambda item: _number(item) == north_power, timeout=150)
+    _mock_control({"fault": "flap"})
+    _refresh(base, token, power_id)
+    _wait_state(base, token, power_id, lambda item: _number(item) == north_power, timeout=180)
+    _require_energy(base, token, total_id, held)
+    _mock_control({"fault": "ok"})
+    _refresh(base, token, power_id)
+    _wait_state(base, token, power_id, lambda item: _number(item) == north_power, timeout=150)
+    _log("Slow and flapping responses still matched the mock")
+
+
 def _mock_control(payload: dict[str, Any]) -> None:
     status, body = _http("POST", f"{API_URL}/__control", payload, timeout=10)
     if status != 200:
@@ -478,7 +599,7 @@ def _start_mock() -> subprocess.Popen[str]:
     raise CheckError("mock SolisCloud did not become healthy")
 
 
-def run_check(version: str) -> None:  # noqa: PLR0915
+def run_check(version: str) -> None:
     """Boot one Core version and exercise load, failure and recovery."""
     config = _config_dir()
     mock = _start_mock()
@@ -541,25 +662,16 @@ def run_check(version: str) -> None:  # noqa: PLR0915
         if "last_reset" in total["attributes"]:
             raise CheckError(f"energy total still publishes last_reset: {total['attributes']}")
         held = _number(total)
-        _mock_control({"mode": "server_error"})
-        _refresh(base, token, str(power["entity_id"]))
-        _wait_state(
+        _cloud_faults(
             base,
             token,
             str(power["entity_id"]),
-            lambda item: item.get("state") == "unavailable",
-            timeout=150,
+            str(total["entity_id"]),
+            str(battery["entity_id"]),
+            held,
+            float(north["ac_power_w"]),
+            float(hybrid["battery_power_w"]),
         )
-        _log("Power became unavailable after HTTP 502")
-        _mock_control({"mode": "ok"})
-        _refresh(base, token, str(power["entity_id"]))
-        _wait_state(
-            base,
-            token,
-            str(power["entity_id"]),
-            lambda item: _number(item) == north["ac_power_w"],
-        )
-        _log("Power recovered to the mock value")
         _mock_control({"energy_glitch": "null"})
         _refresh(base, token, str(total["entity_id"]))
         _wait_state(

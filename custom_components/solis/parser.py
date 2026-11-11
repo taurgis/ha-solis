@@ -9,8 +9,8 @@ China Standard Time.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta, tzinfo
-import math
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -226,23 +226,25 @@ def _phases(data: dict[str, Any]) -> tuple[Phase, ...]:
 
 
 def _battery_power(data: dict[str, Any], current: float | None) -> float | None:
-    power = to_watts(
-        first(data, "batteryPower"),
-        first(data, "batteryPowerStr"),
-        first(data, "batteryPowerPec"),
-        default="kw",
-    )
+    """Return signed battery watts. Positive is charging, negative is discharging.
+
+    ``batteryPowerZheng`` and ``batteryPowerFu`` are the charge and discharge
+    components. A real SolisCloud day sample has ``batteryPower`` equal to
+    Zheng minus Fu. Newer loggers also publish an unsigned ``batteryPower``;
+    ``storageBatteryCurrent`` is then positive while charging and negative
+    while discharging. An already-negative ``batteryPower`` is left as-is.
+    """
+    unit = first(data, "batteryPowerStr")
+    pec = first(data, "batteryPowerPec")
+    power = to_watts(first(data, "batteryPower"), unit, pec, default="kw")
+    charging = to_watts(first(data, "batteryPowerZheng"), unit, default="kw")
+    discharging = to_watts(first(data, "batteryPowerFu"), unit, default="kw")
+    if (charging is not None and charging > 0) or (discharging is not None and discharging > 0):
+        return (charging or 0.0) - (discharging or 0.0)
     if power is None:
         return None
-    if current is not None and current != 0:
-        return math.copysign(abs(power), current)
-    discharge = to_watts(
-        first(data, "batteryPowerFu"),
-        first(data, "batteryPowerStr"),
-        default="kw",
-    )
-    if discharge is not None and discharge > 0 and power == 0:
-        return -abs(discharge)
+    if power > 0 and current is not None and current < 0:
+        return -power
     return power
 
 
@@ -259,105 +261,127 @@ def parse_inverter(
         default="a",
     )
     product = _text(data, "productModel")
-    return InverterSnapshot(
-        serial=str(first(data, "sn") or ""),
-        device_id=str(first(data, "id") or ""),
-        station_id=str(station_id or first(data, "stationId") or ""),
-        name=str(name or first(data, "name", "stationName") or first(data, "sn") or "Solis"),
-        model=_text(data, "machine", "series", "model"),
-        product_model=product,
-        hmi_version=_text(data, "hmiVersionAll"),
-        state=_as_int(first(data, "state")),
-        ac_output_type=_as_int(first(data, "acOutputType")),
-        data_timestamp=parse_epoch(first(data, "dataTimestamp")),
-        collector_serial=_text(data, "collectorSn"),
-        ac_power_w=to_watts(
-            first(data, "pac"),
-            first(data, "pacStr"),
-            first(data, "pacPec"),
-            default="kw",
-        ),
-        frequency_hz=to_identity(first(data, "fac"), first(data, "facStr"), default="hz"),
-        temperature_c=to_identity(
-            first(data, "inverterTemperature"),
-            first(data, "inverterTemperatureStr"),
-            default="c",
-        ),
-        energy_today_kwh=to_kilowatt_hours(
-            first(data, "eToday"),
-            first(data, "eTodayStr"),
-            default="kwh",
-        ),
-        energy_month_kwh=to_kilowatt_hours(
-            first(data, "eMonth"),
-            first(data, "eMonthStr"),
-            default="kwh",
-        ),
-        energy_year_kwh=to_kilowatt_hours(
-            first(data, "eYear"),
-            first(data, "eYearStr"),
-            default="kwh",
-        ),
-        energy_total_kwh=to_kilowatt_hours(
-            first(data, "eTotal"),
-            first(data, "eTotalStr"),
-            default="kwh",
-        ),
-        battery_power_w=_battery_power(data, current),
-        battery_soc=to_identity(
-            first(data, "batteryCapacitySoc"),
-            first(data, "batteryCapacitySocStr"),
-            default="%",
-        ),
-        battery_soh=to_identity(
-            first(data, "batteryHealthSoh"),
-            first(data, "batteryHealthSohStr"),
-            default="%",
-        ),
-        battery_voltage_v=to_identity(
-            first(data, "storageBatteryVoltage", "batteryVoltage"),
-            first(data, "storageBatteryVoltageStr", "batteryVoltageStr"),
-            default="v",
-        ),
-        battery_current_a=current,
-        battery_charge_today_kwh=to_kilowatt_hours(
-            first(data, "batteryTodayChargeEnergy"),
-            first(data, "batteryTodayChargeEnergyStr"),
-            default="kwh",
-        ),
-        battery_discharge_today_kwh=to_kilowatt_hours(
-            first(data, "batteryTodayDischargeEnergy"),
-            first(data, "batteryTodayDischargeEnergyStr"),
-            default="kwh",
-        ),
-        battery_charge_total_kwh=to_kilowatt_hours(
-            first(data, "batteryTotalChargeEnergy"),
-            first(data, "batteryTotalChargeEnergyStr"),
-            default="kwh",
-        ),
-        battery_discharge_total_kwh=to_kilowatt_hours(
-            first(data, "batteryTotalDischargeEnergy"),
-            first(data, "batteryTotalDischargeEnergyStr"),
-            default="kwh",
-        ),
-        grid_power_w=to_watts(first(data, "psum"), first(data, "psumStr"), default="kw"),
-        consumption_power_w=to_watts(
-            first(data, "familyLoadPower"),
-            first(data, "familyLoadPowerStr"),
-            default="kw",
-        ),
-        force_charge_soc=to_identity(
-            first(data, "socChargingSet"),
-            first(data, "socChargingSetStr"),
-            default="%",
-        ),
-        force_discharge_soc=to_identity(
-            first(data, "socDischargeSet"),
-            first(data, "socDischargeSetStr"),
-            default="%",
-        ),
-        phases=_phases(data),
-        strings=_pv_strings(data),
+    return _plausible(
+        InverterSnapshot(
+            serial=str(first(data, "sn") or ""),
+            device_id=str(first(data, "id") or ""),
+            station_id=str(station_id or first(data, "stationId") or ""),
+            name=str(name or first(data, "name", "stationName") or first(data, "sn") or "Solis"),
+            model=_text(data, "machine", "series", "model"),
+            product_model=product,
+            hmi_version=_text(data, "hmiVersionAll"),
+            state=_as_int(first(data, "state")),
+            ac_output_type=_as_int(first(data, "acOutputType")),
+            data_timestamp=parse_epoch(first(data, "dataTimestamp")),
+            collector_serial=_text(data, "collectorSn"),
+            ac_power_w=to_watts(
+                first(data, "pac"),
+                first(data, "pacStr"),
+                first(data, "pacPec"),
+                default="kw",
+            ),
+            frequency_hz=to_identity(first(data, "fac"), first(data, "facStr"), default="hz"),
+            temperature_c=to_identity(
+                first(data, "inverterTemperature"),
+                first(data, "inverterTemperatureStr"),
+                default="c",
+            ),
+            energy_today_kwh=to_kilowatt_hours(
+                first(data, "eToday"),
+                first(data, "eTodayStr"),
+                default="kwh",
+            ),
+            energy_month_kwh=to_kilowatt_hours(
+                first(data, "eMonth"),
+                first(data, "eMonthStr"),
+                default="kwh",
+            ),
+            energy_year_kwh=to_kilowatt_hours(
+                first(data, "eYear"),
+                first(data, "eYearStr"),
+                default="kwh",
+            ),
+            energy_total_kwh=to_kilowatt_hours(
+                first(data, "eTotal"),
+                first(data, "eTotalStr"),
+                default="kwh",
+            ),
+            battery_power_w=_battery_power(data, current),
+            battery_soc=to_identity(
+                first(data, "batteryCapacitySoc"),
+                first(data, "batteryCapacitySocStr"),
+                default="%",
+            ),
+            battery_soh=to_identity(
+                first(data, "batteryHealthSoh"),
+                first(data, "batteryHealthSohStr"),
+                default="%",
+            ),
+            battery_voltage_v=to_identity(
+                first(data, "storageBatteryVoltage", "batteryVoltage"),
+                first(data, "storageBatteryVoltageStr", "batteryVoltageStr"),
+                default="v",
+            ),
+            battery_current_a=current,
+            battery_charge_today_kwh=to_kilowatt_hours(
+                first(data, "batteryTodayChargeEnergy"),
+                first(data, "batteryTodayChargeEnergyStr"),
+                default="kwh",
+            ),
+            battery_discharge_today_kwh=to_kilowatt_hours(
+                first(data, "batteryTodayDischargeEnergy"),
+                first(data, "batteryTodayDischargeEnergyStr"),
+                default="kwh",
+            ),
+            battery_charge_total_kwh=to_kilowatt_hours(
+                first(data, "batteryTotalChargeEnergy"),
+                first(data, "batteryTotalChargeEnergyStr"),
+                default="kwh",
+            ),
+            battery_discharge_total_kwh=to_kilowatt_hours(
+                first(data, "batteryTotalDischargeEnergy"),
+                first(data, "batteryTotalDischargeEnergyStr"),
+                default="kwh",
+            ),
+            grid_power_w=to_watts(first(data, "psum"), first(data, "psumStr"), default="kw"),
+            consumption_power_w=to_watts(
+                first(data, "familyLoadPower"),
+                first(data, "familyLoadPowerStr"),
+                default="kw",
+            ),
+            force_charge_soc=to_identity(
+                first(data, "socChargingSet"),
+                first(data, "socChargingSetStr"),
+                default="%",
+            ),
+            force_discharge_soc=to_identity(
+                first(data, "socDischargeSet"),
+                first(data, "socDischargeSetStr"),
+                default="%",
+            ),
+            phases=_phases(data),
+            strings=_pv_strings(data),
+        )
+    )
+
+
+def _bounded(value: float | None, low: float, high: float) -> float | None:
+    """Drop a reading outside a physical range. None stays None."""
+    if value is None or value < low or value > high:
+        return None
+    return value
+
+
+def _plausible(inverter: InverterSnapshot) -> InverterSnapshot:
+    """Drop frequency, temperature and state-of-charge values that cannot be real."""
+    return replace(
+        inverter,
+        frequency_hz=_bounded(inverter.frequency_hz, 40.0, 70.0),
+        temperature_c=_bounded(inverter.temperature_c, -40.0, 150.0),
+        battery_soc=_bounded(inverter.battery_soc, 0.0, 100.0),
+        battery_soh=_bounded(inverter.battery_soh, 0.0, 100.0),
+        force_charge_soc=_bounded(inverter.force_charge_soc, 0.0, 100.0),
+        force_discharge_soc=_bounded(inverter.force_discharge_soc, 0.0, 100.0),
     )
 
 
