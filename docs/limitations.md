@@ -33,9 +33,11 @@
   Assistant 2026.11 the energy dashboard can derive those from the existing
   power sensors.
 - The legacy Ginlong `/cpro/` portal API is not implemented.
-- Local reads are Solarman V5 on TCP 8899. Modbus TCP (port 502) and a
-  Wi-Fi S3 stick are not implemented. S3-WIFI-ST sticks have no local port;
-  use cloud only for those. See [the local note](research/solarman-local.md).
+- Local reads are Solarman V5 on TCP 8899, or Modbus TCP on port 502 for a
+  Solis S2-WL-ST. A Wi-Fi S3 stick has no local port; use cloud only for
+  those. See [the Solarman note](research/solarman-local.md) and
+  [the S2-WL-ST note](research/s2-wl-st.md). Some S2 firmware closes port 502
+  or allows only one of SolisCloud and local Modbus.
 - The stick is off whenever the inverter is off. Night has no TCP and no
   discovery. The integration keeps energy totals, publishes live power as 0,
   and marks the data source `asleep`. It does not open an outage repair for

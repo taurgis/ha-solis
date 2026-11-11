@@ -600,7 +600,7 @@ async def test_logger_reset_is_not_reported_as_night(
     async def _no_discovery(*_args: object, **_kwargs: object) -> list[object]:
         return []
 
-    monkeypatch.setattr(flow, "probe_logger", _busy)
+    monkeypatch.setattr(flow, "identify_logger", _busy)
     monkeypatch.setattr(flow, "discover_sticks", _no_discovery)
     result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
     result = await hass.config_entries.flow.async_configure(

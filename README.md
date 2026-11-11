@@ -10,11 +10,16 @@ The domain stays `solis`, so replacing the upstream custom component can keep
 existing entities. Uninstall that copy first. The two cannot be installed in
 the same `custom_components/solis` folder.
 
-Reads use the SolisCloud API key and secret, or a Solarman logger on the
-LAN while the inverter is producing. Inverter control writes are not sent.
-The cloud publishes samples about every five minutes, and the client stays
-under the platform rate limit. The logger is identified by its serial and
-MAC, so a new DHCP lease updates the existing entry.
+Reads use the SolisCloud API key and secret, or a data logger on the LAN
+while the inverter is producing. Two sticks are supported. A Solarman /
+IGEN stick (DLS-L, LSW) speaks Solarman V5 on TCP 8899, with plain Modbus
+TCP as a fallback. A Solis S2-WL-ST (4-pin, Wi-Fi + LAN) speaks Modbus TCP
+on port 502. Inverter control writes are not sent. The cloud publishes
+samples about every five minutes, and the client stays under the platform
+rate limit. A Solarman logger is identified by its serial and MAC, so a new
+DHCP lease updates the existing entry. An S2-WL-ST does not answer that
+discovery broadcast: reserve its address in the router, and the config entry
+keeps the stick serial or the inverter serial when the address changes.
 
 ## Supported devices
 
@@ -49,6 +54,38 @@ Requires Home Assistant 2025.10.0 or newer.
    `https://www.soliscloud.com:13333`. An account created against
    `https://v3.soliscloud.com:13333` should keep that host.
 5. Select the plants to follow.
+
+## Solis S2-WL-ST
+
+The official 4-pin Wi-Fi + LAN stick replaces a DLS-L. Enable Modbus TCP
+before Home Assistant can read it. The integration probes port 502, then
+8899, so Auto-detect is enough when you know the IP.
+
+1. Power the inverter so the stick is on. In the SolisCloud app the logger
+   address is on the logger details page. On a laptop cabled straight to the
+   stick the address is `10.10.100.254` (log in as `admin` and set a password
+   on the first visit). That address is not the one Home Assistant uses once
+   the stick has joined the house LAN.
+2. Ask Solis for stick firmware that keeps port 502 open and still uploads to
+   SolisCloud. `100101B4` is the first build with Modbus TCP. `100121cf`,
+   `100121d0` and the `100141dx` builds are the ones reported to allow cloud
+   and Modbus together. Older firmware disconnects SolisCloud while TCP is
+   enabled, and some later updates close port 502 entirely. See
+   [docs/research/s2-wl-st.md](docs/research/s2-wl-st.md).
+3. In Home Assistant add Solis, choose Local or Local and cloud, and leave
+   Logger on Auto-detect. Type the IP. The logger serial is the suffix of the
+   setup Wi-Fi name `D_` or `Solis_` (for example `5A12…`), not the inverter
+   serial. Slave stays empty unless the inverter is not address 1. Polling
+   defaults to 60 seconds and cannot be faster than 30.
+4. Reserve that IP in the router's DHCP settings. Do not put a static address
+   on the stick unless the SolisCloud LAN settings are the only way you can
+   reach it. The stick is not found by the Solarman UDP broadcast, and no
+   MAC OUI is published for it.
+
+The same 3000-range register map is used. The owner's Solis-mini-2500-4G
+(model E4, slave 1, serial `110E40182280017`) is that map. Registers
+3060-3063 hold only eight characters, so type the full inverter serial if
+you want the entity ids to match SolisCloud.
 
 Public `http://` URLs are stored as `https://`. Loopback, private addresses
 and single-label hosts such as the lab's `mock` may stay on `http`.

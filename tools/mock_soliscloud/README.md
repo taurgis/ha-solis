@@ -13,6 +13,11 @@ returns the watts and kilowatt-hours the integration should show.
 
 The fixture catalog covers a single-phase grid inverter, a three-phase hybrid
 with a battery, a second three-phase inverter that is offline, and a stale
-inverter, across two plants. A future Modbus or Solarman V5 emulator should
-produce the same snapshot fields. It should be a separate server. This process
-only speaks the cloud HTTP API.
+inverter, across two plants. This process only speaks the cloud HTTP API.
+
+`python -m mock_soliscloud.stick` is the logger emulator. The default is
+Solarman V5 on TCP 8899 and UDP 48899. `--kind s2` is an S2-WL-ST: Modbus
+TCP on port 502, no discovery broadcast, function 3 and function 4.
+`POST /__control` accepts `night`, `port_closed`, `silent`, `max_clients`
+and `close_disables_port` for the failure modes documented in
+`docs/research/s2-wl-st.md`.

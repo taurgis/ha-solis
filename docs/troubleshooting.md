@@ -39,7 +39,21 @@ reads `asleep`, energy totals stay, and no repair is opened.
 
 **Discovery found nothing.** The inverter has to be producing. The stick is
 powered by the inverter, so a night-time setup cannot see it. Run the flow
-again after sunrise, or type the address and the logger serial.
+again after sunrise, or type the address and the logger serial. An S2-WL-ST
+never appears in that UDP list. Use the IP from SolisCloud.
+
+**Port 502 is closed.** The repair `logger_tcp_disabled` means the S2-WL-ST
+is on the network and Modbus TCP is not listening. Firmware before
+`100101B4` has no Modbus TCP. Some later updates close the port. Ask Solis
+for a build that keeps it open. Nothing in Home Assistant can open a port
+the stick has shut.
+
+**Port 502 accepts TCP and then stays silent.** The repair
+`logger_modbus_silent` means another client already holds the stick's one
+connection, often SolisCloud on firmware that cannot do both. The official
+note is that enabling TCP disconnects SolisCloud. Firmware `100121cf`,
+`100121d0` and `100141dx` are the releases reported to allow both. Do not
+run a second Modbus integration against the same stick.
 
 **The logger changed address.** DHCP can hand the stick a new lease after it
 wakes. The integration finds it by serial (UDP 48899) or by MAC prefix

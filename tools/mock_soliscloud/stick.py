@@ -91,6 +91,12 @@ class StickState:
     lock_above: int | None = None
     registers: dict[int, int] = field(default_factory=captured_registers)
     connections: list[float] = field(default_factory=list)
+    kind: str = "solarman"
+    functions: tuple[int, ...] = ()
+    max_clients: int = 0
+    port_closed: bool = False
+    silent: bool = False
+    close_disables_port: bool = False
 
 
 class StickEmulator:
@@ -102,6 +108,7 @@ class StickEmulator:
         self._tcp: asyncio.Server | None = None
         self._udp: asyncio.DatagramTransport | None = None
         self._control: web.AppRunner | None = None
+        self._open_clients = 0
 
     async def start(self, control_port: int | None = None) -> None:
         """Listen, unless the stick is in night mode."""
@@ -110,8 +117,11 @@ class StickEmulator:
             await self._serve_control(control_port)
 
     async def _listen(self) -> None:
-        self._tcp = await asyncio.start_server(self._client, self.state.host, self.state.tcp_port)
-        if self.state.night:
+        if not self.state.port_closed:
+            self._tcp = await asyncio.start_server(
+                self._client, self.state.host, self.state.tcp_port
+            )
+        if self.state.night or self.state.kind == "s2":
             return
         loop = asyncio.get_running_loop()
 
@@ -151,12 +161,22 @@ class StickEmulator:
             "locked",
             "protocol",
             "lock_above",
+            "kind",
+            "max_clients",
+            "port_closed",
+            "silent",
+            "close_disables_port",
+            "tcp_port",
         )
         for key in keys:
             if key in changes:
-                if key in {"host", "night"}:
+                if key in {"host", "night", "kind", "port_closed", "tcp_port"}:
                     rebound = True
                 setattr(self.state, key, changes[key])
+        functions = changes.get("functions")
+        if isinstance(functions, list):
+            self.state.functions = tuple(int(item) for item in functions)
+            rebound = True
         registers = changes.get("registers")
         if isinstance(registers, dict):
             for address, value in registers.items():
@@ -181,37 +201,59 @@ class StickEmulator:
             self._udp = None
 
     async def _client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        self._open_clients += 1
         now = time.monotonic()
         recent = [stamp for stamp in self.state.connections if now - stamp < 2]
         recent.append(now)
         self.state.connections = recent
         if self.state.night:
+            self._open_clients -= 1
             writer.close()
             return
+        if self.state.max_clients and self._open_clients > self.state.max_clients:
+            self._open_clients -= 1
+            await _reset(reader, writer)
+            return
         if self.state.locked:
+            self._open_clients -= 1
             await _reset(reader, writer)
             return
         if self.state.reset_after and len(recent) > self.state.reset_after:
+            self._open_clients -= 1
             await _reset(reader, writer)
             return
         try:
+            if self.state.silent:
+                while True:
+                    try:
+                        chunk = await asyncio.wait_for(reader.read(4096), timeout=1)
+                    except TimeoutError:
+                        continue
+                    if not chunk:
+                        return
             first = await asyncio.wait_for(reader.read(1), timeout=3)
             if not first:
                 return
             if first == b"\xa5":
-                if self.state.protocol == "mbtcp":
+                if self.state.protocol == "mbtcp" or self.state.kind == "s2":
                     return
                 await self._serve_v5(reader, writer, first)
                 return
-            if self.state.protocol == "v5":
+            if self.state.protocol == "v5" and self.state.kind != "s2":
                 return
             await self._serve_mbap(reader, writer, first)
         except (TimeoutError, ConnectionError, OSError, ValueError, asyncio.IncompleteReadError):
             return
         finally:
+            self._open_clients = max(0, self._open_clients - 1)
             transport = writer.transport
             if transport is not None and not transport.is_closing():
                 writer.close()
+            if self.state.close_disables_port and self._tcp is not None:
+                self.state.port_closed = True
+                self._tcp.close()
+                await self._tcp.wait_closed()
+                self._tcp = None
 
     async def _serve_v5(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, first: bytes
@@ -246,6 +288,8 @@ class StickEmulator:
     async def _serve_mbap(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, first: bytes
     ) -> None:
+        if self.state.slow:
+            await asyncio.sleep(self.state.slow)
         pending = first
         while True:
             if not pending:
@@ -334,16 +378,27 @@ def _addr(request: bytes) -> tuple[int, int]:
     return int.from_bytes(request[2:4], "big"), int.from_bytes(request[4:6], "big")
 
 
+def _allowed_functions(state: StickState) -> tuple[int, ...]:
+    if state.functions:
+        return state.functions
+    if state.kind == "s2":
+        return (3, 4)
+    return (4,)
+
+
 def _mbap_reply(state: StickState, frame: bytes) -> bytes:
     unit = frame[6:7] or b"\x01"
     function = frame[7] if len(frame) > 7 else 0x04
     address = int.from_bytes(frame[8:10], "big") if len(frame) >= 12 else 0
     count = int.from_bytes(frame[10:12], "big") if len(frame) >= 12 else 0
-    if unit != b"\x01" or function != 0x04 or address >= 33000:
+    allowed = _allowed_functions(state)
+    if function not in allowed:
+        pdu = bytes((function | 0x80, 1))
+    elif unit != b"\x01" or address >= 33000:
         pdu = bytes((function | 0x80, 2))
     else:
         values = [state.registers.get(address + offset, 0) & 0xFFFF for offset in range(count)]
-        pdu = bytes((0x04, len(values) * 2))
+        pdu = bytes((function, len(values) * 2))
         for value in values:
             pdu += value.to_bytes(2, "big")
     return frame[:2] + b"\x00\x00" + (len(pdu) + 1).to_bytes(2, "big") + unit + pdu
@@ -358,13 +413,16 @@ def main() -> None:
     """Serve the stick until the process is stopped. ``POST /__control`` changes it."""
     import argparse
 
-    parser = argparse.ArgumentParser(description="Solarman V5 stick emulator")
+    parser = argparse.ArgumentParser(description="Solarman V5 or S2-WL-ST stick emulator")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--control-port", type=int, default=8877)
+    parser.add_argument("--kind", choices=("solarman", "s2"), default="solarman")
+    parser.add_argument("--tcp-port", type=int, default=0)
     args = parser.parse_args()
 
     async def _serve() -> None:
-        emulator = StickEmulator(StickState(host=args.host))
+        port = args.tcp_port or (502 if args.kind == "s2" else 8899)
+        emulator = StickEmulator(StickState(host=args.host, kind=args.kind, tcp_port=port))
         await emulator.start(control_port=args.control_port)
         print(
             f"stick emulator host={args.host} control=http://127.0.0.1:{args.control_port}",

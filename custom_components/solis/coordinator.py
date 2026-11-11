@@ -28,12 +28,17 @@ from .const import (
     ISSUE_AUTH,
     ISSUE_CLOCK,
     ISSUE_LOGGER_LOCKED,
+    ISSUE_LOGGER_SILENT,
+    ISSUE_LOGGER_TCP,
     ISSUE_NO_INVERTERS,
     ISSUE_OUTAGE,
     MIN_CLOUD_SCAN_INTERVAL,
     MIN_LOCAL_SCAN_INTERVAL,
     OUTAGE_POLLS,
     POLL_REPAIRS,
+    REASON_LOCKED,
+    REASON_SILENT,
+    REASON_TCP_DISABLED,
     SOURCE_CLOUD,
     STALE_AFTER,
 )
@@ -54,6 +59,55 @@ _LOGGER = logging.getLogger(__name__)
 
 _BACKOFF_CAP = 900.0
 _LOCK_REPAIR_AFTER = 600.0
+_LOGGER_ISSUES = (ISSUE_LOGGER_LOCKED, ISSUE_LOGGER_TCP, ISSUE_LOGGER_SILENT)
+_LOGGER_ISSUE = {
+    REASON_TCP_DISABLED: ISSUE_LOGGER_TCP,
+    REASON_SILENT: ISSUE_LOGGER_SILENT,
+}
+_BUSY_UPDATE = {
+    REASON_TCP_DISABLED: "update_logger_tcp_disabled",
+    REASON_SILENT: "update_logger_modbus_silent",
+}
+_DEGRADED_INFO = {
+    REASON_TCP_DISABLED: (
+        "S2-WL-ST port 502 is closed. Modbus TCP needs firmware 100101B4 or newer, "
+        "and some later updates close the port again."
+    ),
+    REASON_SILENT: (
+        "S2-WL-ST accepted TCP and sent no Modbus. Another client may hold the "
+        "only connection, or this firmware stops local reads while SolisCloud is connected."
+    ),
+    REASON_LOCKED: (
+        "Solarman local reads are paused after a connection reset. "
+        "A fresh SolisCloud sample is used when one is available"
+    ),
+}
+_DEGRADED_WARN = {
+    REASON_TCP_DISABLED: (
+        "S2-WL-ST is still not serving Modbus TCP. Ask Solis for a firmware that "
+        "keeps port 502 open, such as 100121cf or a 100141dx build."
+    ),
+    REASON_SILENT: (
+        "S2-WL-ST is still accepting TCP without answering Modbus. "
+        "Stop the other Modbus client, or ask Solis for firmware that allows "
+        "SolisCloud and Modbus at the same time."
+    ),
+    REASON_LOCKED: (
+        "Solarman logger is still refusing local Modbus. "
+        "It usually recovers within 10 minutes, or after the inverter is power-cycled"
+    ),
+}
+_DEGRADED_DETAIL = {
+    REASON_TCP_DISABLED: "Port 502 is closed. Modbus TCP is disabled on this firmware.",
+    REASON_SILENT: (
+        "TCP connected and no Modbus reply arrived. The stick may be out of connections."
+    ),
+    REASON_LOCKED: (
+        "Local Modbus was reset. A fresh SolisCloud sample is used when "
+        "one exists. The next local try waits at least 10 seconds and "
+        "at most about 10 minutes."
+    ),
+}
 
 
 def poll_seconds(entry: ConfigEntry) -> int:
@@ -141,6 +195,7 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
         self._asleep_polls = 0
         self._degraded_since: float | None = None
         self._degraded_logged = False
+        self._reason = ""
         self._last_good: SolisSnapshot | None = None
         self._store: Store[dict[str, Any]] = Store(
             hass,
@@ -218,30 +273,37 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
         self.update_interval = timedelta(seconds=delay)
 
     def _note_degraded(self) -> None:
-        """Remember a local reset. Open a repair only after it has lasted 10 minutes."""
+        """Remember a local fault. Open a repair only after it has lasted 10 minutes."""
+        reported = str(getattr(self.transport, "degraded_reason", "") or "")
+        if reported:
+            self._reason = reported
+        reason = self._reason or REASON_LOCKED
         now = time.monotonic()
         if self._degraded_since is None:
             self._degraded_since = now
         if not self._degraded_logged:
-            _LOGGER.info(
-                "Solarman local reads are paused after a connection reset. "
-                "A fresh SolisCloud sample is used when one is available"
-            )
+            _LOGGER.info("%s", _DEGRADED_INFO.get(reason, _DEGRADED_INFO[REASON_LOCKED]))
             self._degraded_logged = True
         if now - self._degraded_since < _LOCK_REPAIR_AFTER:
             return
-        issue_id = self._issue_id(ISSUE_LOGGER_LOCKED)
+        issue_key = _LOGGER_ISSUE.get(reason, ISSUE_LOGGER_LOCKED)
+        for key in _LOGGER_ISSUES:
+            if key != issue_key:
+                self._drop_issue(key)
+        issue_id = self._issue_id(issue_key)
         if issue_id not in self._open_issues:
-            _LOGGER.warning(
-                "Solarman logger is still refusing local Modbus. "
-                "It usually recovers within 10 minutes, or after the inverter is power-cycled"
-            )
-        self._open(ISSUE_LOGGER_LOCKED, ir.IssueSeverity.WARNING, fixable=False)
+            _LOGGER.warning("%s", _DEGRADED_WARN.get(reason, _DEGRADED_WARN[REASON_LOCKED]))
+        self._open(issue_key, ir.IssueSeverity.WARNING, fixable=False)
 
     def _clear_logger_lock(self) -> None:
         self._degraded_since = None
         self._degraded_logged = False
-        issue_id = self._issue_id(ISSUE_LOGGER_LOCKED)
+        self._reason = ""
+        for key in _LOGGER_ISSUES:
+            self._drop_issue(key)
+
+    def _drop_issue(self, key: str) -> None:
+        issue_id = self._issue_id(key)
         if issue_id not in self._open_issues:
             return
         ir.async_delete_issue(self.hass, DOMAIN, issue_id)
@@ -249,10 +311,11 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
 
     async def _hold_degraded(self, err: SolisLoggerBusy) -> SolisSnapshot:
         """Keep the last sample without calling the inverter asleep."""
+        self._reason = err.reason or REASON_LOCKED
         self._note_degraded()
         held = self._last_good
         if held is None:
-            raise _failed("update_logger_busy") from err
+            raise _failed(_BUSY_UPDATE.get(self._reason, "update_logger_busy")) from err
         degraded = replace(
             held,
             partial=True,
@@ -323,13 +386,11 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
         """Describe the local session without addresses or serials."""
         if self._degraded_since is None:
             return {"state": "ok"}
+        reason = self._reason or REASON_LOCKED
         return {
             "state": "degraded",
-            "detail": (
-                "Local Modbus was reset. A fresh SolisCloud sample is used when "
-                "one exists. The next local try waits at least 10 seconds and "
-                "at most about 10 minutes."
-            ),
+            "reason": reason,
+            "detail": _DEGRADED_DETAIL.get(reason, _DEGRADED_DETAIL[REASON_LOCKED]),
         }
 
     def _issue_id(self, key: str) -> str:

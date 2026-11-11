@@ -205,5 +205,6 @@ reads are one second apart, inside the 150 ms to 1 s range those projects use.
 ## Dongles
 
 `SolisLocalTransport` speaks Solarman V5 and, when that is not the framing,
-Modbus TCP. A Wi-Fi S3 stick has no local port. Both framings fill the same
-`SolisSnapshot`.
+Modbus TCP. A Wi-Fi S3 stick has no local port. The Solis S2-WL-ST is a
+different transport on port 502; see [s2-wl-st.md](s2-wl-st.md). Both
+framings fill the same `SolisSnapshot`.

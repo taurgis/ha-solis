@@ -112,9 +112,9 @@ def build_response(logger_serial: int, sequence: int, modbus: bytes) -> bytes:
     return body + bytes((sum(body[1:]) & 0xFF, _END))
 
 
-def build_mbap(transaction: int, slave: int, address: int, count: int) -> bytes:
-    """Build a Modbus TCP function-4 read. There is no CRC."""
-    pdu = struct.pack(">BHH", 0x04, address & 0xFFFF, count & 0xFFFF)
+def build_mbap(transaction: int, slave: int, address: int, count: int, function: int = 4) -> bytes:
+    """Build a Modbus TCP read. There is no CRC. Function 4 is the input map."""
+    pdu = struct.pack(">BHH", function & 0xFF, address & 0xFFFF, count & 0xFFFF)
     header = _MBAP.pack(transaction & 0xFFFF, 0, len(pdu) + 1)
     return header + bytes((slave & 0xFF,)) + pdu
 
@@ -235,7 +235,7 @@ def decode_mbap(frame: bytes) -> list[int]:
         if len(pdu) < 2:
             raise ValueError("mbap exception is truncated")
         raise ModbusException(pdu[1])
-    if function != 0x04 or len(pdu) < 2:
+    if function not in (0x03, 0x04) or len(pdu) < 2:
         raise ValueError(f"unexpected function {function}")
     count = pdu[1]
     data = pdu[2 : 2 + count]
@@ -301,15 +301,21 @@ def classify_io(err: BaseException, *, connected: bool) -> SolisLoggerOffline | 
     if isinstance(err, SolisLoggerOffline):
         return err
     if isinstance(err, TimeoutError) or _is_unreachable(err):
-        return SolisLoggerOffline("logger did not answer", connected=connected)
+        return SolisLoggerOffline("logger did not answer", connected=connected, reason="timeout")
     if _is_refused(err):
-        return SolisLoggerOffline("logger refused the port", connected=False, refused=True)
+        return SolisLoggerOffline(
+            "logger refused the port", connected=False, refused=True, reason="refused"
+        )
     if _is_busy(err):
         return SolisLoggerBusy("logger reset or refused the session")
     if isinstance(err, (ConnectionError, OSError, asyncio.IncompleteReadError)):
-        return SolisLoggerOffline("logger closed the connection", connected=connected)
+        return SolisLoggerOffline(
+            "logger closed the connection", connected=connected, reason="closed"
+        )
     if isinstance(err, ValueError):
-        return SolisLoggerOffline("logger sent a frame that is not Modbus", connected=connected)
+        return SolisLoggerOffline(
+            "logger sent a frame that is not Modbus", connected=connected, reason="garbage"
+        )
     raise err
 
 
@@ -423,7 +429,9 @@ class SolarmanClient(_PacedClient):
             if (sum(frame[1:-2]) & 0xFF) != frame[-2]:
                 raise ValueError("solarman checksum mismatch")
             return frame
-        raise SolisLoggerOffline("logger sent no matching response", connected=True)
+        raise SolisLoggerOffline(
+            "logger sent no matching response", connected=True, reason="timeout"
+        )
 
     async def _read_one(self, reader: asyncio.StreamReader) -> bytes:
         while True:
@@ -435,14 +443,21 @@ class SolarmanClient(_PacedClient):
             except (TimeoutError, ConnectionError, OSError) as err:
                 raise classify_io(err, connected=True) from err
             if not chunk:
-                raise SolisLoggerOffline("logger closed the connection", connected=True)
+                raise SolisLoggerOffline(
+                    "logger closed the connection", connected=True, reason="closed"
+                )
             if len(self._buffer) > _MAX_PAYLOAD:
                 self._buffer = self._buffer[-_MAX_PAYLOAD:]
             self._buffer += chunk
 
 
 class ModbusTcpClient(_PacedClient):
-    """Plain Modbus TCP on 8899 or 30003. One request is in flight."""
+    """Plain Modbus TCP. One request is in flight.
+
+    Function 4 is the Solis input map. An S2-WL-ST that only answers function
+    3 (the official Modbus Poll demo) is retried once when ``fallback_function``
+    is set. Illegal-function is exception 1. Any other exception is the inverter.
+    """
 
     def __init__(
         self,
@@ -451,32 +466,49 @@ class ModbusTcpClient(_PacedClient):
         port: int = 8899,
         timeout: float = 8.0,
         gap: float = 1.0,
+        function: int = 4,
+        fallback_function: int = 0,
     ) -> None:
         """Store the address. The socket opens on the first read."""
         super().__init__(host, port=port, timeout=timeout, gap=gap)
+        self.function = function if function in (3, 4) else 4
+        self._fallback = fallback_function if fallback_function in (3, 4) else 0
         self._transaction = 1
 
     async def read_input(self, slave: int, address: int, count: int) -> list[int]:
         """Read input registers over MBAP."""
         async with self._lock:
             await self._pace()
-            reader, writer = await self._ensure()
-            transaction = self._transaction & 0xFFFF
-            self._transaction = (self._transaction + 1) & 0xFFFF
-            request = build_mbap(transaction, slave, address, count)
             try:
-                await self._send(writer, request)
-                frame = await self._read_response(reader)
-            except (SolisLoggerBusy, SolisLoggerOffline):
-                await self.close()
-                raise
-            except _IO_ERRORS as err:
-                await self.close()
-                raise classify_io(err, connected=True) from err
-            if int.from_bytes(frame[:2], "big") != transaction:
-                await self.close()
-                raise SolisLoggerOffline("modbus tcp transaction did not match", connected=True)
-            return decode_mbap(frame)
+                return await self._exchange(slave, address, count)
+            except ModbusException as err:
+                if err.code != 1 or self._fallback == 0 or self.function == self._fallback:
+                    raise
+                self.function = self._fallback
+                self._fallback = 0
+                await self._pace()
+                return await self._exchange(slave, address, count)
+
+    async def _exchange(self, slave: int, address: int, count: int) -> list[int]:
+        reader, writer = await self._ensure()
+        transaction = self._transaction & 0xFFFF
+        self._transaction = (self._transaction + 1) & 0xFFFF
+        request = build_mbap(transaction, slave, address, count, self.function)
+        try:
+            await self._send(writer, request)
+            frame = await self._read_response(reader)
+        except (SolisLoggerBusy, SolisLoggerOffline):
+            await self.close()
+            raise
+        except _IO_ERRORS as err:
+            await self.close()
+            raise classify_io(err, connected=True) from err
+        if int.from_bytes(frame[:2], "big") != transaction:
+            await self.close()
+            raise SolisLoggerOffline(
+                "modbus tcp transaction did not match", connected=True, reason="garbage"
+            )
+        return decode_mbap(frame)
 
     async def _read_response(self, reader: asyncio.StreamReader) -> bytes:
         try:
@@ -486,7 +518,9 @@ class ModbusTcpClient(_PacedClient):
                 raise ValueError("mbap length is not plausible")
             body = await asyncio.wait_for(reader.readexactly(length), timeout=self._timeout)
         except asyncio.IncompleteReadError as err:
-            raise SolisLoggerOffline("logger closed the connection", connected=True) from err
+            raise SolisLoggerOffline(
+                "logger closed the connection", connected=True, reason="closed"
+            ) from err
         except (TimeoutError, ConnectionError, OSError) as err:
             raise classify_io(err, connected=True) from err
         return header + body
