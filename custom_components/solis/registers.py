@@ -45,6 +45,28 @@ def serial_from_words(words: dict[int, int]) -> str:
     return text
 
 
+def firmware_version(words: dict[int, int]) -> str | None:
+    """Return the cloud-style version from registers 3000 and 3001.
+
+    On the Solis-mini-2500-4G those registers are 15 and 15, and SolisCloud
+    shows inverter version ``0F000F``.
+    """
+    if 3000 not in words or 3001 not in words:
+        return None
+    return f"{words[3000] & 0xFF:02X}{words[3001] & 0xFFFF:04X}"
+
+
+def device_model_name(series: str | None, model_code: str | None) -> str:
+    """Join a series such as Solis-mini-2500-4G with a model code such as E4."""
+    if series and model_code and model_code not in series:
+        return f"{series} ({model_code})"
+    if series:
+        return series
+    if model_code:
+        return model_code
+    return "Solis inverter"
+
+
 def _string_state(raw: int) -> int | None:
     """Map register 3043 onto the cloud status codes.
 
@@ -73,15 +95,16 @@ def decode_string(
     ac_type = words.get(3002, 0) & 0xFFFF
     phases = _string_phases(words, ac_type)
     strings = _pv_strings(words, (words.get(3003, 0) & 0xFFFF) + 1)
-    hmi = words.get(3001)
+    # A few tens of watts in the morning is production. Asleep is only the
+    # stick being powered off, which never reaches this decoder.
     return InverterSnapshot(
         serial=serial,
         device_id=serial,
         station_id="local",
         name=serial,
-        model="String inverter",
+        model="Solis 4G",
         product_model="1",
-        hmi_version=None if hmi is None else str(hmi),
+        hmi_version=firmware_version(words),
         state=_string_state(words.get(3043, 0)),
         ac_output_type=0 if ac_type == 0 else 1,
         data_timestamp=moment,

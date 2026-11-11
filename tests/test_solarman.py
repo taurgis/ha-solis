@@ -14,7 +14,7 @@ from homeassistant.helpers import entity_registry as er
 
 from .conftest import entry_data, entry_options
 from custom_components.solis.const import DOMAIN, SOURCE_BOTH, SOURCE_LOCAL
-from custom_components.solis.errors import SolisCloudError, SolisLoggerOffline
+from custom_components.solis.errors import SolisCloudError, SolisLoggerBusy, SolisLoggerOffline
 from custom_components.solis.local_transport import (
     SolisLocalTransport,
     SolisPriorityTransport,
@@ -171,8 +171,13 @@ def test_frame_and_discovery_errors() -> None:
         modbus_from_request(b"\x00" * 10)
     with pytest.raises(ValueError):
         decode_read(b"\x01\x03\x02\x00\x01")
+    from custom_components.solis.solarman import crc16
+
+    exception = bytes.fromhex("018302")
     with pytest.raises(ModbusException):
-        decode_read(bytes.fromhex("018302") + b"\x00\x00")
+        decode_read(exception + crc16(exception).to_bytes(2, "little"))
+    with pytest.raises(ValueError):
+        decode_read(exception + b"\x00\x00")
     assert serial_from_words({}) == ""
     assert s32({1: 0xFFFF, 2: 0xFFFF}, 1) == -1
     hybrid = decode_hybrid(
@@ -262,6 +267,8 @@ async def test_register_map_detection() -> None:
 
     class _Hybrid:
         async def read_input(self, slave: int, address: int, count: int) -> list[int]:
+            if address < 33000:
+                raise ModbusException(2)
             return [1]
 
     class _Dead:
@@ -577,6 +584,37 @@ async def test_dhcp_updates_the_logger_address(hass: HomeAssistant, socket_enabl
     )
     assert moved["reason"] == "already_configured"
     assert other.data["logger_host"] == "127.0.0.1"
+
+
+async def test_logger_reset_is_not_reported_as_night(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch, socket_enabled: None
+) -> None:
+    """A reset during setup says the logger is busy, not that it is night."""
+    from custom_components.solis import config_flow as flow
+    from custom_components.solis.errors import SolisLoggerBusy
+
+    async def _busy(*_args: object, **_kwargs: object) -> None:
+        raise SolisLoggerBusy("reset")
+
+    async def _no_discovery(*_args: object, **_kwargs: object) -> list[object]:
+        return []
+
+    monkeypatch.setattr(flow, "probe_logger", _busy)
+    monkeypatch.setattr(flow, "discover_sticks", _no_discovery)
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {"source": "local", "api_url": "http://127.0.0.1:9", "key_id": "", "key_secret": ""},
+    )
+    failed = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            "logger_host": "127.0.0.1",
+            "logger_serial": "1902137671",
+            "inverter_serial": "110E40182280017",
+        },
+    )
+    assert failed["errors"]["base"] == "logger_busy"
 
 
 async def test_empty_cloud_key_is_rejected(
@@ -925,3 +963,220 @@ async def test_discovery_socket_error(
 
     monkeypatch.setattr(loop, "create_datagram_endpoint", _boom)
     assert await discover_sticks(timeout=0.1) == []
+
+
+def test_cloud_names_the_series_and_the_model_code() -> None:
+    """SolisCloud series Solis-mini-2500-4G and model code E4 stay distinct."""
+    from custom_components.solis.parser import parse_inverter
+
+    parsed = parse_inverter(
+        {
+            "sn": "110E40182280017",
+            "machine": "Solis-mini-2500-4G",
+            "model": "E4",
+            "version": "0F000F",
+            "productModel": "1",
+            "eTotal": 21.97,
+            "eTotalStr": "MWh",
+            "pac": 0.059,
+            "pacStr": "kW",
+        }
+    )
+    assert parsed.model == "Solis-mini-2500-4G"
+    assert parsed.model_code == "E4"
+    assert parsed.hmi_version == "0F000F"
+    assert parsed.energy_total_kwh == pytest.approx(21970)
+    assert parsed.ac_power_w == pytest.approx(59)
+
+
+def test_morning_power_is_not_asleep_and_version_matches_the_cloud() -> None:
+    """60 W is production. Registers 3000 and 3001 are version 0F000F."""
+    from custom_components.solis.registers import device_model_name
+
+    words = captured_registers()
+    words[3005] = 60
+    parsed = decode_string(words, serial="110E40182280017", logger_serial=str(SERIAL))
+    assert parsed.ac_power_w == 60
+    assert parsed.model == "Solis 4G"
+    assert parsed.hmi_version == "0F000F"
+    assert parsed.data_source == "local"
+    assert parsed.state is None
+    assert device_model_name("Solis-mini-2500-4G", "E4") == "Solis-mini-2500-4G (E4)"
+
+
+def test_sequence_match_ignores_the_stick_counter() -> None:
+    """The captured reply used b1 17. Only the low byte is our sequence."""
+    from custom_components.solis.solarman import build_response, sequence_matches
+
+    frame = build_response(SERIAL, 0x1701, rtu_read(1, 3004, 1))
+    assert sequence_matches(frame, 1)
+    assert not sequence_matches(frame, 2)
+
+
+def test_take_frame_drops_junk_and_an_illegal_length() -> None:
+    """A heartbeat before a response is one frame. A huge length is not read."""
+    from custom_components.solis.solarman import build_response, take_frame
+
+    good = build_response(SERIAL, 1, rtu_read(1, 3004, 1))
+    heartbeat = bytes.fromhex("a50100104702d7cbea91e6005d15")
+    frame, rest = take_frame(b"\x00\x01" + heartbeat + good)
+    assert frame == heartbeat
+    assert rest == good
+    huge = bytes([0xA5, 0xFF, 0xFF]) + b"\x00" * 8
+    assert take_frame(huge)[0] is None
+
+
+async def test_locked_stick_resets_and_discovery_still_answers(socket_enabled: None) -> None:
+    """TCP connects, the request is reset, and UDP still returns the stick."""
+    state = StickState(tcp_port=0, udp_port=48899, locked=True)
+    emulator = StickEmulator(state)
+    await emulator.start()
+    assert emulator._tcp is not None
+    port = emulator._tcp.sockets[0].getsockname()[1]
+    client = SolarmanClient("127.0.0.1", SERIAL, port=port, timeout=1, gap=0)
+    try:
+        with pytest.raises(SolisLoggerBusy):
+            await client.read_input(1, 3004, 2)
+        found = await discover_sticks(timeout=0.4)
+        assert any(stick.serial == SERIAL for stick in found)
+        before = len(state.connections)
+        with pytest.raises(SolisLoggerBusy):
+            await client.read_input(1, 3004, 2)
+        assert len(state.connections) == before + 1
+    finally:
+        await client.close()
+        await emulator.close()
+
+
+async def test_plain_modbus_tcp_and_no_cascade_after_a_reset(socket_enabled: None) -> None:
+    """MBAP on 8899 is remembered. A reset does not open a second framing."""
+    from custom_components.solis.solarman import ModbusTcpClient
+
+    state = StickState(tcp_port=0, udp_port=0, protocol="mbtcp")
+    emulator = StickEmulator(state)
+    await emulator.start()
+    assert emulator._tcp is not None
+    port = emulator._tcp.sockets[0].getsockname()[1]
+    client = ModbusTcpClient("127.0.0.1", port=port, timeout=1, gap=0)
+    try:
+        assert await client.read_input(1, 3004, 2) == [0, 0]
+    finally:
+        await client.close()
+        await emulator.close()
+
+    locked = StickState(tcp_port=0, udp_port=0, locked=True)
+    stuck = StickEmulator(locked)
+    await stuck.start()
+    assert stuck._tcp is not None
+    locked_port = stuck._tcp.sockets[0].getsockname()[1]
+    transport = SolisLocalTransport(
+        "127.0.0.1",
+        SERIAL,
+        slave=1,
+        register_map="string",
+        inverter_serial="SOLIS001",
+        timeout=0.5,
+        gap=0,
+        port=locked_port,
+    )
+    try:
+        with pytest.raises(SolisLoggerBusy):
+            await transport.async_read()
+        assert len(locked.connections) == 1
+        with pytest.raises(SolisLoggerBusy):
+            await transport.async_read()
+        assert len(locked.connections) == 1
+    finally:
+        await transport.close()
+        await stuck.close()
+
+
+async def test_degraded_cloud_keeps_the_local_total_and_serial(socket_enabled: None) -> None:
+    """A reset while the cloud is fresh uses the cloud on the same inverter serial."""
+    state = StickState(tcp_port=0, udp_port=0, locked=True)
+    emulator = StickEmulator(state)
+    await emulator.start()
+    assert emulator._tcp is not None
+    port = emulator._tcp.sockets[0].getsockname()[1]
+    local = SolisLocalTransport(
+        "127.0.0.1",
+        SERIAL,
+        slave=1,
+        register_map="string",
+        inverter_serial="110E40182280017",
+        timeout=0.5,
+        gap=0,
+        port=port,
+    )
+
+    class _Fresh:
+        async def async_read(self) -> SolisSnapshot:
+            from dataclasses import replace
+
+            base = await _tiny_cloud()._cloud.async_read()  # type: ignore[attr-defined]
+            inverter = replace(
+                base.inverters[0],
+                serial="110E40182280017",
+                model="Solis-mini-2500-4G",
+                model_code="E4",
+                ac_power_w=59.0,
+                energy_total_kwh=12500,
+            )
+            return replace(base, inverters=(inverter,))
+
+    router = SolisPriorityTransport(SOURCE_BOTH, local, _Fresh())
+    try:
+        degraded = await router.async_read()
+    finally:
+        await router.close()
+        await emulator.close()
+    assert degraded.source == "degraded"
+    assert degraded.inverters[0].serial == "110E40182280017"
+    assert degraded.inverters[0].ac_power_w == 59
+    assert degraded.inverters[0].model == "Solis-mini-2500-4G"
+    assert degraded.inverters[0].model_code == "E4"
+    assert degraded.inverters[0].data_source == "degraded"
+
+
+def test_backoff_starts_at_ten_seconds_and_caps_at_ten_minutes() -> None:
+    """The pause after a reset grows and does not exceed about 10 minutes."""
+    from custom_components.solis.local_transport import backoff_seconds
+
+    assert 10 <= backoff_seconds(0) <= 11
+    assert backoff_seconds(6) == pytest.approx(600, abs=60)
+
+
+async def test_coordinator_opens_the_logger_repair_only_after_ten_minutes(
+    hass: HomeAssistant,
+) -> None:
+    """One reset is not a repair. Ten minutes of resets is."""
+    from homeassistant.helpers import issue_registry as ir
+    from homeassistant.helpers.update_coordinator import UpdateFailed
+
+    from custom_components.solis.coordinator import SolisCoordinator
+    from custom_components.solis.errors import SolisLoggerBusy
+
+    class _Busy:
+        async def async_read(self) -> SolisSnapshot:
+            raise SolisLoggerBusy("local session reset")
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"source": "local", "logger_host": "127.0.0.1", "logger_serial": "1"},
+        options={},
+        version=3,
+    )
+    entry.add_to_hass(hass)
+    coordinator = SolisCoordinator(hass, entry, _Busy())
+    assert coordinator.update_interval is not None
+    assert coordinator.update_interval.total_seconds() == 60
+    with pytest.raises(UpdateFailed) as failure:
+        await coordinator._async_update_data()
+    assert failure.value.translation_key == "update_logger_busy"
+    issues = {issue_id for (_domain, issue_id) in ir.async_get(hass).issues}
+    assert not any(issue_id.startswith("logger_locked") for issue_id in issues)
+    coordinator._degraded_since = 0
+    with pytest.raises(UpdateFailed):
+        await coordinator._async_update_data()
+    issues = {issue_id for (_domain, issue_id) in ir.async_get(hass).issues}
+    assert any(issue_id.startswith("logger_locked") for issue_id in issues)

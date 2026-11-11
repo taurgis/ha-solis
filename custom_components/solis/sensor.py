@@ -101,7 +101,7 @@ _INVERTER: tuple[SolisSensorDescription, ...] = (
         device_class=SensorDeviceClass.ENUM,
         unit=None,
         state_class=None,
-        options=["local", "cloud", "asleep"],
+        options=["local", "cloud", "asleep", "degraded"],
         category=EntityCategory.DIAGNOSTIC,
     ),
     _measurement(

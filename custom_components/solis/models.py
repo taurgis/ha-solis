@@ -74,8 +74,11 @@ class InverterSnapshot:
     # This poll could not read the inverter. Instant sensors hide the previous
     # sample; energy totals still publish it.
     unreachable: bool = False
-    # local, cloud, or asleep. Asleep means the logger itself is powered down.
+    # local, cloud, asleep, or degraded. Asleep means the stick is powered off.
+    # Degraded means local Modbus reset while a cloud sample is in use.
     data_source: str = "cloud"
+    # Short Solis model code such as E4, kept apart from the series name.
+    model_code: str | None = None
 
     def condition(self, now: datetime, stale_after: timedelta = STALE_AFTER) -> str:
         """Return online, offline, alarm, stale, or unknown."""
@@ -340,6 +343,7 @@ def _inverter(raw: Mapping[str, Any]) -> InverterSnapshot:
         strings=strings,
         unreachable=bool(raw.get("unreachable", False)),
         data_source=str(raw.get("data_source") or "cloud"),
+        model_code=_optional_str(raw, "model_code"),
     )
 
 

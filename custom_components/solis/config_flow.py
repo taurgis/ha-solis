@@ -32,19 +32,23 @@ from .const import (
     CONF_LEGACY_NAME,
     CONF_LOGGER_HOST,
     CONF_LOGGER_MAC,
+    CONF_LOGGER_PROTOCOL,
     CONF_LOGGER_SERIAL,
     CONF_REGISTER_MAP,
     CONF_REQUEST_TIMEOUT,
     CONF_SCAN_INTERVAL,
+    CONF_SERIAL_UNSUPPORTED,
     CONF_SLAVE_ID,
     CONF_SOURCE,
     CONF_STATION_IDS,
     CONF_TIME_ZONE,
     DEFAULT_API_URL,
     DEFAULT_ENDPOINT_INTERVAL,
+    DEFAULT_LOCAL_SCAN_INTERVAL,
     DEFAULT_REQUEST_TIMEOUT,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
+    MIN_LOCAL_SCAN_INTERVAL,
     SOLARMAN_OUI,
     SOURCE_BOTH,
     SOURCE_CLOUD,
@@ -54,6 +58,7 @@ from .errors import (
     SolisAuthError,
     SolisClockError,
     SolisCloudError,
+    SolisLoggerBusy,
     SolisLoggerOffline,
     SolisTimeoutError,
 )
@@ -276,8 +281,13 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
                 host = str(user_input.get(CONF_LOGGER_HOST) or "").strip()
                 serial_text = str(user_input.get(CONF_LOGGER_SERIAL) or "").strip()
                 if host and serial_text:
+                    typed_serial = str(user_input.get(CONF_INVERTER_SERIAL) or "").strip()
                     try:
-                        probed = await probe_logger(host, int(serial_text))
+                        probed = await probe_logger(
+                            host, int(serial_text), inverter_serial=typed_serial
+                        )
+                    except SolisLoggerBusy:
+                        errors["base"] = "logger_busy"
                     except (SolisLoggerOffline, ValueError):
                         errors["base"] = "logger_asleep"
                     else:
@@ -288,7 +298,9 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
                                 CONF_LOGGER_SERIAL: serial_text,
                                 CONF_SLAVE_ID: probed.slave,
                                 CONF_REGISTER_MAP: probed.register_map,
-                                CONF_INVERTER_SERIAL: probed.inverter_serial,
+                                CONF_INVERTER_SERIAL: typed_serial or probed.inverter_serial,
+                                CONF_LOGGER_PROTOCOL: probed.protocol,
+                                CONF_SERIAL_UNSUPPORTED: probed.serial_unsupported,
                             }
                         )
                         unique_id = serial_text
@@ -333,7 +345,7 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
                 vol.Required(
                     CONF_SCAN_INTERVAL,
                     default=options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
-                ): vol.All(vol.Coerce(int), vol.Range(min=60, max=3600)),
+                ): vol.All(vol.Coerce(int), vol.Range(min=MIN_LOCAL_SCAN_INTERVAL, max=3600)),
                 vol.Required(
                     CONF_REQUEST_TIMEOUT,
                     default=options.get(CONF_REQUEST_TIMEOUT, DEFAULT_REQUEST_TIMEOUT),
@@ -354,6 +366,9 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
                 ): str,
                 vol.Optional(
                     CONF_LOGGER_SERIAL, default=str(entry.data.get(CONF_LOGGER_SERIAL, ""))
+                ): str,
+                vol.Optional(
+                    CONF_INVERTER_SERIAL, default=str(entry.data.get(CONF_INVERTER_SERIAL, ""))
                 ): str,
             }
         )
@@ -385,11 +400,14 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
             try:
                 serial = int(str(user_input[CONF_LOGGER_SERIAL]).strip())
                 host = str(user_input[CONF_LOGGER_HOST]).strip()
-                probe = await probe_logger(host, serial)
+                typed = str(user_input.get(CONF_INVERTER_SERIAL) or "").strip()
+                probe = await probe_logger(host, serial, inverter_serial=typed)
+            except SolisLoggerBusy:
+                errors["base"] = "logger_busy"
             except (SolisLoggerOffline, ValueError, TimeoutError):
                 errors["base"] = "logger_asleep"
             else:
-                return await self._finish_logger(host, serial, probe)
+                return await self._finish_logger(host, serial, probe, typed)
         found = self._sticks[0] if self._sticks else None
         schema = vol.Schema(
             {
@@ -397,6 +415,7 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
                 vol.Required(
                     CONF_LOGGER_SERIAL, default="" if found is None else str(found.serial)
                 ): str,
+                vol.Optional(CONF_INVERTER_SERIAL, default=""): str,
             }
         )
         return self.async_show_form(
@@ -409,7 +428,9 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
             },
         )
 
-    async def _finish_logger(self, host: str, serial: int, probe: Any) -> ConfigFlowResult:
+    async def _finish_logger(
+        self, host: str, serial: int, probe: Any, inverter_serial: str = ""
+    ) -> ConfigFlowResult:
         mac = ""
         for stick in self._sticks:
             if stick.serial == serial:
@@ -421,7 +442,9 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
             CONF_LOGGER_MAC: mac,
             CONF_SLAVE_ID: probe.slave,
             CONF_REGISTER_MAP: probe.register_map,
-            CONF_INVERTER_SERIAL: probe.inverter_serial,
+            CONF_INVERTER_SERIAL: inverter_serial or probe.inverter_serial,
+            CONF_LOGGER_PROTOCOL: probe.protocol,
+            CONF_SERIAL_UNSUPPORTED: probe.serial_unsupported,
             CONF_SOURCE: self._source,
         }
         await self.async_set_unique_id(str(serial))
@@ -441,7 +464,7 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
             title=str(title),
             data=data,
             options={
-                CONF_SCAN_INTERVAL: DEFAULT_SCAN_INTERVAL,
+                CONF_SCAN_INTERVAL: DEFAULT_LOCAL_SCAN_INTERVAL,
                 CONF_REQUEST_TIMEOUT: DEFAULT_REQUEST_TIMEOUT,
                 CONF_ENDPOINT_INTERVAL: DEFAULT_ENDPOINT_INTERVAL,
                 CONF_TIME_ZONE: "",
@@ -506,7 +529,7 @@ class SolisOptionsFlow(OptionsFlow):
                 vol.Required(
                     CONF_SCAN_INTERVAL,
                     default=options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
-                ): vol.All(vol.Coerce(int), vol.Range(min=60, max=3600)),
+                ): vol.All(vol.Coerce(int), vol.Range(min=MIN_LOCAL_SCAN_INTERVAL, max=3600)),
                 vol.Required(
                     CONF_REQUEST_TIMEOUT,
                     default=options.get(CONF_REQUEST_TIMEOUT, DEFAULT_REQUEST_TIMEOUT),

@@ -12,7 +12,10 @@ morning it can listen on a different address.
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from dataclasses import dataclass, field
+import socket
+import struct
 import time
 
 from aiohttp import web
@@ -83,6 +86,9 @@ class StickState:
     slow: float = 0.0
     garbage: bool = False
     reset_after: int = 0
+    locked: bool = False
+    protocol: str = "v5"
+    lock_above: int | None = None
     registers: dict[int, int] = field(default_factory=captured_registers)
     connections: list[float] = field(default_factory=list)
 
@@ -104,9 +110,9 @@ class StickEmulator:
             await self._serve_control(control_port)
 
     async def _listen(self) -> None:
+        self._tcp = await asyncio.start_server(self._client, self.state.host, self.state.tcp_port)
         if self.state.night:
             return
-        self._tcp = await asyncio.start_server(self._client, self.state.host, self.state.tcp_port)
         loop = asyncio.get_running_loop()
 
         class _Udp(asyncio.DatagramProtocol):
@@ -136,7 +142,17 @@ class StickEmulator:
     async def apply(self, changes: dict[str, object]) -> None:
         """Apply a lab control payload and rebind when the address or night changes."""
         rebound = False
-        for key in ("night", "slow", "garbage", "reset_after", "host"):
+        keys = (
+            "night",
+            "slow",
+            "garbage",
+            "reset_after",
+            "host",
+            "locked",
+            "protocol",
+            "lock_above",
+        )
+        for key in keys:
             if key in changes:
                 if key in {"host", "night"}:
                     rebound = True
@@ -169,29 +185,84 @@ class StickEmulator:
         recent = [stamp for stamp in self.state.connections if now - stamp < 2]
         recent.append(now)
         self.state.connections = recent
-        if self.state.reset_after and len(recent) > self.state.reset_after:
+        if self.state.night:
             writer.close()
             return
+        if self.state.locked:
+            await _reset(reader, writer)
+            return
+        if self.state.reset_after and len(recent) > self.state.reset_after:
+            await _reset(reader, writer)
+            return
         try:
-            while True:
-                frame = await _read_request(reader)
-                if logger_serial_of(frame) != self.state.serial:
-                    await asyncio.sleep(1)
+            first = await asyncio.wait_for(reader.read(1), timeout=3)
+            if not first:
+                return
+            if first == b"\xa5":
+                if self.state.protocol == "mbtcp":
                     return
-                if self.state.slow:
-                    await asyncio.sleep(self.state.slow)
-                if self.state.garbage:
-                    writer.write(b"\x00\x01garbage")
-                    await writer.drain()
-                    return
-                modbus = modbus_from_request(frame)
-                reply = _modbus_reply(self.state, modbus)
-                writer.write(build_response(self.state.serial, sequence_of(frame), reply))
-                await writer.drain()
+                await self._serve_v5(reader, writer, first)
+                return
+            if self.state.protocol == "v5":
+                return
+            await self._serve_mbap(reader, writer, first)
         except (TimeoutError, ConnectionError, OSError, ValueError, asyncio.IncompleteReadError):
             return
         finally:
-            writer.close()
+            transport = writer.transport
+            if transport is not None and not transport.is_closing():
+                writer.close()
+
+    async def _serve_v5(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, first: bytes
+    ) -> None:
+        buffer = first
+        while True:
+            frame, buffer = _pop_v5(buffer)
+            if frame is None:
+                chunk = await asyncio.wait_for(reader.read(512), timeout=3)
+                if not chunk:
+                    return
+                buffer += chunk
+                continue
+            if logger_serial_of(frame) != self.state.serial:
+                await asyncio.sleep(1)
+                return
+            if self.state.slow:
+                await asyncio.sleep(self.state.slow)
+            if self.state.garbage:
+                writer.write(b"\x00\x01garbage")
+                await writer.drain()
+                return
+            modbus = modbus_from_request(frame)
+            if len(modbus) >= 6 and _should_lock(self.state, int.from_bytes(modbus[2:4], "big")):
+                self.state.locked = True
+                await _reset(reader, writer)
+                return
+            reply = _modbus_reply(self.state, modbus)
+            writer.write(build_response(self.state.serial, sequence_of(frame), reply))
+            await writer.drain()
+
+    async def _serve_mbap(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, first: bytes
+    ) -> None:
+        pending = first
+        while True:
+            if not pending:
+                pending = await asyncio.wait_for(reader.read(1), timeout=3)
+                if not pending:
+                    return
+            header = pending + await asyncio.wait_for(reader.readexactly(6), timeout=3)
+            length = int.from_bytes(header[4:6], "big")
+            body = await asyncio.wait_for(reader.readexactly(max(length - 1, 0)), timeout=3)
+            frame = header + body
+            pending = b""
+            if len(frame) >= 12 and _should_lock(self.state, int.from_bytes(frame[8:10], "big")):
+                self.state.locked = True
+                await _reset(reader, writer)
+                return
+            writer.write(_mbap_reply(self.state, frame))
+            await writer.drain()
 
     async def _serve_control(self, port: int) -> None:
         app = web.Application()
@@ -207,6 +278,29 @@ class StickEmulator:
         self._control = web.AppRunner(app)
         await self._control.setup()
         await web.TCPSite(self._control, "127.0.0.1", port).start()
+
+
+def _pop_v5(buffer: bytes) -> tuple[bytes | None, bytes]:
+    if len(buffer) < 13 or buffer[0] != 0xA5:
+        return None, buffer
+    total = 11 + int.from_bytes(buffer[1:3], "little") + 2
+    if len(buffer) < total:
+        return None, buffer
+    return buffer[:total], buffer[total:]
+
+
+def _should_lock(state: StickState, address: int) -> bool:
+    return state.lock_above is not None and address >= state.lock_above
+
+
+async def _reset(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    """Accept the TCP session, then reset it. That is the locked logger."""
+    with suppress(TimeoutError, ConnectionError, OSError):
+        await asyncio.wait_for(reader.read(64), timeout=0.2)
+    sock = writer.get_extra_info("socket")
+    if sock is not None:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+    writer.close()
 
 
 async def _read_request(reader: asyncio.StreamReader) -> bytes:
@@ -238,6 +332,21 @@ def _modbus_reply(state: StickState, request: bytes) -> bytes:
 
 def _addr(request: bytes) -> tuple[int, int]:
     return int.from_bytes(request[2:4], "big"), int.from_bytes(request[4:6], "big")
+
+
+def _mbap_reply(state: StickState, frame: bytes) -> bytes:
+    unit = frame[6:7] or b"\x01"
+    function = frame[7] if len(frame) > 7 else 0x04
+    address = int.from_bytes(frame[8:10], "big") if len(frame) >= 12 else 0
+    count = int.from_bytes(frame[10:12], "big") if len(frame) >= 12 else 0
+    if unit != b"\x01" or function != 0x04 or address >= 33000:
+        pdu = bytes((function | 0x80, 2))
+    else:
+        values = [state.registers.get(address + offset, 0) & 0xFFFF for offset in range(count)]
+        pdu = bytes((0x04, len(values) * 2))
+        for value in values:
+            pdu += value.to_bytes(2, "big")
+    return frame[:2] + b"\x00\x00" + (len(pdu) + 1).to_bytes(2, "big") + unit + pdu
 
 
 def _exception(slave: bytes, function: int, code: int) -> bytes:

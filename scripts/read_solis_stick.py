@@ -8,9 +8,9 @@ reach the logger:
     python scripts/read_solis_stick.py
     python scripts/read_solis_stick.py --host 192.168.0.105 --serial 1902137671
 
-Registers 3060-3063 are the inverter serial. The stick read for this
-integration did not answer 3050-3070. A silent serial leaves the entity id
-on the logger serial (prefixed with L) unless setup already learned one.
+This does not read registers at 3050 or above. On the bench stick that
+range resets the local session. Pass the SolisCloud inverter serial to the
+integration instead, or let local-and-cloud mode copy it.
 """
 
 from __future__ import annotations
@@ -24,9 +24,13 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from custom_components.solis.errors import SolisLoggerOffline  # noqa: E402
+from custom_components.solis.errors import (  # noqa: E402
+    SolisLoggerBusy,
+    SolisLoggerOffline,
+    logger_failure_text,
+)
 from custom_components.solis.registers import decode_string, serial_from_words  # noqa: E402
-from custom_components.solis.solarman import ModbusException, SolarmanClient  # noqa: E402
+from custom_components.solis.solarman import SolarmanClient  # noqa: E402
 
 BLOCKS = ((3000, 20), (3020, 20), (3040, 10))
 
@@ -40,15 +44,6 @@ async def _read(host: str, serial: int) -> None:
             for offset, value in enumerate(values):
                 words[address + offset] = value
             print(f"{address}: {values}")
-        try:
-            serial_words = await client.read_input(1, 3060, 4)
-        except (SolisLoggerOffline, ModbusException, TimeoutError, ValueError) as err:
-            print(f"3060-3063 did not answer ({err}). The inverter id falls back to L{serial}.")
-            serial_words = []
-        else:
-            print(f"3060: {serial_words}")
-            for offset, value in enumerate(serial_words):
-                words[3060 + offset] = value
     finally:
         await client.close()
     learned = serial_from_words(words) or f"L{serial}"
@@ -74,8 +69,8 @@ def main() -> None:
     args = parser.parse_args()
     try:
         asyncio.run(_read(args.host, args.serial))
-    except SolisLoggerOffline as err:
-        print(f"{args.host} did not answer. The inverter has to be producing. ({err})")
+    except (SolisLoggerOffline, SolisLoggerBusy) as err:
+        print(logger_failure_text(args.host, err))
         raise SystemExit(1) from err
 
 

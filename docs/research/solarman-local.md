@@ -123,8 +123,87 @@ Setup copy tells the user to run discovery while the inverter is producing.
 An empty discovery result is explained there: the stick is off with the
 inverter.
 
+## This 4G mini, named from SolisCloud
+
+The inverter on the bench is a Solis-mini-2500-4G, model code E4, Modbus
+slave 1, rated 2.5 kW. SolisCloud shows inverter version `0F000F`. Registers
+3000 and 3001 on the wire were 15 and 15, which is that version:
+`0F` + `000F`. The series and the model code are not in those two registers.
+They come from SolisCloud (`machine` / `series`, and `model` when it differs
+from the series). Device info is `Solis-mini-2500-4G (E4)` once both are
+known. A local-only read with no cloud series is labelled `Solis 4G` and
+still uses the 3000-range map.
+
+The cloud total was 21.97 MWh, which is the same 21970 kWh the stick
+reported. Power was 0.059 kW while the inverter display showed about 60 W.
+That is production. Asleep is only the stick disappearing from the LAN.
+
+The inverter serial SolisCloud uses is `110E40182280017`. Registers
+3060-3063 are only eight bytes, and on this stick a read at 3050 or above
+resets the session, so the serial is taken from the cloud in `both` mode or
+typed in. Entity ids use that serial either way. The placeholder `L` plus
+the logger serial is replaced when the real one is learned, and existing
+entity rows are retargeted.
+
+## Modbus TCP as well as V5
+
+DLS-L LAN sticks whose serial starts with 19 often answer plain Modbus TCP
+(MBAP, no V5 wrapper) on port 8899, slave 1, about 50 registers per request.
+Some firmware uses port 30003 instead.
+
+- pysolarmanv5 issue 5
+- openHAB pull 17563
+- evcc issue 9598
+- kbialek/deye-inverter-mqtt mode `mbtcp`
+- pysolarmanv5 issue 22 for port 30003
+
+The reader tries V5 first. If the socket opens and the bytes are not V5, it
+tries Modbus TCP on the same port and then on 30003, and stores the framing
+that answered. A reset is not treated as "try the other framing": that would
+open more sessions into a locked stick.
+
+Loggers allow about five or six TCP sessions and can copy a reply to every
+client (pysolarmanv5 issue 39, go-solarman-proxy). This integration keeps one
+socket, closes it on unload and on any failed read, and does not reconnect
+in a loop.
+
+## A reset is not night
+
+After many reconnects, or a scan of a register the inverter does not have,
+the stick still accepts TCP and UDP discovery, and it still uploads to
+SolisCloud, but every local request is reset. The same behaviour is described
+in pysolarmanv5 issue 22, StephanJoubert/home_assistant_solarman issue 523
+and davidrapan/ha-solarman issue 586. Recovery is the logger's TCP idle time,
+about 300 seconds and sometimes 600, or a power cycle of the inverter.
+
+The 3000-range map is cached. Register 33022 is read only when register 3004
+itself returns Modbus exception 2. Registers at 3050 and above are tried at
+most once, during setup, and a failure is remembered.
+
+The first pause after a reset is at least 10 seconds. It doubles up to about
+10 minutes. Each step is one attempt. In `both` mode a fresh cloud sample is
+published on the same inverter serial, the data source reads `degraded`, and
+live power is the cloud value, including a few tens of watts. A repair opens
+only after the reset has lasted 10 minutes. It does not mention the stick
+LED.
+
+A steady red LED on a DLS-L is the normal Solis indication: D1 red means the
+inverter link is up, D2 red means the server link is up. It is not a fault
+and the repair text does not say that it is.
+
+Night is still no route or a timeout. Live power is 0, totals stay, the data
+source reads `asleep`, and the cloud is not asked to replace those live
+readings.
+
+Give the stick a DHCP reservation. Do not set a static address on the stick.
+The integration follows the serial and the MAC when the lease changes.
+
+Poll defaults follow davidrapan/ha-solarman discussion 208 and
+deye-inverter-mqtt: 60 seconds, never faster than 30. Consecutive register
+reads are one second apart, inside the 150 ms to 1 s range those projects use.
+
 ## Dongles
 
-`SolisLocalTransport` is the Solarman V5 reader. A later Modbus TCP or Wi-Fi
-S3 reader can sit behind the same `SolisSnapshot` without new entities. Only
-V5 is implemented.
+`SolisLocalTransport` speaks Solarman V5 and, when that is not the framing,
+Modbus TCP. A Wi-Fi S3 stick has no local port. Both framings fill the same
+`SolisSnapshot`.

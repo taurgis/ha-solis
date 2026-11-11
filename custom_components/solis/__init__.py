@@ -26,9 +26,11 @@ from .const import (
     CONF_KEY_SECRET,
     CONF_LOGGER_HOST,
     CONF_LOGGER_MAC,
+    CONF_LOGGER_PROTOCOL,
     CONF_LOGGER_SERIAL,
     CONF_REGISTER_MAP,
     CONF_REQUEST_TIMEOUT,
+    CONF_SERIAL_UNSUPPORTED,
     CONF_SLAVE_ID,
     CONF_SOURCE,
     CONF_STATION_IDS,
@@ -37,6 +39,8 @@ from .const import (
     DEFAULT_REQUEST_TIMEOUT,
     DOMAIN,
     ISSUE_LEGACY_CONTROL,
+    LOCAL_REQUEST_GAP,
+    LOCAL_TIMEOUT_CAP,
     POLL_REPAIRS,
     REGISTER_STRING,
     SOURCE_BOTH,
@@ -44,7 +48,7 @@ from .const import (
 )
 from .coordinator import SolisCoordinator
 from .local_transport import SolisLocalTransport, SolisPriorityTransport
-from .migration import async_migrate_devices
+from .migration import async_adopt_inverter_serial, async_migrate_devices
 from .transport import SolisCloudTransport
 
 _LOGGER = logging.getLogger(__name__)
@@ -61,6 +65,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolisConfigEntry) -> boo
     try:
         await coordinator.async_config_entry_first_refresh()
     except ConfigEntryNotReady as err:
+        closer = getattr(transport, "close", None)
+        if closer is not None:
+            await closer()
         if coordinator.auth_failed:
             raise ConfigEntryAuthFailed(
                 translation_domain=DOMAIN,
@@ -75,6 +82,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolisConfigEntry) -> boo
     entry.runtime_data = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_reload))
+    closer = getattr(transport, "close", None)
+    if closer is not None:
+        entry.async_on_unload(closer)
     return True
 
 
@@ -121,10 +131,35 @@ def _build_transport(
         register_map=str(entry.data.get(CONF_REGISTER_MAP, REGISTER_STRING)),
         inverter_serial=str(entry.data.get(CONF_INVERTER_SERIAL) or ""),
         mac=str(entry.data.get(CONF_LOGGER_MAC) or ""),
-        timeout=float(entry.options.get(CONF_REQUEST_TIMEOUT, DEFAULT_REQUEST_TIMEOUT)),
+        protocol=str(entry.data.get(CONF_LOGGER_PROTOCOL) or ""),
+        serial_unsupported=bool(entry.data.get(CONF_SERIAL_UNSUPPORTED)),
+        timeout=min(
+            LOCAL_TIMEOUT_CAP,
+            float(entry.options.get(CONF_REQUEST_TIMEOUT, DEFAULT_REQUEST_TIMEOUT)),
+        ),
+        gap=LOCAL_REQUEST_GAP,
         on_host=lambda host, mac: _store_logger_host(hass, entry, host, mac),
+        on_protocol=lambda protocol: _store_text(hass, entry, CONF_LOGGER_PROTOCOL, protocol),
+        on_serial=lambda serial: _store_inverter_serial(hass, entry, serial),
     )
     return SolisPriorityTransport(source, local, cloud)
+
+
+def _store_text(hass: HomeAssistant, entry: SolisConfigEntry, key: str, value: str) -> None:
+    """Persist one string field when it changes. The update listener reloads later."""
+    if entry.data.get(key) == value:
+        return
+    hass.config_entries.async_update_entry(entry, data={**entry.data, key: value})
+
+
+def _store_inverter_serial(hass: HomeAssistant, entry: SolisConfigEntry, serial: str) -> None:
+    """Point existing entities at the inverter serial shared with SolisCloud."""
+    old = str(entry.data.get(CONF_INVERTER_SERIAL) or "")
+    if not serial or old == serial:
+        return
+    if old:
+        async_adopt_inverter_serial(hass, entry.entry_id, old, serial)
+    hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_INVERTER_SERIAL: serial})
 
 
 def _store_logger_host(hass: HomeAssistant, entry: SolisConfigEntry, host: str, mac: str) -> None:

@@ -12,6 +12,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN, MANUFACTURER
 from .coordinator import SolisCoordinator
 from .models import CollectorSnapshot, EpmSnapshot, InverterSnapshot, StationSnapshot
+from .registers import device_model_name
 
 
 class SolisEntity(CoordinatorEntity[SolisCoordinator]):
@@ -56,7 +57,9 @@ def inverter_device(
     info = DeviceInfo(
         identifiers={(DOMAIN, f"inverter:{inverter.serial}")},
         manufacturer=MANUFACTURER,
-        model=inverter.model or _product_model(inverter.product_model),
+        model=device_model_name(inverter.model, inverter.model_code)
+        if inverter.model or inverter.model_code
+        else _product_model(inverter.product_model),
         name=name,
         serial_number=inverter.serial,
         sw_version=inverter.hmi_version,

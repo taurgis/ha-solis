@@ -19,14 +19,16 @@
       },
       "logger": {
         "title": "Solarman logger",
-        "description": "Discovered loggers: {found}. The inverter must be producing. If nothing is listed, it is night or the stick is off: type the IP and the logger serial from the Solarman or SolisCloud device page.",
+        "description": "Discovered loggers: {found}. The inverter must be producing. If nothing is listed, it is night or the stick is off: type the IP and the logger serial. Give the stick a DHCP reservation on the router. Do not set a static address on the stick.",
         "data": {
           "logger_host": "Logger IP",
-          "logger_serial": "Logger serial"
+          "logger_serial": "Logger serial",
+          "inverter_serial": "Inverter serial"
         },
         "data_description": {
-          "logger_host": "Current DHCP address. The integration finds the stick again by serial when this changes.",
-          "logger_serial": "The numeric serial printed on the stick and returned by UDP discovery."
+          "logger_host": "Current DHCP address. The integration finds the stick again by serial when the lease changes. Reserve this address in the router.",
+          "logger_serial": "The numeric serial printed on the stick and returned by UDP discovery.",
+          "inverter_serial": "Optional. The SolisCloud inverter serial, for example 110E40182280017. Leave empty to read it from the stick when that range answers, or from SolisCloud in local-and-cloud mode. This is the entity id."
         }
       },
       "stations": {
@@ -58,6 +60,7 @@
           "source": "Connection",
           "logger_host": "Logger IP",
           "logger_serial": "Logger serial",
+          "inverter_serial": "Inverter serial",
           "api_url": "API URL",
           "station_ids": "Plants",
           "scan_interval": "Poll interval (seconds)",
@@ -67,12 +70,13 @@
         },
         "data_description": {
           "time_zone": "Leave empty to follow Home Assistant when it is within an hour of the plant offset. Use an IANA name such as Europe/London to force one, or plant to keep the numeric offset from Solis.",
-          "scan_interval": "Seconds between polls. The cloud sample is about five minutes, so the default is 300. Minimum 60.",
+          "scan_interval": "Seconds between polls. Cloud samples arrive about every five minutes, so a cloud-only entry stays at 60 or slower (default 300). A local logger defaults to 60 and cannot be faster than 30.",
           "request_timeout": "Seconds to wait for one HTTP call. Default 30.",
           "endpoint_interval": "Minimum seconds between calls to the same API path. Default 2, which stays under the published limit of two calls per second.",
           "source": "Cloud only, local only, or local with SolisCloud fallback.",
           "logger_host": "Current logger IP. Leave empty to keep the saved address.",
           "logger_serial": "Logger serial. Fill this together with the IP to attach a stick to an existing cloud entry.",
+          "inverter_serial": "Optional SolisCloud inverter serial. Set it so local and cloud entities stay the same device.",
           "api_url": "Use the host that issued the key, including the port. The international service listens on port 13333.",
           "station_ids": "Only the selected plants are polled. Change the set later with reconfigure."
         }
@@ -88,7 +92,7 @@
         },
         "data_description": {
           "time_zone": "Leave empty to follow Home Assistant when it is within an hour of the plant offset. Use an IANA name such as Europe/London to force one, or plant to keep the numeric offset from Solis.",
-          "scan_interval": "Seconds between polls. The cloud sample is about five minutes, so the default is 300. Minimum 60.",
+          "scan_interval": "Seconds between polls. Cloud samples arrive about every five minutes, so a cloud-only entry stays at 60 or slower (default 300). A local logger defaults to 60 and cannot be faster than 30.",
           "request_timeout": "Seconds to wait for one HTTP call. Default 30.",
           "endpoint_interval": "Minimum seconds between calls to the same API path. Default 2, which stays under the published limit of two calls per second."
         }
@@ -102,7 +106,8 @@
       "cannot_connect": "Could not reach SolisCloud.",
       "no_stations": "The account returned no plants. Check the API key and that the plant has an id.",
       "unknown": "Unexpected SolisCloud error.",
-      "logger_asleep": "The logger did not answer. The inverter has to be producing; at night the stick has no power and discovery finds nothing."
+      "logger_asleep": "No route to the logger, or it timed out. At night the inverter powers the stick off. Try again while it is producing.",
+      "logger_busy": "The logger reset or refused the local session. It can still be uploading to SolisCloud. Wait at least 10 seconds and try once. Do not retry in a tight loop."
     },
     "abort": {
       "already_configured": "This API key is already configured.",
@@ -138,6 +143,10 @@
     "cloud_outage": {
       "title": "SolisCloud is unreachable",
       "description": "SolisCloud has been unreachable long enough that live readings are hidden, so an old power sample is not shown as current. Energy totals stay at the last good value and will not move backwards. This notice clears itself when a poll succeeds."
+    },
+    "logger_locked": {
+      "title": "Solarman logger is pausing local reads",
+      "description": "The logger accepts a connection and then resets it. This happens after too many sessions or a read of a register the inverter does not have, and it usually clears within about 10 minutes or after the inverter is power-cycled. SolisCloud readings are used while a fresh cloud sample exists. The integration tries local again on its own, first after at least 10 seconds and then less often, up to about 10 minutes. A small morning power reading means the inverter is producing."
     }
   },
   "entity": {
@@ -147,7 +156,8 @@
         "state": {
           "local": "Local logger",
           "cloud": "SolisCloud",
-          "asleep": "Inverter asleep"
+          "asleep": "Inverter asleep",
+          "degraded": "Cloud, local logger paused"
         }
       },
       "status": {
@@ -287,6 +297,9 @@
     },
     "update_failed": {
       "message": "SolisCloud update failed."
+    },
+    "update_logger_busy": {
+      "message": "The Solarman logger reset the local session. It will be tried again after a pause. SolisCloud is used when a fresh sample is available."
     }
   }
 }

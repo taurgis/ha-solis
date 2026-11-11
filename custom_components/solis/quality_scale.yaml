@@ -6,10 +6,11 @@ rules:
   appropriate-polling:
     status: done
     comment: >-
-      The coordinator polls every 300 seconds by default (minimum 60).
-      SolisCloud publishes a sample about every five minutes, and each path
-      is held to one call every two seconds. CoordinatorEntity does not poll
-      on its own.
+      Cloud polls every 300 seconds by default and never faster than 60.
+      A local logger defaults to 60 seconds and cannot be faster than 30.
+      Register reads on one connection are at least one second apart.
+      A reset waits at least 10 seconds, then longer, up to about 10 minutes,
+      and tries once per pause. CoordinatorEntity does not poll on its own.
   brands:
     status: done
     comment: >-
@@ -190,9 +191,11 @@ rules:
   repair-issues:
     status: done
     comment: >-
-      Auth, clock, abnormal data, an empty plant, legacy control, and a
-      sustained SolisCloud outage open repairs. The outage repair is removed
-      when a poll succeeds. Unloading the entry removes the poll repairs.
+      Auth, clock, abnormal data, an empty plant, legacy control, a
+      sustained SolisCloud outage, and a local logger that keeps resetting
+      for 10 minutes open repairs. The logger repair does not treat a steady
+      red stick LED as a fault. Outage and logger repairs clear when a poll
+      succeeds. Unloading the entry removes the poll repairs.
   stale-devices:
     status: done
     comment: >-

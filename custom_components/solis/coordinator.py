@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 import inspect
 import logging
 import random
+import time
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -18,15 +19,22 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_SCAN_INTERVAL,
+    CONF_SOURCE,
+    DATA_DEGRADED,
+    DEFAULT_LOCAL_SCAN_INTERVAL,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     ISSUE_ABNORMAL,
     ISSUE_AUTH,
     ISSUE_CLOCK,
+    ISSUE_LOGGER_LOCKED,
     ISSUE_NO_INVERTERS,
     ISSUE_OUTAGE,
+    MIN_CLOUD_SCAN_INTERVAL,
+    MIN_LOCAL_SCAN_INTERVAL,
     OUTAGE_POLLS,
     POLL_REPAIRS,
+    SOURCE_CLOUD,
     STALE_AFTER,
 )
 from .errors import (
@@ -34,6 +42,7 @@ from .errors import (
     SolisClockError,
     SolisCloudError,
     SolisDataError,
+    SolisLoggerBusy,
     SolisRateLimitError,
     SolisServerError,
     SolisTimeoutError,
@@ -44,6 +53,18 @@ from .transport import SolisTransport
 _LOGGER = logging.getLogger(__name__)
 
 _BACKOFF_CAP = 900.0
+_LOCK_REPAIR_AFTER = 600.0
+
+
+def poll_seconds(entry: ConfigEntry) -> int:
+    """Return the poll period. Local can be 30 seconds. Cloud stays at 60 or slower."""
+    source = str(entry.data.get(CONF_SOURCE, SOURCE_CLOUD))
+    default = DEFAULT_SCAN_INTERVAL if source == SOURCE_CLOUD else DEFAULT_LOCAL_SCAN_INTERVAL
+    scan = int(entry.options.get(CONF_SCAN_INTERVAL, default))
+    floor = MIN_CLOUD_SCAN_INTERVAL if source == SOURCE_CLOUD else MIN_LOCAL_SCAN_INTERVAL
+    return max(floor, min(3600, scan))
+
+
 _SUPPORTS_RETRY_AFTER = "retry_after" in inspect.signature(UpdateFailed.__init__).parameters
 _TRANSIENT = (SolisTimeoutError, SolisServerError, SolisRateLimitError)
 
@@ -57,6 +78,12 @@ def _failed(key: str, retry_after: float | None = None) -> UpdateFailed:
             retry_after=retry_after,
         )
     return UpdateFailed(translation_domain=DOMAIN, translation_key=key)
+
+
+def _is_degraded(snapshot: SolisSnapshot) -> bool:
+    if snapshot.source == DATA_DEGRADED:
+        return True
+    return any(inverter.data_source == DATA_DEGRADED for inverter in snapshot.inverters)
 
 
 def _has_live_inverter(snapshot: SolisSnapshot) -> bool:
@@ -99,8 +126,7 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
         transport: SolisTransport,
     ) -> None:
         """Set the poll interval from the config entry options."""
-        scan = int(entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL))
-        self._base_interval = timedelta(seconds=scan)
+        self._base_interval = timedelta(seconds=poll_seconds(entry))
         super().__init__(
             hass,
             _LOGGER,
@@ -113,6 +139,8 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
         self._open_issues: set[str] = set()
         self._transient_failures = 0
         self._asleep_polls = 0
+        self._degraded_since: float | None = None
+        self._degraded_logged = False
         self._last_good: SolisSnapshot | None = None
         self._store: Store[dict[str, Any]] = Store(
             hass,
@@ -147,6 +175,8 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
             raise _failed("update_abnormal") from err
         except _TRANSIENT as err:
             return await self._hold(err)
+        except SolisLoggerBusy as err:
+            return await self._hold_degraded(err)
         except SolisCloudError as err:
             self._recover_pace()
             if "no inverters" in str(err) or "no stations" in str(err):
@@ -160,10 +190,17 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
     async def _accept(self, snapshot: SolisSnapshot) -> SolisSnapshot:
         if snapshot.source == "asleep":
             self._slow_for_sleep()
+            self._clear_logger_lock()
+            self._last_good = snapshot
+            await self._persist(snapshot)
+            return snapshot
+        if _is_degraded(snapshot):
+            self._note_degraded()
             self._last_good = snapshot
             await self._persist(snapshot)
             return snapshot
         self._asleep_polls = 0
+        self._clear_logger_lock()
         self._recover_pace()
         self._last_good = snapshot
         self.auth_failed = False
@@ -179,6 +216,53 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
         base = self._base_interval.total_seconds()
         delay = min(900.0, max(base, 60.0 * float(2 ** min(self._asleep_polls, 4))))
         self.update_interval = timedelta(seconds=delay)
+
+    def _note_degraded(self) -> None:
+        """Remember a local reset. Open a repair only after it has lasted 10 minutes."""
+        now = time.monotonic()
+        if self._degraded_since is None:
+            self._degraded_since = now
+        if not self._degraded_logged:
+            _LOGGER.info(
+                "Solarman local reads are paused after a connection reset. "
+                "A fresh SolisCloud sample is used when one is available"
+            )
+            self._degraded_logged = True
+        if now - self._degraded_since < _LOCK_REPAIR_AFTER:
+            return
+        issue_id = self._issue_id(ISSUE_LOGGER_LOCKED)
+        if issue_id not in self._open_issues:
+            _LOGGER.warning(
+                "Solarman logger is still refusing local Modbus. "
+                "It usually recovers within 10 minutes, or after the inverter is power-cycled"
+            )
+        self._open(ISSUE_LOGGER_LOCKED, ir.IssueSeverity.WARNING, fixable=False)
+
+    def _clear_logger_lock(self) -> None:
+        self._degraded_since = None
+        self._degraded_logged = False
+        issue_id = self._issue_id(ISSUE_LOGGER_LOCKED)
+        if issue_id not in self._open_issues:
+            return
+        ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+        self._open_issues.discard(issue_id)
+
+    async def _hold_degraded(self, err: SolisLoggerBusy) -> SolisSnapshot:
+        """Keep the last sample without calling the inverter asleep."""
+        self._note_degraded()
+        held = self._last_good
+        if held is None:
+            raise _failed("update_logger_busy") from err
+        degraded = replace(
+            held,
+            partial=True,
+            source=DATA_DEGRADED,
+            inverters=tuple(
+                replace(inverter, data_source=DATA_DEGRADED) for inverter in held.inverters
+            ),
+        )
+        self._last_good = degraded
+        return degraded
 
     def _recover_pace(self) -> None:
         self._transient_failures = 0
@@ -234,6 +318,19 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
             return snapshot_from_dict(raw)
         except (KeyError, TypeError, ValueError):
             return None
+
+    def logger_report(self) -> dict[str, str]:
+        """Describe the local session without addresses or serials."""
+        if self._degraded_since is None:
+            return {"state": "ok"}
+        return {
+            "state": "degraded",
+            "detail": (
+                "Local Modbus was reset. A fresh SolisCloud sample is used when "
+                "one exists. The next local try waits at least 10 seconds and "
+                "at most about 10 minutes."
+            ),
+        }
 
     def _issue_id(self, key: str) -> str:
         return f"{key}_{self.config_entry.entry_id}"
