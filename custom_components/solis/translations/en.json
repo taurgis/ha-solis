@@ -3,16 +3,32 @@
     "step": {
       "user": {
         "title": "Connect to SolisCloud",
-        "description": "Use the API key id and secret from SolisCloud account settings. A portal username is not required.",
+        "description": "Choose cloud, the Solarman logger, or local first with SolisCloud as a fallback. Local discovery only works while the inverter is producing, because the stick is powered by the inverter and is off at night.",
         "data": {
+          "source": "Connection",
           "api_url": "API URL",
           "key_id": "API key ID",
           "key_secret": "API key secret"
         },
         "data_description": {
-          "api_url": "Use the host that issued the key, including the port. The international service listens on port 13333.",
-          "key_id": "The key id from SolisCloud API management. This is not the portal username.",
+          "source": "Cloud only, the Solarman logger on your network, or local first with SolisCloud as a fallback. Local discovery only works while the inverter is producing.",
+          "api_url": "Use the host that issued the key, including the port. The international service listens on port 13333. Leave this unused for a local-only setup.",
+          "key_id": "The key id from SolisCloud API management. This is not the portal username. Leave it empty for local only.",
           "key_secret": "Shown once when the key is created. Stored in the config entry and redacted from diagnostics."
+        }
+      },
+      "logger": {
+        "title": "Solarman logger",
+        "description": "Discovered loggers: {found}. The inverter must be producing. If nothing is listed, it is night or the stick is off: type the IP and the logger serial. Give the stick a DHCP reservation on the router. Do not set a static address on the stick.",
+        "data": {
+          "logger_host": "Logger IP",
+          "logger_serial": "Logger serial",
+          "inverter_serial": "Inverter serial"
+        },
+        "data_description": {
+          "logger_host": "Current DHCP address. The integration finds the stick again by serial when the lease changes. Reserve this address in the router.",
+          "logger_serial": "The numeric serial printed on the stick and returned by UDP discovery.",
+          "inverter_serial": "Optional. The SolisCloud inverter serial, for example 110E40182280017. Leave empty to read it from the stick when that range answers, or from SolisCloud in local-and-cloud mode. This is the entity id."
         }
       },
       "stations": {
@@ -41,6 +57,10 @@
         "title": "Reconfigure Solis",
         "description": "Update the API host, the plants to follow, and how often to poll.",
         "data": {
+          "source": "Connection",
+          "logger_host": "Logger IP",
+          "logger_serial": "Logger serial",
+          "inverter_serial": "Inverter serial",
           "api_url": "API URL",
           "station_ids": "Plants",
           "scan_interval": "Poll interval (seconds)",
@@ -50,9 +70,13 @@
         },
         "data_description": {
           "time_zone": "Leave empty to follow Home Assistant when it is within an hour of the plant offset. Use an IANA name such as Europe/London to force one, or plant to keep the numeric offset from Solis.",
-          "scan_interval": "Seconds between polls. The cloud sample is about five minutes, so the default is 300. Minimum 60.",
+          "scan_interval": "Seconds between polls. Cloud samples arrive about every five minutes, so a cloud-only entry stays at 60 or slower (default 300). A local logger defaults to 60 and cannot be faster than 30.",
           "request_timeout": "Seconds to wait for one HTTP call. Default 30.",
           "endpoint_interval": "Minimum seconds between calls to the same API path. Default 2, which stays under the published limit of two calls per second.",
+          "source": "Cloud only, local only, or local with SolisCloud fallback.",
+          "logger_host": "Current logger IP. Leave empty to keep the saved address.",
+          "logger_serial": "Logger serial. Fill this together with the IP to attach a stick to an existing cloud entry.",
+          "inverter_serial": "Optional SolisCloud inverter serial. Set it so local and cloud entities stay the same device.",
           "api_url": "Use the host that issued the key, including the port. The international service listens on port 13333.",
           "station_ids": "Only the selected plants are polled. Change the set later with reconfigure."
         }
@@ -68,7 +92,7 @@
         },
         "data_description": {
           "time_zone": "Leave empty to follow Home Assistant when it is within an hour of the plant offset. Use an IANA name such as Europe/London to force one, or plant to keep the numeric offset from Solis.",
-          "scan_interval": "Seconds between polls. The cloud sample is about five minutes, so the default is 300. Minimum 60.",
+          "scan_interval": "Seconds between polls. Cloud samples arrive about every five minutes, so a cloud-only entry stays at 60 or slower (default 300). A local logger defaults to 60 and cannot be faster than 30.",
           "request_timeout": "Seconds to wait for one HTTP call. Default 30.",
           "endpoint_interval": "Minimum seconds between calls to the same API path. Default 2, which stays under the published limit of two calls per second."
         }
@@ -81,13 +105,17 @@
       "timeout": "SolisCloud did not answer before the timeout.",
       "cannot_connect": "Could not reach SolisCloud.",
       "no_stations": "The account returned no plants. Check the API key and that the plant has an id.",
-      "unknown": "Unexpected SolisCloud error."
+      "unknown": "Unexpected SolisCloud error.",
+      "logger_asleep": "No route to the logger, or it timed out. At night the inverter powers the stick off. Try again while it is producing.",
+      "logger_busy": "The logger reset or refused the local session. It can still be uploading to SolisCloud. Wait at least 10 seconds and try once. Do not retry in a tight loop."
     },
     "abort": {
       "already_configured": "This API key is already configured.",
       "reauth_successful": "Authentication refreshed.",
       "reconfigure_successful": "Configuration updated.",
       "cannot_connect": "Could not reach SolisCloud to load plants.",
+      "not_solis_logger": "That device is not a Solarman logger.",
+      "logger_not_setup": "No Solis entry is using this logger yet.",
       "wrong_account": "That API key belongs to a different account."
     }
   },
@@ -115,10 +143,23 @@
     "cloud_outage": {
       "title": "SolisCloud is unreachable",
       "description": "SolisCloud has been unreachable long enough that live readings are hidden, so an old power sample is not shown as current. Energy totals stay at the last good value and will not move backwards. This notice clears itself when a poll succeeds."
+    },
+    "logger_locked": {
+      "title": "Solarman logger is pausing local reads",
+      "description": "The logger accepts a connection and then resets it. This happens after too many sessions or a read of a register the inverter does not have, and it usually clears within about 10 minutes or after the inverter is power-cycled. SolisCloud readings are used while a fresh cloud sample exists. The integration tries local again on its own, first after at least 10 seconds and then less often, up to about 10 minutes. A small morning power reading means the inverter is producing."
     }
   },
   "entity": {
     "sensor": {
+      "data_source": {
+        "name": "Data source",
+        "state": {
+          "local": "Local logger",
+          "cloud": "SolisCloud",
+          "asleep": "Inverter asleep",
+          "degraded": "Cloud, local logger paused"
+        }
+      },
       "status": {
         "name": "Status",
         "state": {
@@ -256,6 +297,9 @@
     },
     "update_failed": {
       "message": "SolisCloud update failed."
+    },
+    "update_logger_busy": {
+      "message": "The Solarman logger reset the local session. It will be tried again after a pause. SolisCloud is used when a fresh sample is available."
     }
   }
 }

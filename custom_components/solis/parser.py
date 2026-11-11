@@ -261,15 +261,20 @@ def parse_inverter(
         default="a",
     )
     product = _text(data, "productModel")
+    series = _text(data, "machine", "series")
+    code = _text(data, "model")
+    if code and series and code == series:
+        code = None
     return _plausible(
         InverterSnapshot(
             serial=str(first(data, "sn") or ""),
             device_id=str(first(data, "id") or ""),
             station_id=str(station_id or first(data, "stationId") or ""),
             name=str(name or first(data, "name", "stationName") or first(data, "sn") or "Solis"),
-            model=_text(data, "machine", "series", "model"),
+            model=series or code,
             product_model=product,
-            hmi_version=_text(data, "hmiVersionAll"),
+            hmi_version=_text(data, "version", "inverterVersion", "hmiVersionAll"),
+            model_code=code if series else None,
             state=_as_int(first(data, "state")),
             ac_output_type=_as_int(first(data, "acOutputType")),
             data_timestamp=parse_epoch(first(data, "dataTimestamp")),

@@ -6,10 +6,11 @@ rules:
   appropriate-polling:
     status: done
     comment: >-
-      The coordinator polls every 300 seconds by default (minimum 60).
-      SolisCloud publishes a sample about every five minutes, and each path
-      is held to one call every two seconds. CoordinatorEntity does not poll
-      on its own.
+      Cloud polls every 300 seconds by default and never faster than 60.
+      A local logger defaults to 60 seconds and cannot be faster than 30.
+      Register reads on one connection are at least one second apart.
+      A reset waits at least 10 seconds, then longer, up to about 10 minutes,
+      and tries once per pause. CoordinatorEntity does not poll on its own.
   brands:
     status: done
     comment: >-
@@ -51,7 +52,8 @@ rules:
     status: done
     comment: >-
       README and docs/index.md describe SolisCloud plants and inverters,
-      read-only API access, and the relationship to hultenvp/solis-sensor.
+      the optional Solarman logger, read-only access, and the relationship
+      to hultenvp/solis-sensor.
   docs-installation-instructions:
     status: done
     comment: >-
@@ -133,15 +135,17 @@ rules:
       2026.8 and newer, and with via_device on 2025.10.
   diagnostics: done
   discovery:
-    status: exempt
+    status: done
     comment: >-
-      A SolisCloud account is not discoverable on the local network. A
-      future local transport could add Modbus discovery.
+      Solarman loggers are found with the IGEN UDP 48899 broadcast
+      (WIFIKIT-214028-READ and HF-A11ASSISTHREAD). DHCP watches the
+      BC:54:F9 OUI and updates an existing entry's address.
   discovery-update-info:
-    status: exempt
+    status: done
     comment: >-
-      There is no network address to refresh. The API host is chosen in
-      the config flow and can be changed with reconfigure.
+      The logger is identified by its serial and MAC. UDP discovery and
+      DHCP both write the current IP into the config entry and reload it.
+      The change is logged once at info.
   docs-data-update: done
   docs-examples: done
   docs-known-limitations: done
@@ -187,9 +191,11 @@ rules:
   repair-issues:
     status: done
     comment: >-
-      Auth, clock, abnormal data, an empty plant, legacy control, and a
-      sustained SolisCloud outage open repairs. The outage repair is removed
-      when a poll succeeds. Unloading the entry removes the poll repairs.
+      Auth, clock, abnormal data, an empty plant, legacy control, a
+      sustained SolisCloud outage, and a local logger that keeps resetting
+      for 10 minutes open repairs. The logger repair does not treat a steady
+      red stick LED as a fault. Outage and logger repairs clear when a poll
+      succeeds. Unloading the entry removes the poll repairs.
   stale-devices:
     status: done
     comment: >-

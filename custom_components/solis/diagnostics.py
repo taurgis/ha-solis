@@ -25,6 +25,9 @@ TO_REDACT = {
     "longitude",
     "address",
     "key_secret",
+    "logger_host",
+    "logger_mac",
+    "logger_serial",
 }
 
 
@@ -40,6 +43,7 @@ async def async_get_config_entry_diagnostics(
         redacted["unique_id"] = "**REDACTED**"
     return {
         "entry": redacted,
+        "logger": coordinator.logger_report(),
         "snapshot": _snapshot(coordinator),
     }
 

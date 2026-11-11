@@ -134,6 +134,39 @@ def device_for_identifier(
     return device
 
 
+def async_adopt_inverter_serial(
+    hass: HomeAssistant, entry_id: str, old_serial: str, new_serial: str
+) -> None:
+    """Move entity and device ids from a placeholder serial onto the real one.
+
+    Local setup sometimes only knows ``L`` plus the logger serial. SolisCloud,
+    or the serial registers when they answer, uses the inverter serial. History
+    stays on the original entity id.
+    """
+    if not old_serial or old_serial == new_serial:
+        return
+    registry = er.async_get(hass)
+    prefix = f"{old_serial}_"
+    for entity in list(registry.entities.values()):
+        if entity.config_entry_id != entry_id or entity.platform != DOMAIN:
+            continue
+        if not entity.unique_id.startswith(prefix):
+            continue
+        _retarget(registry, entity, f"{new_serial}_{entity.unique_id[len(prefix) :]}")
+    devices = dr.async_get(hass)
+    current = device_for_identifier(devices, (DOMAIN, f"inverter:{old_serial}"), entry_id)
+    if current is None:
+        return
+    taken = device_for_identifier(devices, (DOMAIN, f"inverter:{new_serial}"), entry_id)
+    if taken is not None and taken.id != current.id:
+        devices.async_update_device(current.id, remove_config_entry_id=entry_id)
+        return
+    identifiers = set(current.identifiers)
+    identifiers.discard((DOMAIN, f"inverter:{old_serial}"))
+    identifiers.add((DOMAIN, f"inverter:{new_serial}"))
+    devices.async_update_device(current.id, new_identifiers=identifiers)
+
+
 def async_migrate_devices(hass: HomeAssistant, entry_id: str, serials: set[str]) -> None:
     """Retarget devices created as ``{serial}_{api name}``.
 

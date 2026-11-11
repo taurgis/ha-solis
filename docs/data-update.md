@@ -1,8 +1,10 @@
 # Data updates
 
 SolisCloud's own document says every interface refreshes about every five
-minutes. The default poll interval is 300 seconds. The minimum is 60 seconds.
-A faster poll repeats the same sample and spends the rate limit.
+minutes. A cloud-only entry polls every 300 seconds by default and never
+faster than 60. A local logger defaults to 60 seconds and cannot be faster
+than 30. Register reads on the one open socket are a second apart. A faster
+cloud poll repeats the same sample and spends the rate limit.
 
 Each poll is sequential: station list, then for each selected plant the
 station detail, the day-energy row and the inverter list, then each inverter
@@ -26,6 +28,16 @@ the poll interval backs off with jitter up to 15 minutes and never goes
 faster than the configured interval. The first setup with no saved snapshot
 raises `ConfigEntryNotReady`, so Home Assistant retries instead of failing
 the entry permanently.
+
+A Solarman logger is polled on its own interval. While the stick is off
+with the inverter, the interval backs off from one minute and stops at 15
+minutes. The next successful connect, including one that finds the stick on
+a new address, returns to the configured interval. A reset after the TCP
+handshake is a different pause: at least 10 seconds, doubling up to about
+10 minutes, one attempt each time. That matches the logger TCP idle time
+other Solarman projects report (about 300 seconds, sometimes 600). Night,
+when there is no route, is still the asleep sample and does not call the
+cloud for live power.
 
 A failed inverter list keeps the previous inverters. An empty list is ignored
 for two polls before it is believed. One inverter's detail can fail while

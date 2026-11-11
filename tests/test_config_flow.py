@@ -145,7 +145,8 @@ async def test_migrate_legacy_entry(hass: HomeAssistant, solis_server: tuple[Any
     entry.add_to_hass(hass)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    assert entry.version == 2
+    assert entry.version == 3
+    assert entry.data["source"] == "cloud"
     assert entry.data["key_id"] == KEY_ID
     assert entry.data["legacy_name"] == "Roof"
     assert "portal_password" not in entry.data

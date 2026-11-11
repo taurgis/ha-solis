@@ -32,6 +32,7 @@ can offer that without a second set of sensors here.
 | Sensor | Unit | State class | Notes |
 | --- | --- | --- | --- |
 | Status | | | online, offline, alarm, stale, unknown |
+| Data source | | | Diagnostic. `local`, `cloud`, or `asleep` |
 | AC power | W | measurement | 0 when freshly offline |
 | Frequency | Hz | measurement | |
 | Temperature | °C | measurement | |

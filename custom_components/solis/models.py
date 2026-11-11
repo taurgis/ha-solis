@@ -74,6 +74,11 @@ class InverterSnapshot:
     # This poll could not read the inverter. Instant sensors hide the previous
     # sample; energy totals still publish it.
     unreachable: bool = False
+    # local, cloud, asleep, or degraded. Asleep means the stick is powered off.
+    # Degraded means local Modbus reset while a cloud sample is in use.
+    data_source: str = "cloud"
+    # Short Solis model code such as E4, kept apart from the series name.
+    model_code: str | None = None
 
     def condition(self, now: datetime, stale_after: timedelta = STALE_AFTER) -> str:
         """Return online, offline, alarm, stale, or unknown."""
@@ -173,6 +178,7 @@ class SolisSnapshot:
     epms: tuple[EpmSnapshot, ...]
     fetched_at: datetime
     partial: bool
+    source: str = "cloud"
 
     def station(self, station_id: str) -> StationSnapshot | None:
         """Return the station with this id."""
@@ -215,6 +221,7 @@ def snapshot_from_dict(raw: Mapping[str, Any]) -> SolisSnapshot:
         epms=tuple(_epm(item) for item in _rows(raw, "epms")),
         fetched_at=_required_dt(raw.get("fetched_at")),
         partial=bool(raw.get("partial")),
+        source=str(raw.get("source") or "cloud"),
     )
 
 
@@ -335,6 +342,8 @@ def _inverter(raw: Mapping[str, Any]) -> InverterSnapshot:
         phases=phases,
         strings=strings,
         unreachable=bool(raw.get("unreachable", False)),
+        data_source=str(raw.get("data_source") or "cloud"),
+        model_code=_optional_str(raw, "model_code"),
     )
 
 

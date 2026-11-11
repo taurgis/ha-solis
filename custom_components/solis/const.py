@@ -15,9 +15,41 @@ CONF_SCAN_INTERVAL = "scan_interval"
 CONF_REQUEST_TIMEOUT = "request_timeout"
 CONF_ENDPOINT_INTERVAL = "endpoint_interval"
 CONF_TIME_ZONE = "time_zone"
+CONF_SOURCE = "source"
+CONF_LOGGER_HOST = "logger_host"
+CONF_LOGGER_SERIAL = "logger_serial"
+CONF_LOGGER_MAC = "logger_mac"
+CONF_SLAVE_ID = "slave_id"
+CONF_REGISTER_MAP = "register_map"
+CONF_INVERTER_SERIAL = "inverter_serial"
+CONF_LOGGER_PROTOCOL = "logger_protocol"
+CONF_SERIAL_UNSUPPORTED = "serial_unsupported"
+
+SOURCE_CLOUD = "cloud"
+SOURCE_LOCAL = "local"
+SOURCE_BOTH = "both"
+DATA_DEGRADED = "degraded"
+REGISTER_STRING = "string"
+REGISTER_HYBRID = "hybrid"
+PROTOCOL_V5 = "v5"
+PROTOCOL_MBTCP = "mbtcp"
+PROTOCOL_MBTCP_ALT = "mbtcp30003"
+MBTCP_ALT_PORT = 30003
+# The 4G string map that answered on this stick stops before 3050.
+# 3050 and the 33000 hybrid block are what lock the local port.
+REGISTER_SAFE_CEILING = 3050
+
+# IGEN / Solarman Wi-Fi sticks. The user's stick answered discovery as
+# bc:54:f9:f5:7b:5c.
+SOLARMAN_OUI = "bc:54:f9"
 
 DEFAULT_API_URL = "https://www.soliscloud.com:13333"
 DEFAULT_SCAN_INTERVAL = 300
+DEFAULT_LOCAL_SCAN_INTERVAL = 60
+MIN_LOCAL_SCAN_INTERVAL = 30
+MIN_CLOUD_SCAN_INTERVAL = 60
+LOCAL_REQUEST_GAP = 1.0
+LOCAL_TIMEOUT_CAP = 8.0
 DEFAULT_REQUEST_TIMEOUT = 30
 DEFAULT_ENDPOINT_INTERVAL = 2.0
 
@@ -35,6 +67,7 @@ ISSUE_NO_INVERTERS = "no_inverters"
 ISSUE_ABNORMAL = "abnormal_data"
 ISSUE_OUTAGE = "cloud_outage"
 ISSUE_LEGACY_CONTROL = "legacy_control"
+ISSUE_LOGGER_LOCKED = "logger_locked"
 
 # Polls that fail this many times in a row, or a snapshot older than
 # STALE_AFTER, are a sustained outage rather than a blip.
@@ -48,4 +81,5 @@ POLL_REPAIRS = (
     ISSUE_NO_INVERTERS,
     ISSUE_ABNORMAL,
     ISSUE_OUTAGE,
+    ISSUE_LOGGER_LOCKED,
 )

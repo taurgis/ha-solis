@@ -10,9 +10,11 @@ The domain stays `solis`, so replacing the upstream custom component can keep
 existing entities. Uninstall that copy first. The two cannot be installed in
 the same `custom_components/solis` folder.
 
-Reads use the SolisCloud API key and secret. Inverter control writes are not
-sent. The cloud publishes samples about every five minutes, and the client
-stays under the platform rate limit.
+Reads use the SolisCloud API key and secret, or a Solarman logger on the
+LAN while the inverter is producing. Inverter control writes are not sent.
+The cloud publishes samples about every five minutes, and the client stays
+under the platform rate limit. The logger is identified by its serial and
+MAC, so a new DHCP lease updates the existing entry.
 
 ## Supported devices
 

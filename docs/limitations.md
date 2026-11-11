@@ -33,6 +33,17 @@
   Assistant 2026.11 the energy dashboard can derive those from the existing
   power sensors.
 - The legacy Ginlong `/cpro/` portal API is not implemented.
-- S3-WIFI-ST sticks do not expose a local Modbus port. Local reads are a
-  possible later transport, not part of this version. See
-  [the research note](research/solis-api.md).
+- Local reads are Solarman V5 on TCP 8899. Modbus TCP (port 502) and a
+  Wi-Fi S3 stick are not implemented. S3-WIFI-ST sticks have no local port;
+  use cloud only for those. See [the local note](research/solarman-local.md).
+- The stick is off whenever the inverter is off. Night has no TCP and no
+  discovery. The integration keeps energy totals, publishes live power as 0,
+  and marks the data source `asleep`. It does not open an outage repair for
+  that.
+- Registers 3060-3063 (inverter serial) did not answer on the stick this map
+  was checked against. When that read is silent, the device serial is the
+  one learned at setup, or `L` plus the logger serial. That can differ from
+  the SolisCloud inverter serial, so a local-only entity id will not match
+  an older cloud entity for the same inverter.
+- IGEN does not publish a runnable LSW-3 or LSE-3 image. The lab emulator
+  follows the protocol and frames captured from a real stick.
