@@ -318,11 +318,19 @@ async def test_detect_map_and_serial_helpers() -> None:
 
     assert await _detect_map(_Hybrid(), 1) == "hybrid"  # type: ignore[arg-type]
     serial, unsupported = await _serial_once(
-        _Busy(), 1, known="", unsupported=False, logger_serial=7  # type: ignore[arg-type]
+        _Busy(),
+        1,
+        known="",
+        unsupported=False,
+        logger_serial=7,  # type: ignore[arg-type]
     )
     assert serial == "L7" and unsupported is True
     kept, flag = await _serial_once(
-        _Busy(), 1, known="ABC", unsupported=True, logger_serial=7  # type: ignore[arg-type]
+        _Busy(),
+        1,
+        known="ABC",
+        unsupported=True,
+        logger_serial=7,  # type: ignore[arg-type]
     )
     assert kept == "ABC" and flag is True
 
@@ -589,7 +597,11 @@ async def test_router_edges() -> None:
             raise ValueError("bad")
 
     serial, flag = await _serial_once(
-        _Bad(), 1, known="", unsupported=False, logger_serial=3  # type: ignore[arg-type]
+        _Bad(),
+        1,
+        known="",
+        unsupported=False,
+        logger_serial=3,  # type: ignore[arg-type]
     )
     assert serial == "L3" and flag
 
@@ -726,6 +738,7 @@ async def test_bad_peer_frames(socket_enabled: None) -> None:
 
     other = await asyncio.start_server(_mbap, "127.0.0.1", 0)
     mbap_port = other.sockets[0].getsockname()[1]
+
     async def _wrong_serial(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         await reader.read(64)
         writer.write(build_response(1, 1, rtu_read(1, 3004, 1)))
