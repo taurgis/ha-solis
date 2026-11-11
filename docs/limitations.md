@@ -33,15 +33,22 @@
   Assistant 2026.11 the energy dashboard can derive those from the existing
   power sensors.
 - The legacy Ginlong `/cpro/` portal API is not implemented.
-- Local reads are Solarman V5 on TCP 8899, or Modbus TCP on port 502 for a
-  Solis S2-WL-ST. A Wi-Fi S3 stick has no local port; use cloud only for
-  those. See [the Solarman note](research/solarman-local.md) and
-  [the S2-WL-ST note](research/s2-wl-st.md). Some S2 firmware closes port 502
-  or allows only one of SolisCloud and local Modbus.
-- The stick is off whenever the inverter is off. Night has no TCP and no
-  discovery. The integration keeps energy totals, publishes live power as 0,
-  and marks the data source `asleep`. It does not open an outage repair for
-  that.
+- Local reads are Solarman V5 on TCP 8899, Modbus TCP on port 502 for a
+  Solis S2-WL-ST or an S5-WiFi-ST whose firmware still listens, Modbus TCP
+  to an RS485 gateway, or experimental Modbus RTU over TCP for a
+  transparent tunnel. S3-WIFI-ST, S4-WIFI-ST, S6 USB sticks and 4G/GPRS
+  sticks have no local listener; use cloud, or a gateway on the inverter
+  RS485 port. See [dongles](research/dongles.md),
+  [the Solarman note](research/solarman-local.md) and
+  [the S2-WL-ST note](research/s2-wl-st.md). Some S2 and S5 firmware closes
+  port 502 or allows only one of SolisCloud and local Modbus.
+- A stick powered by the inverter is off whenever the inverter is off.
+  Night has no TCP and no discovery. The integration keeps energy totals,
+  publishes live power as 0, and marks the data source `asleep`. A gateway
+  that refuses TCP is not night: the last power is held and, after 10
+  minutes, a repair opens. A gateway that accepts TCP and gets no Modbus
+  answer is the inverter being off, and live power goes to 0. A gateway
+  powered from the inverter USB port looks like a down gateway at night.
 - Registers 3060-3063 (inverter serial) did not answer on the stick this map
   was checked against. When that read is silent, the device serial is the
   one learned at setup, or `L` plus the logger serial. That can differ from

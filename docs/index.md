@@ -25,3 +25,4 @@ See [Use cases](use-cases.md).
 - [Troubleshooting](troubleshooting.md)
 - [Research](research/solis-api.md)
 - [S2-WL-ST local reads](research/s2-wl-st.md)
+- [Dongles and gateways](research/dongles.md)

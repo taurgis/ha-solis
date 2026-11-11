@@ -127,6 +127,21 @@ def logger_failure_text(host: str, err: BaseException) -> str:
             "Home Assistant, not both. Firmware 100121cf, 100121d0 and the "
             "100141dx releases are the ones reported to allow both."
         )
+    if reason == "gateway_down":
+        return (
+            f"{host} is not accepting TCP. Check the gateway address and port. "
+            "A gateway that stays powered does not disappear with the inverter."
+        )
+    if reason == "wrong_protocol":
+        return (
+            f"{host} answered, but the bytes were not the framing selected for "
+            "this logger. A transparent serial tunnel needs Modbus RTU over TCP. "
+            "A gateway in Modbus TCP mode needs the Modbus TCP gateway option."
+        )
+    if reason == "wrong_slave":
+        return f"{host} replied from a different Modbus slave than the one requested."
+    if reason == "unsupported_map":
+        return f"{host} speaks Modbus and does not serve the Solis 3000 or 33000 register map."
     if isinstance(err, SolisLoggerBusy):
         return (
             f"{host} reset or refused the local session. The inverter can still "

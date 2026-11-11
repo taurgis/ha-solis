@@ -11,15 +11,17 @@ existing entities. Uninstall that copy first. The two cannot be installed in
 the same `custom_components/solis` folder.
 
 Reads use the SolisCloud API key and secret, or a data logger on the LAN
-while the inverter is producing. Two sticks are supported. A Solarman /
-IGEN stick (DLS-L, LSW) speaks Solarman V5 on TCP 8899, with plain Modbus
-TCP as a fallback. A Solis S2-WL-ST (4-pin, Wi-Fi + LAN) speaks Modbus TCP
-on port 502. Inverter control writes are not sent. The cloud publishes
+while the inverter is producing. Solarman / IGEN sticks (DLS-W, DLS-L, LSW)
+speak Solarman V5 on TCP 8899, with plain Modbus TCP as a fallback. A Solis
+S2-WL-ST speaks Modbus TCP on port 502. A Waveshare, Elfin or USR gateway in
+Modbus TCP mode uses that same framing and is selected by hand, because
+auto-detect cannot tell it from an S2. Experimental options cover an
+S5-WiFi-ST whose port 502 is still open, and a transparent Modbus RTU tunnel.
+Inverter control writes are not sent. The cloud publishes
 samples about every five minutes, and the client stays under the platform
 rate limit. A Solarman logger is identified by its serial and MAC, so a new
-DHCP lease updates the existing entry. An S2-WL-ST does not answer that
-discovery broadcast: reserve its address in the router, and the config entry
-keeps the stick serial or the inverter serial when the address changes.
+DHCP lease updates the existing entry. An S2-WL-ST, an S5 and a gateway do
+not answer that discovery broadcast: reserve the address in the router.
 
 ## Supported devices
 
@@ -89,6 +91,20 @@ you want the entity ids to match SolisCloud.
 
 Public `http://` URLs are stored as `https://`. Loopback, private addresses
 and single-label hosts such as the lab's `mock` may stay on `http`.
+
+## Supported loggers
+
+Auto-detect tries port 502, then port 8899. Anything else is a manual
+choice. The research note is [docs/research/dongles.md](docs/research/dongles.md).
+
+| Logger | How to select it | Port | Local access |
+| --- | --- | --- | --- |
+| Solarman / IGEN (DLS-W, DLS-L, LSW-3, LSE-3) | Auto-detect, or Solarman V5 | 8899, then 30003 | Yes. V5, or plain Modbus TCP when V5 is not the framing. |
+| Solis S2-WL-ST | Auto-detect, or Solis S2-WL-ST | 502 | Yes, from firmware `100101B4`. Some updates close the port or allow only one client. |
+| Waveshare, Elfin EW11, USR-TCP232 in Modbus TCP mode | Modbus TCP gateway | 502, or the port you set (USR default is often 23) | Yes. A refused port is a down gateway, not Solis firmware. |
+| Solis S5-WiFi-ST | Solis S5-WiFi-ST (experimental) | 502 | Only while that firmware still listens. Many updates close 502 and 80. Auto-detect calls a live port 502 an S2. |
+| Elfin, USR or Waveshare in transparent mode, ESP TCP-serial bridge | Modbus RTU over TCP (experimental) | 8899, or 23 if the USR was left on its default | Yes, at 9600 8N1. Not tried by auto-detect. |
+| S3-WIFI-ST, S4-WIFI-ST, S6 USB, S1-W4G-ST, 4G/GPRS sticks | Not a local option | — | No published local listener. Use SolisCloud, or a gateway on the inverter RS485 port. |
 
 ## Migrating from hultenvp/solis-sensor
 

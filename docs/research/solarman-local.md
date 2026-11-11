@@ -205,6 +205,8 @@ reads are one second apart, inside the 150 ms to 1 s range those projects use.
 ## Dongles
 
 `SolisLocalTransport` speaks Solarman V5 and, when that is not the framing,
-Modbus TCP. A Wi-Fi S3 stick has no local port. The Solis S2-WL-ST is a
-different transport on port 502; see [s2-wl-st.md](s2-wl-st.md). Both
-framings fill the same `SolisSnapshot`.
+Modbus TCP. The Solis S2-WL-ST is Modbus TCP on port 502; see
+[s2-wl-st.md](s2-wl-st.md). A Waveshare, Elfin or USR gateway, an S5-WiFi-ST,
+and a transparent RTU tunnel are separate kinds. Which of those are
+supported, which are experimental, and which have no local port is
+[dongles.md](dongles.md). All of them fill the same `SolisSnapshot`.

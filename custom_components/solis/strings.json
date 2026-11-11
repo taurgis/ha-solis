@@ -19,7 +19,7 @@
       },
       "logger": {
         "title": "Local logger",
-        "description": "Discovered Solarman loggers: {found}. Auto-detect tries Modbus TCP port 502 (Solis S2-WL-ST), then Solarman port 8899. The S2-WL-ST does not answer that discovery broadcast: type its IP from SolisCloud. The inverter must be producing. Give the stick a DHCP reservation on the router. Do not set a static address on the stick.",
+        "description": "Discovered Solarman loggers: {found}. Auto-detect tries Modbus TCP port 502, then Solarman port 8899. Port 502 is stored as an S2-WL-ST. A Waveshare or other gateway on 502 looks the same on the wire: pick Modbus TCP gateway for that device, or a refused port is treated as Solis firmware. An S2-WL-ST does not answer the discovery broadcast. The inverter must be producing. Give a stick a DHCP reservation. Do not set a static address on the stick.",
         "data": {
           "logger_kind": "Logger",
           "logger_host": "Logger IP",
@@ -29,10 +29,10 @@
           "inverter_serial": "Inverter serial"
         },
         "data_description": {
-          "logger_kind": "Auto-detect probes port 502, then 8899. Pick Solarman V5 (DLS-L/LSW) or Solis S2-WL-ST (Modbus TCP 502) when you already know the stick.",
-          "logger_host": "Current DHCP address. Reserve this address in the router. A Solarman stick is found again by serial. An S2-WL-ST is not. Its direct-cable address 10.10.100.254 is only for a laptop plugged into the stick.",
-          "logger_port": "Leave empty for 502 on an S2-WL-ST and 8899 on a Solarman stick.",
-          "logger_serial": "Solarman: the numeric serial from the label or from discovery. S2-WL-ST: the serial in the Wi-Fi name D_ or Solis_, not the inverter serial. Leave empty to use the inverter serial instead.",
+          "logger_kind": "Auto-detect probes port 502, then 8899. Solarman V5 is DLS-W, DLS-L and LSW. Solis S2-WL-ST is Modbus TCP on 502. Modbus TCP gateway is a Waveshare, Elfin or USR in Modbus mode (default port 502). S5-WiFi-ST and Modbus RTU over TCP are experimental: S5 firmware often closes port 502, and RTU is a transparent serial tunnel (default port 8899, or 23 on an untouched USR).",
+          "logger_host": "Current address. Reserve a stick in the router. A Solarman stick is found again by serial. An S2-WL-ST, S5 and a gateway are not. 10.10.100.254 is the setup address of a stick or an Elfin, not the address on the house LAN.",
+          "logger_port": "Leave empty for 502 on an S2, S5 or Modbus TCP gateway, and 8899 on Solarman or RTU over TCP. Type 23 for a USR left on its default, or 3389 only if that LAN stick actually listens there.",
+          "logger_serial": "Solarman: the numeric serial from the label or from discovery. S2 and S5: the serial in the Wi-Fi name D_ or Solis_, not the inverter serial. Gateway and RTU: any label you choose, or leave empty to use the inverter serial.",
           "slave_id": "Leave empty to try slave 1, then 2, then 3. The Solis default is 1.",
           "inverter_serial": "Optional. The SolisCloud inverter serial, for example 110E40182280017. Leave empty to read it from the stick when that range answers, or from SolisCloud in local-and-cloud mode. This is the entity id. On an S2-WL-ST it is also the config unique id when the stick serial is empty."
         }
@@ -83,10 +83,10 @@
           "request_timeout": "Seconds to wait for one HTTP call. Default 30.",
           "endpoint_interval": "Minimum seconds between calls to the same API path. Default 2, which stays under the published limit of two calls per second.",
           "source": "Cloud only, local only, or local with SolisCloud fallback.",
-          "logger_kind": "Auto-detect, Solarman V5 (DLS-L/LSW), or Solis S2-WL-ST (Modbus TCP 502).",
-          "logger_host": "Current logger IP. Leave empty to keep the saved address.",
+          "logger_kind": "Auto-detect, Solarman V5, Solis S2-WL-ST, a Modbus TCP gateway, experimental S5-WiFi-ST, or experimental Modbus RTU over TCP. Changing this keeps the same entities.",
+          "logger_host": "Current logger or gateway address. Leave empty to keep the saved address.",
           "logger_port": "Leave empty for the default port of the selected logger.",
-          "logger_serial": "Logger serial. Fill this together with the IP to attach a stick to an existing cloud entry. For an S2-WL-ST this is the serial in the Wi-Fi name.",
+          "logger_serial": "Logger serial or a label for a gateway. Fill this together with the IP to attach a stick to an existing cloud entry. For an S2-WL-ST or S5 this is the serial in the Wi-Fi name.",
           "slave_id": "Leave empty to try slave 1, then 2, then 3.",
           "inverter_serial": "Optional SolisCloud inverter serial. Set it so local and cloud entities stay the same device.",
           "api_url": "Use the host that issued the key, including the port. The international service listens on port 13333.",
@@ -95,7 +95,7 @@
       },
       "init": {
         "title": "Solis options",
-        "description": "Polling and the timezone used for today, this month and this year.",
+        "description": "Polling and the timezone used for today, this month and this year. To change the logger address, port or type, use Reconfigure.",
         "data": {
           "scan_interval": "Poll interval (seconds)",
           "request_timeout": "Request timeout (seconds)",
@@ -122,7 +122,12 @@
       "logger_busy": "The logger reset or refused the local session. It can still be uploading to SolisCloud. Wait at least 10 seconds and try once. Do not retry in a tight loop.",
       "logger_tcp_disabled": "Port 502 is closed. The S2-WL-ST serves Modbus TCP from firmware 100101B4. Some later updates close the port, and enabling TCP on older firmware disconnects SolisCloud. Ask Solis for a build that keeps port 502 open, such as 100121cf or a 100141dx release, and enable Modbus in the stick or the SolisCloud app.",
       "logger_modbus_silent": "The stick accepted TCP on port 502 and sent no Modbus reply. It often allows only one client. On older firmware that client is SolisCloud or this integration, not both. Disconnect the other Modbus client, or ask Solis for firmware 100121cf, 100121d0 or 100141dx, which are reported to allow both.",
-      "logger_identity": "This S2-WL-ST did not yield a stable id. Type the logger serial from the Wi-Fi name (D_ or Solis_) or the inverter serial from the label.",
+      "logger_identity": "This logger did not yield a stable id. Type the logger serial from the label or Wi-Fi name, or the inverter serial.",
+      "logger_gateway": "Nothing accepted TCP on that address and port. Check the gateway IP and the port (502 for Modbus TCP, 8899 or 23 for a transparent tunnel). A gateway that is powered independently does not switch off with the inverter.",
+      "logger_wrong_protocol": "The device accepted TCP and the bytes were not the framing you selected. Use Modbus TCP gateway when the device converts to Modbus TCP. Use Modbus RTU over TCP when it is a transparent serial tunnel. A value off by 256 usually means the other mode.",
+      "logger_wrong_slave": "A Modbus reply came back from a different slave. The Solis default is 1. Set the slave that the inverter is using.",
+      "logger_unsupported_map": "Modbus answered, and neither the Solis 3000 string map nor the 33000 hybrid map is present. This is not a Solis inverter on that slave, or the gateway is pointed at the wrong serial port.",
+      "logger_timeout": "TCP connected and no Solis frame arrived. The inverter may be off, the baud may not be 9600 8N1, or a transparent gateway was given the Modbus TCP option. Try again while the inverter is producing.",
       "invalid_logger": "The port must be 1 to 65535, the slave 1 to 247, and a Solarman serial must be the number printed on the stick."
     },
     "abort": {
@@ -170,7 +175,15 @@
     },
     "logger_modbus_silent": {
       "title": "S2-WL-ST accepted TCP and sent no Modbus",
-      "description": "The socket opened and no register reply came back. The stick often allows one local connection. On older firmware SolisCloud holds that connection and local Modbus stays silent, which is the official 'enabling TCP disconnects SolisCloud' case in reverse. Stop the other Modbus client, or ask Solis for firmware that allows both (100121cf, 100121d0, 100141dx). This notice clears when a local read succeeds."
+      "description": "The socket opened and no register reply came back. The stick often allows one local connection. On older firmware SolisCloud holds that connection and local Modbus stays silent, which is the official 'enabling TCP disconnects SolisCloud' case in reverse. Stop the other Modbus client, or ask Solis for firmware that allows both (100121cf, 100121d0, 100141dx). An S5-WiFi-ST that still has port 502 open has the same limit. This notice clears when a local read succeeds."
+    },
+    "logger_gateway": {
+      "title": "Modbus gateway is not accepting connections",
+      "description": "The address refused TCP or could not be reached. Check the IP, the port, and that the gateway is powered. This is not the inverter switching a Solis stick off for the night. A gateway powered from the inverter USB port goes quiet when the inverter does, and this notice is what you see then. It clears when a local read succeeds."
+    },
+    "logger_wrong_protocol": {
+      "title": "Logger framing does not match",
+      "description": "The socket opened and the bytes were not the framing stored for this entry. A Waveshare, Elfin or USR in transparent mode needs Modbus RTU over TCP. The same device in Modbus TCP conversion mode needs the Modbus TCP gateway option. A reply from the wrong slave, or a device that is not a Solis inverter, is reported here too. This notice clears when a local read succeeds."
     }
   },
   "entity": {
@@ -330,6 +343,24 @@
     },
     "update_logger_modbus_silent": {
       "message": "The S2-WL-ST accepted TCP and sent no Modbus reply. Another client may hold the only connection. SolisCloud is used when a fresh sample is available."
+    },
+    "update_logger_gateway": {
+      "message": "The Modbus gateway is not accepting connections. The last local sample is held until it answers."
+    },
+    "update_logger_wrong_protocol": {
+      "message": "The logger answered with a different framing or slave than this entry expects. Change the logger type or the gateway mode."
+    }
+  },
+  "selector": {
+    "logger_kind": {
+      "options": {
+        "auto": "Auto-detect",
+        "solarman": "Solarman V5 (DLS-W, DLS-L, LSW)",
+        "s2_wl_st": "Solis S2-WL-ST (Modbus TCP 502)",
+        "modbus_tcp": "Modbus TCP gateway (Waveshare, Elfin, USR)",
+        "s5_wifi_st": "Solis S5-WiFi-ST (experimental)",
+        "rtu_tcp": "Modbus RTU over TCP (experimental)"
+      }
     }
   }
 }

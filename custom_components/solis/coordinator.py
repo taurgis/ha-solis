@@ -18,6 +18,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    CONF_LOGGER_DETECT,
     CONF_SCAN_INTERVAL,
     CONF_SOURCE,
     DATA_DEGRADED,
@@ -27,7 +28,9 @@ from .const import (
     ISSUE_ABNORMAL,
     ISSUE_AUTH,
     ISSUE_CLOCK,
+    ISSUE_LOGGER_GATEWAY,
     ISSUE_LOGGER_LOCKED,
+    ISSUE_LOGGER_PROTOCOL,
     ISSUE_LOGGER_SILENT,
     ISSUE_LOGGER_TCP,
     ISSUE_NO_INVERTERS,
@@ -36,9 +39,13 @@ from .const import (
     MIN_LOCAL_SCAN_INTERVAL,
     OUTAGE_POLLS,
     POLL_REPAIRS,
+    REASON_GATEWAY,
     REASON_LOCKED,
     REASON_SILENT,
     REASON_TCP_DISABLED,
+    REASON_UNSUPPORTED,
+    REASON_WRONG_PROTOCOL,
+    REASON_WRONG_SLAVE,
     SOURCE_CLOUD,
     STALE_AFTER,
 )
@@ -52,6 +59,7 @@ from .errors import (
     SolisServerError,
     SolisTimeoutError,
 )
+from .loggers import detection_why
 from .models import SolisSnapshot, snapshot_from_dict, snapshot_to_dict
 from .transport import SolisTransport
 
@@ -59,14 +67,28 @@ _LOGGER = logging.getLogger(__name__)
 
 _BACKOFF_CAP = 900.0
 _LOCK_REPAIR_AFTER = 600.0
-_LOGGER_ISSUES = (ISSUE_LOGGER_LOCKED, ISSUE_LOGGER_TCP, ISSUE_LOGGER_SILENT)
+_LOGGER_ISSUES = (
+    ISSUE_LOGGER_LOCKED,
+    ISSUE_LOGGER_TCP,
+    ISSUE_LOGGER_SILENT,
+    ISSUE_LOGGER_GATEWAY,
+    ISSUE_LOGGER_PROTOCOL,
+)
 _LOGGER_ISSUE = {
     REASON_TCP_DISABLED: ISSUE_LOGGER_TCP,
     REASON_SILENT: ISSUE_LOGGER_SILENT,
+    REASON_GATEWAY: ISSUE_LOGGER_GATEWAY,
+    REASON_WRONG_PROTOCOL: ISSUE_LOGGER_PROTOCOL,
+    REASON_WRONG_SLAVE: ISSUE_LOGGER_PROTOCOL,
+    REASON_UNSUPPORTED: ISSUE_LOGGER_PROTOCOL,
 }
 _BUSY_UPDATE = {
     REASON_TCP_DISABLED: "update_logger_tcp_disabled",
     REASON_SILENT: "update_logger_modbus_silent",
+    REASON_GATEWAY: "update_logger_gateway",
+    REASON_WRONG_PROTOCOL: "update_logger_wrong_protocol",
+    REASON_WRONG_SLAVE: "update_logger_wrong_protocol",
+    REASON_UNSUPPORTED: "update_logger_wrong_protocol",
 }
 _DEGRADED_INFO = {
     REASON_TCP_DISABLED: (
@@ -80,6 +102,21 @@ _DEGRADED_INFO = {
     REASON_LOCKED: (
         "Solarman local reads are paused after a connection reset. "
         "A fresh SolisCloud sample is used when one is available"
+    ),
+    REASON_GATEWAY: (
+        "The Modbus gateway is not accepting connections. The last local "
+        "sample is held. This is not the inverter powering a stick off."
+    ),
+    REASON_WRONG_PROTOCOL: (
+        "The gateway answered, but the bytes were not the framing selected "
+        "for this entry. A Modbus TCP gateway that is still in transparent "
+        "mode needs the RTU-over-TCP option, and the reverse is also true."
+    ),
+    REASON_WRONG_SLAVE: (
+        "A Modbus reply arrived from a different slave than the one stored on this entry."
+    ),
+    REASON_UNSUPPORTED: (
+        "The device speaks Modbus and does not serve the Solis 3000 or 33000 register map."
     ),
 }
 _DEGRADED_WARN = {
@@ -96,6 +133,22 @@ _DEGRADED_WARN = {
         "Solarman logger is still refusing local Modbus. "
         "It usually recovers within 10 minutes, or after the inverter is power-cycled"
     ),
+    REASON_GATEWAY: (
+        "The Modbus gateway is still refusing connections. Check the IP, "
+        "the port, and that the gateway is powered."
+    ),
+    REASON_WRONG_PROTOCOL: (
+        "The gateway is still not speaking the framing selected for this "
+        "entry. Change the logger type, or the mode on the gateway."
+    ),
+    REASON_WRONG_SLAVE: (
+        "Modbus replies are still coming from a different slave. Set the "
+        "slave to the address configured on the inverter."
+    ),
+    REASON_UNSUPPORTED: (
+        "The device is still not serving a Solis register map. Confirm it "
+        "is the inverter and not another Modbus device on that address."
+    ),
 }
 _DEGRADED_DETAIL = {
     REASON_TCP_DISABLED: "Port 502 is closed. Modbus TCP is disabled on this firmware.",
@@ -107,6 +160,10 @@ _DEGRADED_DETAIL = {
         "one exists. The next local try waits at least 10 seconds and "
         "at most about 10 minutes."
     ),
+    REASON_GATEWAY: "The gateway is not accepting TCP. The last power sample is held.",
+    REASON_WRONG_PROTOCOL: "The bytes on the socket are not the framing selected for this entry.",
+    REASON_WRONG_SLAVE: "The Modbus reply came from a different slave.",
+    REASON_UNSUPPORTED: "Modbus answered, and neither Solis register map matched.",
 }
 
 
@@ -385,13 +442,22 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
     def logger_report(self) -> dict[str, str]:
         """Describe the local session without addresses or serials."""
         if self._degraded_since is None:
-            return {"state": "ok"}
-        reason = self._reason or REASON_LOCKED
-        return {
-            "state": "degraded",
-            "reason": reason,
-            "detail": _DEGRADED_DETAIL.get(reason, _DEGRADED_DETAIL[REASON_LOCKED]),
-        }
+            report = {"state": "ok"}
+        else:
+            reason = self._reason or REASON_LOCKED
+            report = {
+                "state": "degraded",
+                "reason": reason,
+                "detail": _DEGRADED_DETAIL.get(reason, _DEGRADED_DETAIL[REASON_LOCKED]),
+            }
+        info = getattr(self.transport, "session_info", None)
+        if callable(info):
+            report.update(info())
+        code = str(self.config_entry.data.get(CONF_LOGGER_DETECT) or "")
+        if code or report.get("kind"):
+            report["detection"] = code
+            report["why"] = detection_why(code)
+        return report
 
     def _issue_id(self, key: str) -> str:
         return f"{key}_{self.config_entry.entry_id}"

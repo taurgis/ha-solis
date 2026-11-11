@@ -4,11 +4,11 @@
 | --- | --- | --- |
 | Connection | Entry | `cloud`, `local`, or `both`. Cloud is the default. `local` is a data logger. `both` reads the logger first and lets SolisCloud fill energy totals the logger left empty. |
 | API URL | Entry | SolisCloud host, including the port. Public http is upgraded to https. |
-| Logger | Entry | `auto`, `solarman` (DLS-L / LSW, V5 on 8899), or `s2_wl_st` (Solis S2-WL-ST, Modbus TCP on 502). Auto-detect probes 502, then 8899. |
+| Logger | Entry | `auto`, `solarman` (DLS-W / DLS-L / LSW, V5 on 8899), `s2_wl_st` (Modbus TCP 502), `modbus_tcp` (Waveshare, Elfin or USR in Modbus mode), `s5_wifi_st` (experimental), or `rtu_tcp` (experimental transparent RTU). Auto-detect probes 502, then 8899, and stores a live 502 as an S2. |
 | Logger address | Entry | Current IP of the stick. Solarman discovery fills it in. A later DHCP lease is written back when the MAC is known. |
 | Logger port | Entry | Empty uses 502 or 8899 for the detected stick. Set it only to override. |
 | Modbus slave | Entry | Empty tries 1, then 2, then 3. The Solis default is 1. |
-| Logger serial | Entry | Solarman: the numeric serial. That is the config-entry unique id. S2-WL-ST: the serial in the Wi-Fi name `D_` or `Solis_`. The unique id is `s2:` plus that serial, or `s2:` plus the inverter serial when the stick serial was not typed. |
+| Logger serial | Entry | Solarman: the numeric serial. That is the config-entry unique id. S2-WL-ST and S5: the serial in the Wi-Fi name `D_` or `Solis_`. The unique id is `s2:` plus that serial, or `s2:` plus the inverter serial when the stick serial was not typed. A gateway is `tcp:` plus the label or the inverter serial. RTU over TCP is `rtu:` plus the same token. |
 | API key ID | Entry | Key id from API management. Also the config-entry unique id. Diagnostics redact it. |
 | API key secret | Entry | Key secret. Stored in the config entry. Diagnostics redact it. It is not written to the log. |
 | Plants | Entry | Which stations to poll. Reconfigure to change the set. |
@@ -20,9 +20,11 @@
 
 Reauthentication replaces the key id and secret and refuses a key that
 belongs to a different account. Reconfigure changes the URL, the plant
-selection, the polling numbers and the timezone. A cloud entry can gain a
-logger from the same form. Saving options does not drop the timeout or the
-timezone.
+selection, the polling numbers, the timezone, and the logger address, port
+and type. A local-only entry reopens the logger step with the saved values
+filled in. A cloud entry can gain a logger from the same form. Saving
+options does not drop the timeout or the timezone, and options do not ask
+for the logger address again.
 
 ## Local logger
 

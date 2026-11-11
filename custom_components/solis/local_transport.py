@@ -19,6 +19,7 @@ from typing import Any, Protocol
 
 from .const import (
     CONF_INVERTER_SERIAL,
+    CONF_LOGGER_DETECT,
     CONF_LOGGER_FUNCTION,
     CONF_LOGGER_HOST,
     CONF_LOGGER_KIND,
@@ -33,19 +34,27 @@ from .const import (
     DATA_DEGRADED,
     LOCAL_REQUEST_GAP,
     LOGGER_AUTO,
+    LOGGER_MBTCP,
+    LOGGER_RTU,
     LOGGER_S2,
+    LOGGER_S5,
     LOGGER_SOLARMAN,
     MBTCP_ALT_PORT,
     PROTOCOL_MBTCP,
     PROTOCOL_MBTCP_ALT,
+    PROTOCOL_RTU,
     PROTOCOL_V5,
     REASON_CLOSED,
     REASON_GARBAGE,
+    REASON_GATEWAY,
     REASON_LOCKED,
     REASON_REFUSED,
     REASON_SILENT,
     REASON_TCP_DISABLED,
     REASON_TIMEOUT,
+    REASON_UNSUPPORTED,
+    REASON_WRONG_PROTOCOL,
+    REASON_WRONG_SLAVE,
     REGISTER_HYBRID,
     REGISTER_SAFE_CEILING,
     REGISTER_STRING,
@@ -56,6 +65,8 @@ from .const import (
     SOURCE_LOCAL,
 )
 from .errors import SolisCloudError, SolisLoggerBusy, SolisLoggerOffline
+from .loggers import detection_code, spec_for
+from .loggers.rtu import RtuTcpClient
 from .models import (
     CollectorSnapshot,
     InverterSnapshot,
@@ -78,10 +89,25 @@ _BACKOFF_BASE = 10.0
 _BACKOFF_CAP = 600.0
 _FRESH = timedelta(minutes=15)
 _PROTOCOLS = (PROTOCOL_V5, PROTOCOL_MBTCP, PROTOCOL_MBTCP_ALT)
+_KNOWN_PROTOCOLS = (*_PROTOCOLS, PROTOCOL_RTU)
+_FC3_KINDS = {LOGGER_S2, LOGGER_S5, LOGGER_MBTCP, LOGGER_RTU}
 
 HostCallback = Callable[[str, str], None]
 TextCallback = Callable[[str], None]
-Reader = SolarmanClient | ModbusTcpClient
+
+
+class RegisterReader(Protocol):
+    """A framed Modbus client. V5, MBAP and raw RTU all look like this."""
+
+    host: str
+    _port: int
+
+    async def read_input(self, slave: int, address: int, count: int) -> list[int]: ...
+
+    async def close(self) -> None: ...
+
+
+Reader = RegisterReader
 
 
 class SnapshotReader(Protocol):
@@ -177,25 +203,24 @@ class SolisLocalTransport:
         """Store the logger identity. The socket opens on the first poll."""
         self._host = host
         self._logger_serial = int(logger_serial)
-        self._kind = LOGGER_S2 if kind == LOGGER_S2 else LOGGER_SOLARMAN
+        self._spec = spec_for(kind)
+        self._kind = self._spec.kind
         self._stick_serial = stick_serial.strip()
         self._function = 3 if function == 3 else 4
         self._slave = slave
         self._map = register_map
         self._inverter_serial = inverter_serial or f"L{logger_serial}"
         self._mac = mac
-        self._protocol = protocol if protocol in _PROTOCOLS else ""
+        self._protocol = protocol if protocol in _KNOWN_PROTOCOLS else ""
         self._serial_unsupported = serial_unsupported
         self._timeout = timeout
         self._gap = gap
-        self._port = port if port else (S2_PORT if self._kind == LOGGER_S2 else SOLARMAN_PORT)
+        self._port = port if port else self._spec.default_port
         self._on_host = on_host
         self._on_protocol = on_protocol
         self._on_serial = on_serial
         self.degraded_reason = ""
-        self._active = self._protocol or (
-            PROTOCOL_MBTCP if self._kind == LOGGER_S2 else PROTOCOL_V5
-        )
+        self._active = self._protocol or self._spec.protocol
         self._client: Reader | None = _client(
             host,
             int(logger_serial),
@@ -203,8 +228,8 @@ class SolisLocalTransport:
             port=self._port,
             timeout=timeout,
             gap=gap,
-            function=self._function if self._kind == LOGGER_S2 else 4,
-            fallback=3 if self._kind == LOGGER_S2 and self._function == 4 else 0,
+            function=self._function if self._kind in _FC3_KINDS else 4,
+            fallback=3 if self._kind in _FC3_KINDS and self._function == 4 else 0,
         )
         self._last: SolisSnapshot | None = None
         self._asleep_logged = False
@@ -244,18 +269,10 @@ class SolisLocalTransport:
         self._backoff_step += 1
         self._next_attempt = time.monotonic() + delay
         if not self._busy_logged:
-            if self._kind == LOGGER_S2:
-                _LOGGER.info(
-                    "S2-WL-ST %s reset the local session; next try in %s seconds",
-                    self._stick_label(),
-                    int(delay),
-                )
-            else:
-                _LOGGER.info(
-                    "Solarman logger %s reset the local session; next try in %s seconds",
-                    self._logger_serial,
-                    int(delay),
-                )
+            _LOGGER.info(
+                "%s",
+                _reset_log(self._kind, self._spec.label, self._stick_label(), int(delay)),
+            )
             self._busy_logged = True
         return delay
 
@@ -264,8 +281,10 @@ class SolisLocalTransport:
         self._next_attempt = 0.0
 
     async def _after_offline(self, err: SolisLoggerOffline | None = None) -> SolisSnapshot:
-        if self._kind == LOGGER_S2:
+        if self._kind in {LOGGER_S2, LOGGER_S5}:
             return await self._s2_offline(err)
+        if self._spec.bridge:
+            return await self._bridge_offline(err)
         found = await self._find_stick()
         if found is not None and found != self._host:
             self._adopt_host(found)
@@ -296,12 +315,7 @@ class SolisLocalTransport:
     def _log_asleep(self) -> None:
         if self._asleep_logged:
             return
-        if self._kind == LOGGER_S2:
-            _LOGGER.info("S2-WL-ST %s is offline; the inverter is asleep", self._stick_label())
-        else:
-            _LOGGER.info(
-                "Solarman logger %s is offline; the inverter is asleep", self._logger_serial
-            )
+        _LOGGER.info("%s", _asleep_log(self._kind, self._spec.label, self._stick_label()))
         self._asleep_logged = True
 
     async def _s2_offline(self, err: SolisLoggerOffline | None) -> SolisSnapshot:
@@ -316,13 +330,25 @@ class SolisLocalTransport:
             raise SolisLoggerOffline(f"logger {self._stick_label()} is offline")
         return asleep_snapshot(self._last)
 
+    async def _bridge_offline(self, err: SolisLoggerOffline | None) -> SolisSnapshot:
+        """A refused gateway is a fault. A timeout after TCP opens is the inverter."""
+        failure = _bridge_busy(self._host, err)
+        if failure is not None:
+            self.degraded_reason = failure.reason
+            self._arm_backoff()
+            raise failure
+        self._log_asleep()
+        if self._last is None:
+            raise SolisLoggerOffline(f"logger {self._stick_label()} is offline")
+        return asleep_snapshot(self._last)
+
     def _stick_label(self) -> str:
-        if self._kind != LOGGER_S2:
+        if self._kind == LOGGER_SOLARMAN:
             return str(self._logger_serial)
         return self._stick_serial or self._inverter_serial or self._host
 
     async def _find_stick(self) -> str | None:
-        if self._kind == LOGGER_S2:
+        if self._kind != LOGGER_SOLARMAN:
             return None
         try:
             sticks = await discover_sticks(timeout=1.0)
@@ -342,8 +368,7 @@ class SolisLocalTransport:
             inverter = decode_hybrid(words, serial=serial, logger_serial=logger)
         else:
             inverter = decode_string(words, serial=serial, logger_serial=logger)
-        model = "S2-WL-ST" if self._kind == LOGGER_S2 else "Solarman"
-        return _local_snapshot(inverter, logger, datetime.now(UTC), model)
+        return _local_snapshot(inverter, logger, datetime.now(UTC), self._spec.label)
 
     async def _read_words(self) -> dict[int, int]:
         last_offline: SolisLoggerOffline | None = None
@@ -367,8 +392,10 @@ class SolisLocalTransport:
         raise SolisLoggerOffline(f"{self._host} did not answer")
 
     def _candidates(self) -> tuple[str, ...]:
-        if self._kind == LOGGER_S2:
+        if self._kind in {LOGGER_S2, LOGGER_S5, LOGGER_MBTCP}:
             return (PROTOCOL_MBTCP,)
+        if self._kind == LOGGER_RTU:
+            return (PROTOCOL_RTU,)
         if self._protocol in _PROTOCOLS:
             return (self._protocol,)
         return _PROTOCOLS
@@ -382,19 +409,27 @@ class SolisLocalTransport:
         if self._client is not None and self._active == protocol:
             return self._client
         await self._drop()
-        if protocol == PROTOCOL_MBTCP_ALT:
-            client: Reader = ModbusTcpClient(
+        if protocol == PROTOCOL_RTU:
+            client: Reader = RtuTcpClient(
+                self._host,
+                port=self._port,
+                timeout=self._timeout,
+                gap=self._gap,
+                function=self._function,
+                fallback_function=_fc3_fallback(self._kind, self._function),
+            )
+        elif protocol == PROTOCOL_MBTCP_ALT:
+            client = ModbusTcpClient(
                 self._host, port=MBTCP_ALT_PORT, timeout=self._timeout, gap=self._gap
             )
         elif protocol == PROTOCOL_MBTCP:
-            fallback = 3 if self._kind == LOGGER_S2 and self._function == 4 else 0
             client = ModbusTcpClient(
                 self._host,
                 port=self._port,
                 timeout=self._timeout,
                 gap=self._gap,
-                function=self._function if self._kind == LOGGER_S2 else 4,
-                fallback_function=fallback,
+                function=self._function if self._kind in _FC3_KINDS else 4,
+                fallback_function=_fc3_fallback(self._kind, self._function),
             )
         else:
             client = SolarmanClient(
@@ -459,6 +494,19 @@ class SolisLocalTransport:
     async def close(self) -> None:
         """Close the logger socket."""
         await self._drop()
+
+    def session_info(self) -> dict[str, str]:
+        """Kind and framing for diagnostics. Addresses and serials stay out."""
+        return {
+            "kind": self._kind,
+            "protocol": self._protocol or self._active,
+            "port": str(self._port),
+            "slave": str(self._slave),
+            "register_map": self._map,
+            "function": str(self._function),
+            "experimental": "true" if self._spec.experimental else "false",
+            "bridge": "true" if self._spec.bridge else "false",
+        }
 
 
 class SolisPriorityTransport:
@@ -561,6 +609,15 @@ class SolisPriorityTransport:
         if self._local is None:
             return ""
         return self._local.degraded_reason
+
+    def session_info(self) -> dict[str, str]:
+        """Kind and framing for diagnostics. Addresses and serials stay out."""
+        if self._local is None:
+            return {"transport": "cloud"}
+        info = self._local.session_info()
+        info["transport"] = "local"
+        info["mode"] = self._mode
+        return info
 
 
 def _cloud_is_fresh(snapshot: SolisSnapshot) -> bool:
@@ -730,6 +787,15 @@ def _client(
     function: int = 4,
     fallback: int = 0,
 ) -> Reader:
+    if protocol == PROTOCOL_RTU:
+        return RtuTcpClient(
+            host,
+            port=port,
+            timeout=timeout,
+            gap=gap,
+            function=function,
+            fallback_function=fallback,
+        )
     if protocol == PROTOCOL_MBTCP_ALT:
         return ModbusTcpClient(host, port=MBTCP_ALT_PORT, timeout=timeout, gap=gap)
     if protocol == PROTOCOL_MBTCP:
@@ -869,11 +935,13 @@ class LoggerRequest:
 
 def parse_logger_form(user_input: Mapping[str, Any]) -> tuple[LoggerRequest | None, str]:
     """Read the logger form. An empty string is the error key."""
+    from .loggers import SELECTABLE_KINDS
+
     host = str(user_input.get(CONF_LOGGER_HOST) or "").strip()
     if not host:
         return None, "logger_asleep"
     kind = str(user_input.get(CONF_LOGGER_KIND) or LOGGER_AUTO).strip() or LOGGER_AUTO
-    if kind not in {LOGGER_AUTO, LOGGER_SOLARMAN, LOGGER_S2}:
+    if kind not in SELECTABLE_KINDS:
         kind = LOGGER_AUTO
     port, port_error = _optional_port(str(user_input.get(CONF_LOGGER_PORT) or ""))
     if port_error:
@@ -913,14 +981,29 @@ def logger_form_error(err: BaseException) -> str:
         return "logger_tcp_disabled"
     if reason == REASON_SILENT:
         return "logger_modbus_silent"
+    if reason == REASON_GATEWAY:
+        return "logger_gateway"
+    if reason == REASON_WRONG_PROTOCOL:
+        return "logger_wrong_protocol"
+    if reason == REASON_WRONG_SLAVE:
+        return "logger_wrong_slave"
+    if reason == REASON_UNSUPPORTED:
+        return "logger_unsupported_map"
+    if reason == REASON_TIMEOUT:
+        return "logger_timeout"
     if isinstance(err, SolisLoggerBusy):
         return "logger_busy"
     return "logger_asleep"
 
 
 def s2_needs_identity(probe: LoggerProbe, stick_serial: str, inverter_serial: str) -> bool:
-    """An S2 entry needs the stick label or a real inverter serial."""
-    if (probe.kind or LOGGER_SOLARMAN) != LOGGER_S2:
+    """An S2, S5 or gateway entry needs the stick label or a real inverter serial."""
+    return needs_stable_id(probe, stick_serial, inverter_serial)
+
+
+def needs_stable_id(probe: LoggerProbe, stick_serial: str, inverter_serial: str) -> bool:
+    """Solarman uses the numeric logger serial. Every other kind needs another token."""
+    if not spec_for(probe.kind or LOGGER_SOLARMAN).unique_prefix:
         return False
     token = stick_serial.strip() or inverter_serial.strip() or probe.inverter_serial.strip()
     numeric = int(stick_serial) if stick_serial.isdigit() else 0
@@ -932,13 +1015,14 @@ def logger_setup(
 ) -> tuple[dict[str, Any], str]:
     """Return the config-entry fields and the stable unique id."""
     kind = probe.kind or LOGGER_SOLARMAN
+    spec = spec_for(kind)
     inverter = request.inverter_serial.strip() or probe.inverter_serial
-    if kind == LOGGER_S2:
+    if spec.unique_prefix:
         stick = request.logger_serial.strip()
         token = stick or inverter
-        unique = f"s2:{token}"
+        unique = f"{spec.unique_prefix}:{token}"
         serial_field = stick
-        port = probe.port or S2_PORT
+        port = probe.port or spec.default_port
     else:
         unique = request.logger_serial.strip()
         serial_field = unique
@@ -955,9 +1039,56 @@ def logger_setup(
         CONF_LOGGER_PROTOCOL: probe.protocol,
         CONF_SERIAL_UNSUPPORTED: probe.serial_unsupported,
         CONF_LOGGER_FUNCTION: probe.function,
+        CONF_LOGGER_DETECT: detection_code(request.kind, kind),
         CONF_SOURCE: source,
     }
     return data, unique
+
+
+def _fc3_fallback(kind: str, function: int) -> int:
+    """Solis sticks and gateways retry function 3 after illegal function."""
+    if kind in _FC3_KINDS and function == 4:
+        return 3
+    return 0
+
+
+def _reset_log(kind: str, label: str, token: str, delay: int) -> str:
+    """Keep the sentences existing sticks already log."""
+    if kind == LOGGER_S2:
+        return f"S2-WL-ST {token} reset the local session; next try in {delay} seconds"
+    if kind == LOGGER_SOLARMAN:
+        return f"Solarman logger {token} reset the local session; next try in {delay} seconds"
+    return f"{label} {token} reset the local session; next try in {delay} seconds"
+
+
+def _asleep_log(kind: str, label: str, token: str) -> str:
+    """Keep the sentences existing sticks already log."""
+    if kind == LOGGER_S2:
+        return f"S2-WL-ST {token} is offline; the inverter is asleep"
+    if kind == LOGGER_SOLARMAN:
+        return f"Solarman logger {token} is offline; the inverter is asleep"
+    return f"{label} {token} is offline; the inverter is asleep"
+
+
+def _bridge_busy(host: str, err: SolisLoggerOffline | None) -> SolisLoggerBusy | None:
+    """A gateway that is down or speaking the wrong framing is paused, not night."""
+    if err is None:
+        return None
+    if err.reason in {
+        REASON_GATEWAY,
+        REASON_WRONG_PROTOCOL,
+        REASON_WRONG_SLAVE,
+        REASON_UNSUPPORTED,
+    }:
+        return SolisLoggerBusy(str(err), reason=err.reason)
+    if err.refused or not err.connected:
+        return SolisLoggerBusy(
+            f"{host} gateway is not accepting connections",
+            reason=REASON_GATEWAY,
+        )
+    if err.reason in {REASON_GARBAGE, REASON_WRONG_PROTOCOL}:
+        return SolisLoggerBusy(str(err), reason=REASON_WRONG_PROTOCOL)
+    return None
 
 
 def _s2_busy(host: str, err: SolisLoggerOffline | None) -> SolisLoggerBusy | None:
@@ -978,6 +1109,13 @@ async def identify_logger(
 ) -> LoggerProbe:
     """Probe port 502, then 8899, unless the form already names the stick."""
     kind = request.kind or LOGGER_AUTO
+    if kind == LOGGER_S5:
+        probe = await _probe_s2(request, serial_unsupported=serial_unsupported)
+        return replace(probe, kind=LOGGER_S5)
+    if kind in {LOGGER_MBTCP, LOGGER_RTU}:
+        from .loggers.probe import probe_bridge
+
+        return await probe_bridge(request, serial_unsupported=serial_unsupported)
     if kind == LOGGER_S2 or (kind == LOGGER_AUTO and request.port == S2_PORT):
         return await _probe_s2(request, serial_unsupported=serial_unsupported)
     if kind == LOGGER_SOLARMAN or (kind == LOGGER_AUTO and request.port not in (None, 0)):

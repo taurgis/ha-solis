@@ -44,7 +44,7 @@ from .const import (
     ISSUE_LEGACY_CONTROL,
     LOCAL_REQUEST_GAP,
     LOCAL_TIMEOUT_CAP,
-    LOGGER_S2,
+    LOGGER_SOLARMAN,
     POLL_REPAIRS,
     REGISTER_STRING,
     SOURCE_BOTH,
@@ -52,6 +52,7 @@ from .const import (
 )
 from .coordinator import SolisCoordinator
 from .local_transport import SolisLocalTransport, SolisPriorityTransport
+from .loggers import kind_label
 from .migration import async_adopt_inverter_serial, async_migrate_devices
 from .transport import SolisCloudTransport
 
@@ -151,7 +152,7 @@ def _build_transport(
         gap=LOCAL_REQUEST_GAP,
         port=port,
         kind=kind,
-        stick_serial=serial_text if kind == LOGGER_S2 else "",
+        stick_serial="" if kind in {"", LOGGER_SOLARMAN} else serial_text,
         function=function,
         on_host=lambda host, mac: _store_logger_host(hass, entry, host, mac),
         on_protocol=lambda protocol: _store_text(hass, entry, CONF_LOGGER_PROTOCOL, protocol),
@@ -183,7 +184,7 @@ def _store_logger_host(hass: HomeAssistant, entry: SolisConfigEntry, host: str, 
         not mac or entry.data.get(CONF_LOGGER_MAC) == mac
     ):
         return
-    label = "S2-WL-ST" if entry.data.get(CONF_LOGGER_KIND) == LOGGER_S2 else "Solarman"
+    label = kind_label(str(entry.data.get(CONF_LOGGER_KIND) or ""))
     _LOGGER.info("%s logger %s is now at %s", label, entry.data.get(CONF_LOGGER_SERIAL), host)
     data = {**entry.data, CONF_LOGGER_HOST: host}
     if mac:

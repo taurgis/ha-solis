@@ -19,7 +19,7 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.const import CONF_NAME
 from homeassistant.core import callback
-from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import config_validation as cv, selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import SolisCloudClient
@@ -48,7 +48,6 @@ from .const import (
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     LOGGER_AUTO,
-    LOGGER_S2,
     LOGGER_SOLARMAN,
     MIN_LOCAL_SCAN_INTERVAL,
     SOLARMAN_OUI,
@@ -71,6 +70,7 @@ from .local_transport import (
     parse_logger_form,
     s2_needs_identity,
 )
+from .loggers import SELECTABLE_KINDS, kind_label
 from .solarman import Stick, discover_sticks, format_mac
 
 _LOGGER = logging.getLogger(__name__)
@@ -364,12 +364,12 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_INVERTER_SERIAL, default=str(entry.data.get(CONF_INVERTER_SERIAL, ""))
                 ): str,
                 vol.Optional(
-                    CONF_LOGGER_KIND,
-                    default=str(entry.data.get(CONF_LOGGER_KIND) or LOGGER_SOLARMAN),
-                ): vol.In([LOGGER_AUTO, LOGGER_SOLARMAN, LOGGER_S2]),
-                vol.Optional(
                     CONF_LOGGER_PORT, default=str(entry.data.get(CONF_LOGGER_PORT) or "")
                 ): str,
+                **_logger_kind_field(
+                    str(entry.data.get(CONF_LOGGER_KIND) or LOGGER_SOLARMAN),
+                    required=False,
+                ),
                 vol.Optional(CONF_SLAVE_ID, default=str(entry.data.get(CONF_SLAVE_ID) or "")): str,
             }
         )
@@ -392,6 +392,28 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
         self._discovered = stations
         return {}
 
+    def _logger_defaults(self, found: Stick | None) -> dict[str, str]:
+        """Prefill a reconfigure. A new entry still starts from discovery."""
+        entry = self._get_reconfigure_entry() if self.source == "reconfigure" else None
+        saved = entry.data if entry is not None else {}
+        if entry is None:
+            return {
+                "kind": LOGGER_AUTO,
+                "host": "" if found is None else found.host,
+                "port": "",
+                "serial": "" if found is None else str(found.serial),
+                "slave": "",
+                "inverter": "",
+            }
+        return {
+            "kind": str(saved.get(CONF_LOGGER_KIND) or LOGGER_AUTO),
+            "host": str(saved.get(CONF_LOGGER_HOST) or ""),
+            "port": str(saved.get(CONF_LOGGER_PORT) or ""),
+            "serial": str(saved.get(CONF_LOGGER_SERIAL) or ""),
+            "slave": str(saved.get(CONF_SLAVE_ID) or ""),
+            "inverter": str(saved.get(CONF_INVERTER_SERIAL) or ""),
+        }
+
     async def async_step_logger(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Confirm a local logger. The inverter has to be producing."""
         errors: dict[str, str] = {}
@@ -404,18 +426,15 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
             else:
                 return await self._finish_logger(fields, unique)
         found = self._sticks[0] if self._sticks else None
+        defaults = self._logger_defaults(found)
         schema = vol.Schema(
             {
-                vol.Required(CONF_LOGGER_KIND, default=LOGGER_AUTO): vol.In(
-                    [LOGGER_AUTO, LOGGER_SOLARMAN, LOGGER_S2]
-                ),
-                vol.Required(CONF_LOGGER_HOST, default="" if found is None else found.host): str,
-                vol.Optional(CONF_LOGGER_PORT, default=""): str,
-                vol.Optional(
-                    CONF_LOGGER_SERIAL, default="" if found is None else str(found.serial)
-                ): str,
-                vol.Optional(CONF_SLAVE_ID, default=""): str,
-                vol.Optional(CONF_INVERTER_SERIAL, default=""): str,
+                **_logger_kind_field(defaults["kind"], required=True),
+                vol.Required(CONF_LOGGER_HOST, default=defaults["host"]): str,
+                vol.Optional(CONF_LOGGER_PORT, default=defaults["port"]): str,
+                vol.Optional(CONF_LOGGER_SERIAL, default=defaults["serial"]): str,
+                vol.Optional(CONF_SLAVE_ID, default=defaults["slave"]): str,
+                vol.Optional(CONF_INVERTER_SERIAL, default=defaults["inverter"]): str,
             }
         )
         return self.async_show_form(
@@ -484,8 +503,12 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
             if entry.data.get(CONF_LOGGER_HOST) == host:
                 return self.async_abort(reason="already_configured")
             kind = entry.data.get(CONF_LOGGER_KIND)
-            label = "S2-WL-ST" if kind == LOGGER_S2 else "Solarman"
-            _LOGGER.info("%s logger %s is now at %s", label, serial, host)
+            _LOGGER.info(
+                "%s logger %s is now at %s",
+                kind_label(str(kind or "")),
+                serial,
+                host,
+            )
             if str(entry.unique_id) == serial:
                 await self.async_set_unique_id(serial)
                 self._abort_if_unique_id_configured(updates={CONF_LOGGER_HOST: host})
@@ -572,13 +595,27 @@ async def _fetch_stations(hass: Any, data: Mapping[str, Any]) -> dict[str, str]:
 
 def _mac_for(sticks: list[Stick], serial: str, kind: str) -> str:
     """Return the discovered MAC when this is the Solarman stick with that serial."""
-    if kind == LOGGER_S2 or not serial.isdigit():
+    if kind != LOGGER_SOLARMAN or not serial.isdigit():
         return ""
     wanted = int(serial)
     for stick in sticks:
         if stick.serial == wanted:
             return stick.mac
     return ""
+
+
+def _logger_kind_field(default: str, *, required: bool) -> dict[Any, Any]:
+    """Dropdown of logger kinds. Labels live in the translation files."""
+    marker = vol.Required if required else vol.Optional
+    return {
+        marker(CONF_LOGGER_KIND, default=default): selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                options=list(SELECTABLE_KINDS),
+                translation_key="logger_kind",
+                mode=selector.SelectSelectorMode.DROPDOWN,
+            )
+        )
+    }
 
 
 def _info(discovery: Any, key: str) -> Any:
