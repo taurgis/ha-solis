@@ -19,22 +19,34 @@
       },
       "logger": {
         "title": "Lokale logger",
-        "description": "Gevonden Solarman-loggers: {found}. Automatisch detecteren probeert Modbus TCP-poort 502, daarna Solarman-poort 8899. Poort 502 wordt opgeslagen als een S2-WL-ST. Een Waveshare of andere gateway op 502 ziet er op de draad hetzelfde uit: kies Modbus TCP-gateway voor dat apparaat, anders geldt een geweigerde poort als Solis-firmware. Een S2-WL-ST antwoordt niet op de zoek-broadcast. De omvormer moet produceren. Geef een stick een DHCP-reservering. Zet geen vast adres op de stick.",
+        "description": "Gevonden Solarman-loggers: {found}. Automatisch detecteren probeert poort 502, daarna poort 8899. Een Solis-registermap op 502 is alleen een S2-WL-ST als poort 80 de Solis-loggerpagina noemt. Een gatewaypagina wordt opgeslagen als Modbus TCP-gateway. Als de pagina het apparaat niet noemt, kies je zelf, met S2-WL-ST voorgeselecteerd. S5-WiFi-ST is experimenteel: Solis ondersteunt lokale toegang niet officieel, en nieuwere firmware sluit poort 502. De omvormer moet produceren. Reserveer het adres in de router.",
         "data": {
           "logger_kind": "Logger",
           "logger_host": "Logger-IP",
           "logger_port": "Poort",
           "logger_serial": "Loggerserienummer",
           "slave_id": "Modbus-slave",
-          "inverter_serial": "Omvormerserienummer"
+          "inverter_serial": "Omvormerserienummer",
+          "logger_preset": "RTU-gatewaymodel"
         },
         "data_description": {
-          "logger_kind": "Automatisch detecteren probeert poort 502, daarna 8899. Solarman V5 is DLS-W, DLS-L en LSW. Solis S2-WL-ST is Modbus TCP op 502. Modbus TCP-gateway is een Waveshare, Elfin of USR in Modbus-modus (standaardpoort 502). S5-WiFi-ST en Modbus RTU over TCP zijn experimenteel: S5-firmware sluit poort 502 vaak, en RTU is een transparante seriële tunnel (standaardpoort 8899, of 23 op een onaangeroerde USR).",
+          "logger_kind": "Automatisch detecteren probeert poort 502, daarna 8899. Poort 502 is alleen een S2-WL-ST als de webpagina van het apparaat dat zegt. S5-WiFi-ST is experimenteel: Solis ondersteunt lokale toegang niet officieel, en een firmware-update sluit poort 502 vaak. Modbus RTU over TCP is experimenteel en gebruikt het gatewaymodel voor de fabriekspoort.",
           "logger_host": "Huidig adres. Reserveer een stick in de router. Een Solarman-stick wordt opnieuw gevonden via het serienummer. Een S2-WL-ST, S5 en een gateway niet. 10.10.100.254 is het installatieadres van een stick of een Elfin, niet het adres op het thuisnetwerk.",
-          "logger_port": "Laat leeg voor 502 op een S2, S5 of Modbus TCP-gateway, en 8899 op Solarman of RTU over TCP. Vul 23 in voor een USR op de fabrieksinstelling, of 3389 alleen als die LAN-stick daar echt luistert.",
+          "logger_port": "Laat leeg voor 502 op een S2, S5 of Modbus TCP-gateway. Voor RTU over TCP: laat leeg om het gatewaymodel te gebruiken: 8899 Elfin, 4196 Waveshare, 26 USR RS485, 6638 ESPHome. Een ingevulde poort wint altijd. 23 is de USR RS232-socket.",
           "logger_serial": "Solarman: het numerieke serienummer van het label of van de zoekactie. S2 en S5: het serienummer in de wifi-naam D_ of Solis_, niet het omvormerserienummer. Gateway en RTU: een label naar keuze, of leeg laten om het omvormerserienummer te gebruiken.",
           "slave_id": "Laat leeg om slave 1 te proberen, daarna 2 en 3. De Solis-standaard is 1.",
-          "inverter_serial": "Optioneel. Het SolisCloud-omvormerserienummer, bijvoorbeeld 110E40182280017. Laat leeg om het van de stick te lezen als dat bereik antwoordt, of van SolisCloud in de modus lokaal-en-cloud. Dit is de entiteit-id. Op een S2-WL-ST is het ook de unieke config-id als het stickserienummer leeg is."
+          "inverter_serial": "Optioneel. Het SolisCloud-omvormerserienummer, bijvoorbeeld 110E40182280017. Laat leeg om het van de stick te lezen als dat bereik antwoordt, of van SolisCloud in de modus lokaal-en-cloud. Dit is de entiteit-id. Op een S2-WL-ST is het ook de unieke config-id als het stickserienummer leeg is.",
+          "logger_preset": "Alleen voor Modbus RTU over TCP, en alleen als Poort leeg is. Elfin EW11/EE11 staat af fabriek op 8899. Waveshare RS485 TO ETH luistert op 4196 tot je dat wijzigt. USR-TCP232 gebruikt 26 op de RS485-socket en 23 op de RS232-socket. De stream server van ESPHome gebruikt vaak 6638."
+        }
+      },
+      "logger_choice": {
+        "title": "Welk apparaat zit op poort 502?",
+        "description": "{note} Solis documenteert Modbus TCP op de S2-WL-ST. Een Waveshare, Elfin of USR in Modbus-modus geeft dezelfde omvormerregisters terug. S5-WiFi-ST staat hier niet: die is experimenteel en nieuwere firmware sluit poort 502.",
+        "data": {
+          "logger_kind": "Apparaat"
+        },
+        "data_description": {
+          "logger_kind": "S2-WL-ST als dit de Solis-stick is. Modbus TCP-gateway als een Waveshare, Elfin of USR de omzetting doet."
         }
       },
       "stations": {
@@ -70,6 +82,7 @@
           "logger_serial": "Loggerserienummer",
           "slave_id": "Modbus-slave",
           "inverter_serial": "Omvormerserienummer",
+          "logger_preset": "RTU-gatewaymodel",
           "api_url": "API-URL",
           "station_ids": "Installaties",
           "scan_interval": "Uitleesinterval (seconden)",
@@ -83,7 +96,8 @@
           "request_timeout": "Seconden wachten op één HTTP-aanroep. Standaard 30.",
           "endpoint_interval": "Minimale seconden tussen aanroepen van hetzelfde API-pad. Standaard 2, onder de gepubliceerde limiet van twee aanroepen per seconde.",
           "source": "Alleen cloud, alleen lokaal, of lokaal met SolisCloud als reserve.",
-          "logger_kind": "Automatisch detecteren, Solarman V5, Solis S2-WL-ST, een Modbus TCP-gateway, experimentele S5-WiFi-ST, of experimentele Modbus RTU over TCP. Wijzigen hiervan behoudt dezelfde entiteiten.",
+          "logger_kind": "Automatisch detecteren, Solarman V5, Solis S2-WL-ST, een Modbus TCP-gateway, experimentele S5-WiFi-ST (Solis ondersteunt lokale toegang niet officieel; firmware sluit poort 502 vaak), of experimentele Modbus RTU over TCP. Wijzigen behoudt dezelfde entiteiten.",
+          "logger_preset": "Alleen voor Modbus RTU over TCP als Poort leeg is. Elfin-fabriekspoort is 8899. Waveshare RS485 TO ETH is 4196. USR RS485 is 26. ESPHome stream server is vaak 6638.",
           "logger_host": "Huidig adres van de logger of gateway. Laat leeg om het opgeslagen adres te houden.",
           "logger_port": "Laat leeg voor de standaardpoort van de gekozen logger.",
           "logger_serial": "Loggerserienummer of een label voor een gateway. Vul dit samen met het IP in om een stick aan een bestaand cloud-item te koppelen. Bij een S2-WL-ST of S5 is dit het serienummer in de wifi-naam.",
@@ -128,6 +142,7 @@
       "logger_wrong_slave": "Een Modbus-antwoord kwam van een andere slave. De Solis-standaard is 1. Stel de slave in die de omvormer gebruikt.",
       "logger_unsupported_map": "Modbus antwoordde, en noch de Solis 3000-stringmap noch de 33000-hybride map is aanwezig. Dit is geen Solis-omvormer op die slave, of de gateway wijst naar de verkeerde seriële poort.",
       "logger_timeout": "TCP verbond en er kwam geen Solis-frame. De omvormer kan uit zijn, de baud kan niet 9600 8N1 zijn, of een transparante gateway kreeg de optie Modbus TCP. Probeer opnieuw terwijl de omvormer produceert.",
+      "logger_choice": "Poort 502 gaf een Solis-map en de webpagina noemde het apparaat niet. Zet Logger in dit formulier op Solis S2-WL-ST of Modbus TCP-gateway, niet op Automatisch detecteren.",
       "invalid_logger": "De poort moet 1 tot 65535 zijn, de slave 1 tot 247, en een Solarman-serienummer moet het nummer op de stick zijn."
     },
     "abort": {
@@ -179,11 +194,15 @@
     },
     "logger_gateway": {
       "title": "De Modbus-gateway accepteert geen verbindingen",
-      "description": "Het adres weigerde TCP of was niet bereikbaar. Controleer het IP, de poort en of de gateway voeding heeft. Dit is niet de omvormer die een Solis-stick voor de nacht uitzet. Een gateway die voeding van de USB-poort van de omvormer krijgt valt stil als de omvormer dat doet, en dan zie je deze melding. Ze verdwijnt als een lokale uitlezing slaagt."
+      "description": "Het adres weigerde TCP of was niet bereikbaar. Controleer het IP, de poort en of de gateway voeding heeft. Geef de gateway een DHCP-reservering zodat het adres niet verschuift. Als het adres wel is veranderd, gebruik Herconfigureren op het Solis-item en vul het nieuwe adres in. Dit is niet de omvormer die een Solis-stick voor de nacht uitzet. Deze melding verdwijnt als een lokale uitlezing slaagt."
     },
     "logger_wrong_protocol": {
       "title": "De loggerframing komt niet overeen",
-      "description": "De socket ging open en de bytes waren niet de framing van dit item. Een Waveshare, Elfin of USR in transparante modus heeft Modbus RTU over TCP nodig. Hetzelfde apparaat in Modbus TCP-omzetting heeft de optie Modbus TCP-gateway nodig. Een antwoord van de verkeerde slave, of een apparaat dat geen Solis-omvormer is, komt hier ook. Deze melding verdwijnt als een lokale uitlezing slaagt."
+      "description": "De socket ging open en de bytes waren niet de framing van dit item. Een Waveshare, Elfin of USR in transparante modus heeft Modbus RTU over TCP nodig. Hetzelfde apparaat in Modbus TCP-omzetting heeft de optie Modbus TCP-gateway nodig. Gebruik Herconfigureren om het type of de poort te wijzigen. Deze melding verdwijnt als een lokale uitlezing slaagt."
+    },
+    "logger_s5_closed": {
+      "title": "S5-WiFi-ST dient geen Modbus TCP meer",
+      "description": "Poort 502 is dicht. Solis ondersteunt lokale toegang op de S5-WiFi-ST niet officieel, en nieuwere firmware sluit poort 502 en de webpagina terwijl SolisCloud blijft werken. Home Assistant kan de poort niet heropenen. Gebruik Herconfigureren om dit item om te zetten naar een Modbus TCP-gateway op de RS485-poort van de omvormer, of gebruik alleen SolisCloud. Deze melding verdwijnt als de poort weer antwoordt."
     }
   },
   "entity": {
@@ -349,6 +368,9 @@
     },
     "update_logger_wrong_protocol": {
       "message": "De logger antwoordde met een andere framing of slave dan dit item verwacht. Wijzig het loggertype of de gatewaymodus."
+    },
+    "update_logger_s5_closed": {
+      "message": "De S5-WiFi-ST heeft poort 502 gesloten. Solis ondersteunt lokale toegang op deze stick niet officieel, en nieuwere firmware haalt die weg. SolisCloud wordt gebruikt als er een vers sample is."
     }
   },
   "selector": {
@@ -358,8 +380,23 @@
         "solarman": "Solarman V5 (DLS-W, DLS-L, LSW)",
         "s2_wl_st": "Solis S2-WL-ST (Modbus TCP 502)",
         "modbus_tcp": "Modbus TCP-gateway (Waveshare, Elfin, USR)",
-        "s5_wifi_st": "Solis S5-WiFi-ST (experimenteel)",
+        "s5_wifi_st": "Solis S5-WiFi-ST (experimenteel, firmware kan poort 502 sluiten)",
         "rtu_tcp": "Modbus RTU over TCP (experimenteel)"
+      }
+    },
+    "logger_choice": {
+      "options": {
+        "s2_wl_st": "Solis S2-WL-ST",
+        "modbus_tcp": "Modbus TCP-gateway (Waveshare, Elfin, USR)"
+      }
+    },
+    "logger_preset": {
+      "options": {
+        "default": "Elfin / Hi-Flying af fabriek (8899)",
+        "elfin": "Elfin EW11 / EE11 (8899)",
+        "waveshare": "Waveshare RS485 TO ETH (4196)",
+        "usr": "USR-TCP232 RS485-socket (26)",
+        "esp": "ESPHome stream server (6638)"
       }
     }
   }

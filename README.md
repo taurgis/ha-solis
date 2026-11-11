@@ -100,10 +100,10 @@ choice. The research note is [docs/research/dongles.md](docs/research/dongles.md
 | Logger | How to select it | Port | Local access |
 | --- | --- | --- | --- |
 | Solarman / IGEN (DLS-W, DLS-L, LSW-3, LSE-3) | Auto-detect, or Solarman V5 | 8899, then 30003 | Yes. V5, or plain Modbus TCP when V5 is not the framing. |
-| Solis S2-WL-ST | Auto-detect, or Solis S2-WL-ST | 502 | Yes, from firmware `100101B4`. Some updates close the port or allow only one client. |
-| Waveshare, Elfin EW11, USR-TCP232 in Modbus TCP mode | Modbus TCP gateway | 502, or the port you set (USR default is often 23) | Yes. A refused port is a down gateway, not Solis firmware. |
-| Solis S5-WiFi-ST | Solis S5-WiFi-ST (experimental) | 502 | Only while that firmware still listens. Many updates close 502 and 80. Auto-detect calls a live port 502 an S2. |
-| Elfin, USR or Waveshare in transparent mode, ESP TCP-serial bridge | Modbus RTU over TCP (experimental) | 8899, or 23 if the USR was left on its default | Yes, at 9600 8N1. Not tried by auto-detect. |
+| Solis S2-WL-ST | Auto-detect when port 80 names the Solis page, or pick Solis S2-WL-ST | 502 | Yes, from firmware `100101B4`. If port 80 does not name the device, auto-detect asks instead of assuming this stick. |
+| Waveshare, Elfin EW11, USR-TCP232 in Modbus TCP mode | Auto-detect when port 80 names the gateway, or Modbus TCP gateway | 502, or the port you set | Yes. A refused port is a down gateway. Reserve the address in the router. |
+| Solis S5-WiFi-ST | Solis S5-WiFi-ST (experimental). Solis does not officially support local access, and newer firmware closes port 502. | 502 | Only while that firmware still listens. A repair opens if the port later closes. |
+| Elfin, USR or Waveshare in transparent mode, ESP TCP-serial bridge | Modbus RTU over TCP (experimental). The model fills the factory port: Elfin 8899, Waveshare 4196, USR RS485 26, ESPHome 6638. | That port, unless you type one | Yes, at 9600 8N1. Not tried by auto-detect. |
 | S3-WIFI-ST, S4-WIFI-ST, S6 USB, S1-W4G-ST, 4G/GPRS sticks | Not a local option | — | No published local listener. Use SolisCloud, or a gateway on the inverter RS485 port. |
 
 ## Migrating from hultenvp/solis-sensor

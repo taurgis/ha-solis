@@ -25,6 +25,7 @@ from .const import (
     CONF_LOGGER_KIND,
     CONF_LOGGER_MAC,
     CONF_LOGGER_PORT,
+    CONF_LOGGER_PRESET,
     CONF_LOGGER_PROTOCOL,
     CONF_LOGGER_SERIAL,
     CONF_REGISTER_MAP,
@@ -49,6 +50,7 @@ from .const import (
     REASON_GATEWAY,
     REASON_LOCKED,
     REASON_REFUSED,
+    REASON_S5_CLOSED,
     REASON_SILENT,
     REASON_TCP_DISABLED,
     REASON_TIMEOUT,
@@ -129,6 +131,11 @@ class LoggerProbe:
     kind: str = ""
     port: int = 0
     function: int = 4
+    needs_choice: bool = False
+    suggested_kind: str = ""
+    identify_note: str = ""
+    confidence: str = ""
+    detection: str = ""
 
 
 def backoff_seconds(step: int) -> float:
@@ -321,6 +328,12 @@ class SolisLocalTransport:
     async def _s2_offline(self, err: SolisLoggerOffline | None) -> SolisSnapshot:
         """A closed port or a silent socket is a firmware fault, not night."""
         failure = _s2_busy(self._host, err)
+        if (
+            failure is not None
+            and self._kind == LOGGER_S5
+            and failure.reason == REASON_TCP_DISABLED
+        ):
+            failure = SolisLoggerBusy(str(failure), reason=REASON_S5_CLOSED)
         if failure is not None:
             self.degraded_reason = failure.reason
             self._arm_backoff()
@@ -931,6 +944,7 @@ class LoggerRequest:
     inverter_serial: str = ""
     timeout: float = 5.0
     gap: float = LOCAL_REQUEST_GAP
+    preset: str = ""
 
 
 def parse_logger_form(user_input: Mapping[str, Any]) -> tuple[LoggerRequest | None, str]:
@@ -951,9 +965,10 @@ def parse_logger_form(user_input: Mapping[str, Any]) -> tuple[LoggerRequest | No
         return None, slave_error
     serial = str(user_input.get(CONF_LOGGER_SERIAL) or "").strip()
     inverter = str(user_input.get(CONF_INVERTER_SERIAL) or "").strip()
+    preset = str(user_input.get(CONF_LOGGER_PRESET) or "").strip()
     if kind == LOGGER_SOLARMAN and not serial.isdigit():
         return None, "invalid_logger"
-    return LoggerRequest(host, kind, port, slave, serial, inverter), ""
+    return LoggerRequest(host, kind, port, slave, serial, inverter, preset=preset), ""
 
 
 def _optional_port(text: str) -> tuple[int | None, str]:
@@ -1039,7 +1054,8 @@ def logger_setup(
         CONF_LOGGER_PROTOCOL: probe.protocol,
         CONF_SERIAL_UNSUPPORTED: probe.serial_unsupported,
         CONF_LOGGER_FUNCTION: probe.function,
-        CONF_LOGGER_DETECT: detection_code(request.kind, kind),
+        CONF_LOGGER_DETECT: probe.detection or detection_code(request.kind, kind),
+        CONF_LOGGER_PRESET: request.preset,
         CONF_SOURCE: source,
     }
     return data, unique
@@ -1116,13 +1132,15 @@ async def identify_logger(
         from .loggers.probe import probe_bridge
 
         return await probe_bridge(request, serial_unsupported=serial_unsupported)
-    if kind == LOGGER_S2 or (kind == LOGGER_AUTO and request.port == S2_PORT):
+    if kind == LOGGER_S2:
         return await _probe_s2(request, serial_unsupported=serial_unsupported)
+    if kind == LOGGER_AUTO and request.port == S2_PORT:
+        return await _auto_s2(request, serial_unsupported=serial_unsupported)
     if kind == LOGGER_SOLARMAN or (kind == LOGGER_AUTO and request.port not in (None, 0)):
         return await _probe_named_solarman(request, serial_unsupported=serial_unsupported)
     try:
         faster = replace(request, port=S2_PORT, timeout=min(request.timeout, 3.0))
-        return await _probe_s2(faster, serial_unsupported=serial_unsupported)
+        return await _auto_s2(faster, serial_unsupported=serial_unsupported)
     except SolisLoggerBusy:
         raise
     except SolisLoggerOffline as err:
@@ -1135,6 +1153,30 @@ async def identify_logger(
         raise
     except SolisLoggerOffline as err:
         raise _prefer_auto_error(s2_error, err) from err
+
+
+async def _auto_s2(request: LoggerRequest, *, serial_unsupported: bool) -> LoggerProbe:
+    """A Solis map on port 502 is not enough. Port 80 has to name the device."""
+    from .loggers.fingerprint import classify_http, read_http_banner
+
+    probe = await _probe_s2(request, serial_unsupported=serial_unsupported)
+    page = await read_http_banner(request.host, timeout=min(request.timeout, 1.2))
+    found = classify_http(page)
+    if found.confident_kind:
+        return replace(
+            probe,
+            kind=found.confident_kind,
+            confidence=found.confidence,
+            identify_note=found.note,
+            detection=found.detection,
+        )
+    return replace(
+        probe,
+        needs_choice=True,
+        suggested_kind=found.suggested,
+        confidence=found.confidence,
+        identify_note=found.note,
+    )
 
 
 def _prefer_auto_error(

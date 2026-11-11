@@ -139,11 +139,13 @@ rules:
     comment: >-
       Solarman loggers are found with the IGEN UDP 48899 broadcast
       (WIFIKIT-214028-READ and HF-A11ASSISTHREAD). DHCP watches the
-      BC:54:F9 OUI and updates an existing entry's address. An S2-WL-ST,
-      an S5-WiFi-ST and an RS485 gateway have no UDP discovery and no
-      published OUI. Auto-detect probes TCP 502, then 8899, and does not
-      try raw RTU. A stored MAC still updates that entry. The user picks
-      a gateway or RTU tunnel when auto-detect would mislabel it.
+      BC:54:F9 OUI and updates an existing entry's address. Elfin and
+      USR hostnames (ew11, elfin, usr-tcp, usr-w610, usr-dr) are also
+      matched. A hostname match stores the MAC on the entry that already
+      uses that IP, and a later lease updates the host. No gateway OUI
+      is claimed. Auto-detect probes TCP 502, then 8899. Port 502 is an
+      S2-WL-ST only when port 80 names the Solis page, a gateway when
+      port 80 names the vendor, and a question to the user otherwise.
   discovery-update-info:
     status: done
     comment: >-

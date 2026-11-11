@@ -20,12 +20,12 @@ from ..const import (
     REASON_UNSUPPORTED,
     REASON_WRONG_PROTOCOL,
     REASON_WRONG_SLAVE,
-    RTU_PORT,
     S2_PORT,
 )
 from ..errors import SolisLoggerBusy, SolisLoggerOffline
 from ..local_transport import LoggerProbe, LoggerRequest, _detect_map, _serial_once
 from ..solarman import ModbusTcpClient
+from .fingerprint import rtu_default_port
 from .rtu import RtuTcpClient
 
 _BridgeClient = ModbusTcpClient | RtuTcpClient
@@ -77,7 +77,7 @@ async def probe_bridge(request: LoggerRequest, *, serial_unsupported: bool) -> L
 
 def _open_bridge(request: LoggerRequest) -> tuple[int, _BridgeClient, str]:
     if request.kind == LOGGER_RTU:
-        port = request.port or RTU_PORT
+        port = request.port or rtu_default_port(request.preset)
         client: _BridgeClient = RtuTcpClient(
             request.host,
             port=port,

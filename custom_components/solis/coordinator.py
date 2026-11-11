@@ -31,6 +31,7 @@ from .const import (
     ISSUE_LOGGER_GATEWAY,
     ISSUE_LOGGER_LOCKED,
     ISSUE_LOGGER_PROTOCOL,
+    ISSUE_LOGGER_S5,
     ISSUE_LOGGER_SILENT,
     ISSUE_LOGGER_TCP,
     ISSUE_NO_INVERTERS,
@@ -41,6 +42,7 @@ from .const import (
     POLL_REPAIRS,
     REASON_GATEWAY,
     REASON_LOCKED,
+    REASON_S5_CLOSED,
     REASON_SILENT,
     REASON_TCP_DISABLED,
     REASON_UNSUPPORTED,
@@ -67,12 +69,14 @@ _LOGGER = logging.getLogger(__name__)
 
 _BACKOFF_CAP = 900.0
 _LOCK_REPAIR_AFTER = 600.0
+_FIXABLE_LOGGER_ISSUES = {ISSUE_LOGGER_GATEWAY, ISSUE_LOGGER_PROTOCOL, ISSUE_LOGGER_S5}
 _LOGGER_ISSUES = (
     ISSUE_LOGGER_LOCKED,
     ISSUE_LOGGER_TCP,
     ISSUE_LOGGER_SILENT,
     ISSUE_LOGGER_GATEWAY,
     ISSUE_LOGGER_PROTOCOL,
+    ISSUE_LOGGER_S5,
 )
 _LOGGER_ISSUE = {
     REASON_TCP_DISABLED: ISSUE_LOGGER_TCP,
@@ -81,6 +85,7 @@ _LOGGER_ISSUE = {
     REASON_WRONG_PROTOCOL: ISSUE_LOGGER_PROTOCOL,
     REASON_WRONG_SLAVE: ISSUE_LOGGER_PROTOCOL,
     REASON_UNSUPPORTED: ISSUE_LOGGER_PROTOCOL,
+    REASON_S5_CLOSED: ISSUE_LOGGER_S5,
 }
 _BUSY_UPDATE = {
     REASON_TCP_DISABLED: "update_logger_tcp_disabled",
@@ -89,6 +94,7 @@ _BUSY_UPDATE = {
     REASON_WRONG_PROTOCOL: "update_logger_wrong_protocol",
     REASON_WRONG_SLAVE: "update_logger_wrong_protocol",
     REASON_UNSUPPORTED: "update_logger_wrong_protocol",
+    REASON_S5_CLOSED: "update_logger_s5_closed",
 }
 _DEGRADED_INFO = {
     REASON_TCP_DISABLED: (
@@ -117,6 +123,10 @@ _DEGRADED_INFO = {
     ),
     REASON_UNSUPPORTED: (
         "The device speaks Modbus and does not serve the Solis 3000 or 33000 register map."
+    ),
+    REASON_S5_CLOSED: (
+        "S5-WiFi-ST port 502 is closed. Solis does not officially offer local "
+        "Modbus on this stick, and newer firmware closes the port."
     ),
 }
 _DEGRADED_WARN = {
@@ -149,6 +159,10 @@ _DEGRADED_WARN = {
         "The device is still not serving a Solis register map. Confirm it "
         "is the inverter and not another Modbus device on that address."
     ),
+    REASON_S5_CLOSED: (
+        "S5-WiFi-ST is still not serving port 502. Solis does not officially "
+        "support local Modbus on this stick. A firmware update often closes it."
+    ),
 }
 _DEGRADED_DETAIL = {
     REASON_TCP_DISABLED: "Port 502 is closed. Modbus TCP is disabled on this firmware.",
@@ -164,6 +178,10 @@ _DEGRADED_DETAIL = {
     REASON_WRONG_PROTOCOL: "The bytes on the socket are not the framing selected for this entry.",
     REASON_WRONG_SLAVE: "The Modbus reply came from a different slave.",
     REASON_UNSUPPORTED: "Modbus answered, and neither Solis register map matched.",
+    REASON_S5_CLOSED: (
+        "Port 502 is closed on an S5-WiFi-ST. Local access is experimental "
+        "and newer firmware removes it. Use Reconfigure to switch to a gateway."
+    ),
 }
 
 
@@ -350,7 +368,11 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
         issue_id = self._issue_id(issue_key)
         if issue_id not in self._open_issues:
             _LOGGER.warning("%s", _DEGRADED_WARN.get(reason, _DEGRADED_WARN[REASON_LOCKED]))
-        self._open(issue_key, ir.IssueSeverity.WARNING, fixable=False)
+        self._open(
+            issue_key,
+            ir.IssueSeverity.WARNING,
+            fixable=issue_key in _FIXABLE_LOGGER_ISSUES,
+        )
 
     def _clear_logger_lock(self) -> None:
         self._degraded_since = None

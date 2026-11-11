@@ -28,6 +28,7 @@ CONF_LOGGER_KIND = "logger_kind"
 CONF_LOGGER_PORT = "logger_port"
 CONF_LOGGER_FUNCTION = "logger_function"
 CONF_LOGGER_DETECT = "logger_detect"
+CONF_LOGGER_PRESET = "logger_preset"
 
 SOURCE_CLOUD = "cloud"
 SOURCE_LOCAL = "local"
@@ -60,6 +61,7 @@ REASON_GATEWAY = "gateway_down"
 REASON_WRONG_PROTOCOL = "wrong_protocol"
 REASON_WRONG_SLAVE = "wrong_slave"
 REASON_UNSUPPORTED = "unsupported_map"
+REASON_S5_CLOSED = "s5_port_closed"
 # The 4G string map that answered on this stick stops before 3050.
 # 3050 and the 33000 hybrid block are what lock the local port.
 REGISTER_SAFE_CEILING = 3050
@@ -97,6 +99,7 @@ ISSUE_LOGGER_TCP = "logger_tcp_disabled"
 ISSUE_LOGGER_SILENT = "logger_modbus_silent"
 ISSUE_LOGGER_GATEWAY = "logger_gateway"
 ISSUE_LOGGER_PROTOCOL = "logger_wrong_protocol"
+ISSUE_LOGGER_S5 = "logger_s5_closed"
 
 # Polls that fail this many times in a row, or a snapshot older than
 # STALE_AFTER, are a sustained outage rather than a blip.
@@ -115,4 +118,5 @@ POLL_REPAIRS = (
     ISSUE_LOGGER_SILENT,
     ISSUE_LOGGER_GATEWAY,
     ISSUE_LOGGER_PROTOCOL,
+    ISSUE_LOGGER_S5,
 )

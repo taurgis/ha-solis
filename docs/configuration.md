@@ -4,9 +4,9 @@
 | --- | --- | --- |
 | Connection | Entry | `cloud`, `local`, or `both`. Cloud is the default. `local` is a data logger. `both` reads the logger first and lets SolisCloud fill energy totals the logger left empty. |
 | API URL | Entry | SolisCloud host, including the port. Public http is upgraded to https. |
-| Logger | Entry | `auto`, `solarman` (DLS-W / DLS-L / LSW, V5 on 8899), `s2_wl_st` (Modbus TCP 502), `modbus_tcp` (Waveshare, Elfin or USR in Modbus mode), `s5_wifi_st` (experimental), or `rtu_tcp` (experimental transparent RTU). Auto-detect probes 502, then 8899, and stores a live 502 as an S2. |
+| Logger | Entry | `auto`, `solarman` (DLS-W / DLS-L / LSW, V5 on 8899), `s2_wl_st` (Modbus TCP 502), `modbus_tcp` (Waveshare, Elfin or USR in Modbus mode), `s5_wifi_st` (experimental; Solis does not officially support local access), or `rtu_tcp` (experimental transparent RTU). Auto-detect probes 502, then 8899. Port 502 is an S2 only when port 80 names the Solis page, a gateway when port 80 names the vendor, and a question otherwise. |
 | Logger address | Entry | Current IP of the stick. Solarman discovery fills it in. A later DHCP lease is written back when the MAC is known. |
-| Logger port | Entry | Empty uses 502 or 8899 for the detected stick. Set it only to override. |
+| Logger port | Entry | Empty uses 502 or 8899 for the detected stick. For RTU over TCP, empty uses the gateway model: 8899 Elfin, 4196 Waveshare, 26 USR RS485, 6638 ESPHome. A typed port wins. |
 | Modbus slave | Entry | Empty tries 1, then 2, then 3. The Solis default is 1. |
 | Logger serial | Entry | Solarman: the numeric serial. That is the config-entry unique id. S2-WL-ST and S5: the serial in the Wi-Fi name `D_` or `Solis_`. The unique id is `s2:` plus that serial, or `s2:` plus the inverter serial when the stick serial was not typed. A gateway is `tcp:` plus the label or the inverter serial. RTU over TCP is `rtu:` plus the same token. |
 | API key ID | Entry | Key id from API management. Also the config-entry unique id. Diagnostics redact it. |
@@ -31,11 +31,13 @@ for the logger address again.
 Choose `local` or `both` on the first step. The inverter has to be
 producing: the stick is powered by the inverter, and at night it disappears
 from the LAN. Leave Logger on Auto-detect. The flow tries Modbus TCP port
-502 (Solis S2-WL-ST), then Solarman V5 on 8899. Discovery listens for the
-IGEN UDP 48899 reply and fills in a Solarman address and serial. An
-S2-WL-ST does not answer that broadcast. Type its IP from the SolisCloud
-logger page. The serial on that stick is the suffix of the setup network
-`D_<serial>` or `Solis_<serial>`.
+502, then Solarman V5 on 8899. Port 502 is stored as an S2-WL-ST when the
+device web page names the Solis logger, as a Modbus TCP gateway when the
+page names Waveshare, Elfin, Hi-Flying or USR, and otherwise asks. Discovery
+listens for the IGEN UDP 48899 reply and fills in a Solarman address and
+serial. An S2-WL-ST does not answer that broadcast. Type its IP from the
+SolisCloud logger page. The serial on that stick is the suffix of the setup
+network `D_<serial>` or `Solis_<serial>`.
 
 Reserve that address in the router's DHCP settings. Do not configure a
 static address on the stick. The connection test picks the Modbus slave

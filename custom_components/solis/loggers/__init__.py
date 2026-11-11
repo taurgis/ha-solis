@@ -103,9 +103,24 @@ SELECTABLE_KINDS: tuple[str, ...] = (
 
 _DETECT_WHY = {
     "auto_s2": (
-        "Auto-detect stored this as an S2-WL-ST after Modbus TCP on port 502 "
-        "returned a Solis register map. An S5-WiFi-ST uses the same frames. "
-        "A gateway on port 502 does too; pick Modbus TCP gateway for that device."
+        "Stored as an S2-WL-ST from a port 502 Solis map. Entries created "
+        "before the web-page check used that map alone."
+    ),
+    "auto_s2_http": (
+        "Auto-detect stored this as an S2-WL-ST. Port 502 returned a Solis "
+        "map and port 80 named the Solis logger page."
+    ),
+    "auto_gateway_http": (
+        "Auto-detect stored this as a Modbus TCP gateway. Port 502 returned "
+        "a Solis map and port 80 named a gateway page, not an S2-WL-ST."
+    ),
+    "confirmed_s2_wl_st": (
+        "Port 502 returned a Solis map and port 80 did not name the device. "
+        "The user confirmed it is an S2-WL-ST."
+    ),
+    "confirmed_modbus_tcp": (
+        "Port 502 returned a Solis map and port 80 did not name the device. "
+        "The user confirmed it is a Modbus TCP gateway."
     ),
     "auto_solarman": (
         "Auto-detect stored this as a Solarman logger after V5 or Modbus TCP answered on its port."

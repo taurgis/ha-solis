@@ -7,6 +7,24 @@
   "dhcp": [
     {
       "macaddress": "BC54F9*"
+    },
+    {
+      "hostname": "ew11*"
+    },
+    {
+      "hostname": "ee11*"
+    },
+    {
+      "hostname": "elfin*"
+    },
+    {
+      "hostname": "usr-tcp*"
+    },
+    {
+      "hostname": "usr-w610*"
+    },
+    {
+      "hostname": "usr-dr*"
     }
   ],
   "documentation": "https://github.com/taurgis/ha-solis",

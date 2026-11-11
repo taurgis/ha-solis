@@ -21,6 +21,36 @@ Two transports were already implemented and are the baseline:
   30003. See [solarman-local.md](solarman-local.md).
 - Solis S2-WL-ST, Modbus TCP on port 502. See [s2-wl-st.md](s2-wl-st.md).
 
+## How port 502 is named
+
+A Solis register map on port 502 is not an S2-WL-ST by itself. A Waveshare, Elfin or USR in Modbus TCP mode returns the same inverter registers. The logger serial is not in those registers, and function 43 (MEI) is not used: a second Modbus session is how firmware `1001318c` wedges port 502 for minutes. The signal that does not touch port 502 is the device's own page on port 80.
+
+| Signal | S2-WL-ST | Gateway | Confidence |
+| --- | --- | --- | --- |
+| HTTP page contains `s2-wl`, or `solis`/`ginlong` together with `logger`, `datalogger` or `lan settings` | Positive. Auto-detect stores `s2_wl_st`. | — | Verified that the S2 has a web page (Solis service article: `admin`, LAN Settings, and the [North America copy](https://usservice.solisinverters.com/support/solutions/articles/73000660897-modbus-tcp-ip)). The exact tokens are what that page and the HA report of a basic-auth status page make matchable. Several firmware builds have no page at all ([HA thread](https://community.home-assistant.io/t/getting-data-from-solis-inverter/302189?page=7), [solis_modbus discussion 379](https://github.com/Pho3niX90/solis_modbus/discussions/379)). An empty page is not a vote for the S2. |
+| HTTP page contains `waveshare`, `elfin`, `ew11`, `ee11`, `hi-flying`, `hf-a11`, `usr-tcp`, `tcp232` | — | Positive. Auto-detect stores `modbus_tcp`. | Reported from vendor pages and the [Fibaro gateway guide](https://hdev.pl/doc/Modbus_Gateway_config_for_Fibaro_EN.pdf). Hi-Flying also builds Solarman sticks; those answer V5 on 8899, so a Hi-Flying page next to Modbus TCP on 502 is treated as a gateway. |
+| Port 80 closed, empty, or unnamed | Inconclusive. The form asks, with S2-WL-ST pre-selected. | Same question. A gateway page that also says Solis is the same question. | The pre-selection is the device Solis documents on 502, not a classification. |
+| MAC OUI | Not published for the S2. | Not matched. A wrong OUI would claim every device from that vendor. | No OUI was added. |
+| Modbus FC43 / slave 0 or 255 | Not probed. | Not probed. | Considered and skipped. The inverter map is shared, and a second port 502 session is unsafe. |
+| DHCP hostname `ew11`, `ee11`, `elfin`, `usr-tcp`, `usr-w610`, `usr-dr` | — | Does not classify a new entry. If an entry already uses that IP and has no MAC, the MAC is stored. A later lease with that MAC updates the host. | Reported hostnames: Elfin shows up as `EW11` ([HA thread](https://community.home-assistant.io/t/elfin-ew11-connection-issue/581610)), USR AP names are `USR-<model>_…` ([Fibaro guide](https://hdev.pl/doc/Modbus_Gateway_config_for_Fibaro_EN.pdf)). |
+
+An existing S2 entry is not probed again at startup. Picking S2-WL-ST in the form skips the web check. Picking S5-WiFi-ST also skips it and stays experimental.
+
+## RTU factory ports
+
+Transparent mode is a different listen port on each vendor. Modbus conversion mode is the `modbus_tcp` kind and stays on 502, which is the port the Solis write-ups and the Fibaro guide tell people to set. The RTU kind uses the factory port only when Port is left empty.
+
+| Preset | Port | Source |
+| --- | --- | --- |
+| Default, and Elfin EW11 / EE11 | 8899 | Hi-Flying factory socket. [Fibaro guide](https://hdev.pl/doc/Modbus_Gateway_config_for_Fibaro_EN.pdf): "default is 8899". This is the default preset because it is the transparent port most often left untouched on the gateways used with Solis. |
+| Waveshare RS485 TO ETH | 4196 | [Fibaro guide](https://hdev.pl/doc/Modbus_Gateway_config_for_Fibaro_EN.pdf): "default is 4196 or 8899". 4196 is the classic Waveshare TCP server port. Newer "B" units are often moved to 502 when Modbus conversion is turned on; that is the other kind. |
+| USR-TCP232-410S RS485 socket | 26 | [Quick start](https://www.pusr.com/download/M4/USR-TCP232-410S%20Quick%20Start%20Guide.pdf): local port 23 on RS232 and 26 on RS485. The Chinese manual's first socket defaults to 23. Solis uses the RS485 socket, so the preset is 26. Type 23 if the stick is on the RS232 socket. |
+| ESPHome stream server | 6638 | Common port of the ESPHome `stream_server` UART bridge. Not a Solis factory default. The bridge is generic. |
+
+## DHCP and a moving address
+
+Solarman sticks still match MAC OUI `BC:54:F9`. Elfin and USR hostnames above are extra DHCP matchers. They do not create an entry. They remember the MAC of a logger already configured at that IP, and the next lease with that MAC updates the host of that same unique id. Give every gateway a DHCP reservation. If the address changes before a MAC has been seen, the repair for a gateway that refuses TCP says to use Reconfigure. That repair and the framing repair are fixable confirmations. An S5 whose port 502 later closes gets its own repair: Solis does not officially support local access, and the firmware update is the usual cause.
+
 ## What was implemented from this note
 
 | Kind in the config entry | Devices | Why it is in the tree |
