@@ -31,13 +31,12 @@ from .const import (
     CONF_KEY_SECRET,
     CONF_LEGACY_NAME,
     CONF_LOGGER_HOST,
+    CONF_LOGGER_KIND,
     CONF_LOGGER_MAC,
-    CONF_LOGGER_PROTOCOL,
+    CONF_LOGGER_PORT,
     CONF_LOGGER_SERIAL,
-    CONF_REGISTER_MAP,
     CONF_REQUEST_TIMEOUT,
     CONF_SCAN_INTERVAL,
-    CONF_SERIAL_UNSUPPORTED,
     CONF_SLAVE_ID,
     CONF_SOURCE,
     CONF_STATION_IDS,
@@ -48,6 +47,9 @@ from .const import (
     DEFAULT_REQUEST_TIMEOUT,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
+    LOGGER_AUTO,
+    LOGGER_S2,
+    LOGGER_SOLARMAN,
     MIN_LOCAL_SCAN_INTERVAL,
     SOLARMAN_OUI,
     SOURCE_BOTH,
@@ -62,7 +64,13 @@ from .errors import (
     SolisLoggerOffline,
     SolisTimeoutError,
 )
-from .local_transport import probe_logger
+from .local_transport import (
+    identify_logger,
+    logger_form_error,
+    logger_setup,
+    parse_logger_form,
+    s2_needs_identity,
+)
 from .solarman import Stick, discover_sticks, format_mac
 
 _LOGGER = logging.getLogger(__name__)
@@ -281,29 +289,14 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
                 host = str(user_input.get(CONF_LOGGER_HOST) or "").strip()
                 serial_text = str(user_input.get(CONF_LOGGER_SERIAL) or "").strip()
                 if host and serial_text:
-                    typed_serial = str(user_input.get(CONF_INVERTER_SERIAL) or "").strip()
-                    try:
-                        probed = await probe_logger(
-                            host, int(serial_text), inverter_serial=typed_serial
-                        )
-                    except SolisLoggerBusy:
-                        errors["base"] = "logger_busy"
-                    except (SolisLoggerOffline, ValueError):
-                        errors["base"] = "logger_asleep"
+                    fields, unique, failure = await self._logger_updates(
+                        user_input, source=SOURCE_BOTH
+                    )
+                    if failure:
+                        errors["base"] = failure
                     else:
-                        data_updates.update(
-                            {
-                                CONF_SOURCE: SOURCE_BOTH,
-                                CONF_LOGGER_HOST: host,
-                                CONF_LOGGER_SERIAL: serial_text,
-                                CONF_SLAVE_ID: probed.slave,
-                                CONF_REGISTER_MAP: probed.register_map,
-                                CONF_INVERTER_SERIAL: typed_serial or probed.inverter_serial,
-                                CONF_LOGGER_PROTOCOL: probed.protocol,
-                                CONF_SERIAL_UNSUPPORTED: probed.serial_unsupported,
-                            }
-                        )
-                        unique_id = serial_text
+                        data_updates.update(fields)
+                        unique_id = unique
                 if not errors:
                     options = {
                         **entry.options,
@@ -370,6 +363,14 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
                 vol.Optional(
                     CONF_INVERTER_SERIAL, default=str(entry.data.get(CONF_INVERTER_SERIAL, ""))
                 ): str,
+                vol.Optional(
+                    CONF_LOGGER_KIND,
+                    default=str(entry.data.get(CONF_LOGGER_KIND) or LOGGER_SOLARMAN),
+                ): vol.In([LOGGER_AUTO, LOGGER_SOLARMAN, LOGGER_S2]),
+                vol.Optional(
+                    CONF_LOGGER_PORT, default=str(entry.data.get(CONF_LOGGER_PORT) or "")
+                ): str,
+                vol.Optional(CONF_SLAVE_ID, default=str(entry.data.get(CONF_SLAVE_ID) or "")): str,
             }
         )
 
@@ -392,29 +393,28 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
         return {}
 
     async def async_step_logger(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """Confirm a Solarman logger. The inverter has to be producing."""
+        """Confirm a local logger. The inverter has to be producing."""
         errors: dict[str, str] = {}
         if user_input is None:
             self._sticks = await discover_sticks(timeout=1.2)
         else:
-            try:
-                serial = int(str(user_input[CONF_LOGGER_SERIAL]).strip())
-                host = str(user_input[CONF_LOGGER_HOST]).strip()
-                typed = str(user_input.get(CONF_INVERTER_SERIAL) or "").strip()
-                probe = await probe_logger(host, serial, inverter_serial=typed)
-            except SolisLoggerBusy:
-                errors["base"] = "logger_busy"
-            except (SolisLoggerOffline, ValueError, TimeoutError):
-                errors["base"] = "logger_asleep"
+            fields, unique, failure = await self._logger_updates(user_input, source=self._source)
+            if failure:
+                errors["base"] = failure
             else:
-                return await self._finish_logger(host, serial, probe, typed)
+                return await self._finish_logger(fields, unique)
         found = self._sticks[0] if self._sticks else None
         schema = vol.Schema(
             {
+                vol.Required(CONF_LOGGER_KIND, default=LOGGER_AUTO): vol.In(
+                    [LOGGER_AUTO, LOGGER_SOLARMAN, LOGGER_S2]
+                ),
                 vol.Required(CONF_LOGGER_HOST, default="" if found is None else found.host): str,
-                vol.Required(
+                vol.Optional(CONF_LOGGER_PORT, default=""): str,
+                vol.Optional(
                     CONF_LOGGER_SERIAL, default="" if found is None else str(found.serial)
                 ): str,
+                vol.Optional(CONF_SLAVE_ID, default=""): str,
                 vol.Optional(CONF_INVERTER_SERIAL, default=""): str,
             }
         )
@@ -428,26 +428,25 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
             },
         )
 
-    async def _finish_logger(
-        self, host: str, serial: int, probe: Any, inverter_serial: str = ""
-    ) -> ConfigFlowResult:
-        mac = ""
-        for stick in self._sticks:
-            if stick.serial == serial:
-                mac = stick.mac
-                break
-        logger_data = {
-            CONF_LOGGER_HOST: host,
-            CONF_LOGGER_SERIAL: str(serial),
-            CONF_LOGGER_MAC: mac,
-            CONF_SLAVE_ID: probe.slave,
-            CONF_REGISTER_MAP: probe.register_map,
-            CONF_INVERTER_SERIAL: inverter_serial or probe.inverter_serial,
-            CONF_LOGGER_PROTOCOL: probe.protocol,
-            CONF_SERIAL_UNSUPPORTED: probe.serial_unsupported,
-            CONF_SOURCE: self._source,
-        }
-        await self.async_set_unique_id(str(serial))
+    async def _logger_updates(
+        self, user_input: Mapping[str, Any], *, source: str
+    ) -> tuple[dict[str, Any], str, str]:
+        """Probe the form and return entry fields, unique id, and an error key."""
+        request, error = parse_logger_form(user_input)
+        if error or request is None:
+            return {}, "", error or "invalid_logger"
+        try:
+            probe = await identify_logger(request)
+        except (SolisLoggerBusy, SolisLoggerOffline, ValueError, TimeoutError) as err:
+            return {}, "", logger_form_error(err)
+        if s2_needs_identity(probe, request.logger_serial, request.inverter_serial):
+            return {}, "", "logger_identity"
+        mac = _mac_for(self._sticks, request.logger_serial, probe.kind)
+        fields, unique = logger_setup(request, probe, mac=mac, source=source)
+        return fields, unique, ""
+
+    async def _finish_logger(self, logger_data: dict[str, Any], unique: str) -> ConfigFlowResult:
+        await self.async_set_unique_id(unique)
         if self.source == "reconfigure":
             entry = self._get_reconfigure_entry()
             base = dict(entry.data)
@@ -455,11 +454,13 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
             return self.async_update_reload_and_abort(
                 entry,
                 data=base,
-                unique_id=str(serial),
+                unique_id=unique,
             )
-        self._abort_if_unique_id_configured(updates={CONF_LOGGER_HOST: host})
+        self._abort_if_unique_id_configured(
+            updates={CONF_LOGGER_HOST: logger_data[CONF_LOGGER_HOST]}
+        )
         data = {**self._credentials, **logger_data}
-        title = data.get(CONF_INVERTER_SERIAL) or f"Solis {serial}"
+        title = data.get(CONF_INVERTER_SERIAL) or f"Solis {unique}"
         return self.async_create_entry(
             title=str(title),
             data=data,
@@ -475,8 +476,6 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
         """Update a known logger when DHCP hands it a new address."""
         mac = format_mac(str(_info(discovery_info, "macaddress")))
         host = str(_info(discovery_info, "ip"))
-        if not mac.startswith(SOLARMAN_OUI):
-            return self.async_abort(reason="not_solis_logger")
         for entry in self._async_current_entries():
             stored = format_mac(str(entry.data.get(CONF_LOGGER_MAC) or ""))
             serial = str(entry.data.get(CONF_LOGGER_SERIAL) or "")
@@ -484,7 +483,9 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
                 continue
             if entry.data.get(CONF_LOGGER_HOST) == host:
                 return self.async_abort(reason="already_configured")
-            _LOGGER.info("Solarman logger %s is now at %s", serial, host)
+            kind = entry.data.get(CONF_LOGGER_KIND)
+            label = "S2-WL-ST" if kind == LOGGER_S2 else "Solarman"
+            _LOGGER.info("%s logger %s is now at %s", label, serial, host)
             if str(entry.unique_id) == serial:
                 await self.async_set_unique_id(serial)
                 self._abort_if_unique_id_configured(updates={CONF_LOGGER_HOST: host})
@@ -493,6 +494,8 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
                 data_updates={CONF_LOGGER_HOST: host},
                 reason="already_configured",
             )
+        if not mac.startswith(SOLARMAN_OUI):
+            return self.async_abort(reason="not_solis_logger")
         return self.async_abort(reason="logger_not_setup")
 
     def _title(self, station_ids: list[str]) -> str:
@@ -565,6 +568,17 @@ async def _fetch_stations(hass: Any, data: Mapping[str, Any]) -> dict[str, str]:
             continue
         stations[station_id] = str(row.get("stationName") or row.get("sno") or station_id)
     return stations
+
+
+def _mac_for(sticks: list[Stick], serial: str, kind: str) -> str:
+    """Return the discovered MAC when this is the Solarman stick with that serial."""
+    if kind == LOGGER_S2 or not serial.isdigit():
+        return ""
+    wanted = int(serial)
+    for stick in sticks:
+        if stick.serial == wanted:
+            return stick.mac
+    return ""
 
 
 def _info(discovery: Any, key: str) -> Any:

@@ -171,7 +171,7 @@ async def test_frame_edges() -> None:
     with pytest.raises(ValueError):
         decode_mbap(b"\x00\x01\x00\x00\x00\x02\x01\x84")
     with pytest.raises(ValueError):
-        decode_mbap(b"\x00\x01\x00\x00\x00\x03\x01\x03\x00")
+        decode_mbap(b"\x00\x01\x00\x00\x00\x03\x01\x01\x00")
     refused_os = OSError()
     refused_os.errno = 111
     assert classify_io(refused_os, connected=False).refused  # type: ignore[union-attr]
@@ -345,7 +345,7 @@ async def test_reconfigure_reports_a_reset(
     async def _busy(*_args: object, **_kwargs: object) -> None:
         raise SolisLoggerBusy("reset")
 
-    monkeypatch.setattr(flow, "probe_logger", _busy)
+    monkeypatch.setattr(flow, "identify_logger", _busy)
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={

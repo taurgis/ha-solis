@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Connect to SolisCloud",
-        "description": "Choose cloud, the Solarman logger, or local first with SolisCloud as a fallback. Local discovery only works while the inverter is producing, because the stick is powered by the inverter and is off at night.",
+        "description": "Choose cloud, a local data logger, or local first with SolisCloud as a fallback. Local discovery only works while the inverter is producing, because the stick is powered by the inverter and is off at night.",
         "data": {
           "source": "Connection",
           "api_url": "API URL",
@@ -11,24 +11,30 @@
           "key_secret": "API key secret"
         },
         "data_description": {
-          "source": "Cloud only, the Solarman logger on your network, or local first with SolisCloud as a fallback. Local discovery only works while the inverter is producing.",
+          "source": "Cloud only, a local logger on your network, or local first with SolisCloud as a fallback. Local discovery only works while the inverter is producing.",
           "api_url": "Use the host that issued the key, including the port. The international service listens on port 13333. Leave this unused for a local-only setup.",
           "key_id": "The key id from SolisCloud API management. This is not the portal username. Leave it empty for local only.",
           "key_secret": "Shown once when the key is created. Stored in the config entry and redacted from diagnostics."
         }
       },
       "logger": {
-        "title": "Solarman logger",
-        "description": "Discovered loggers: {found}. The inverter must be producing. If nothing is listed, it is night or the stick is off: type the IP and the logger serial. Give the stick a DHCP reservation on the router. Do not set a static address on the stick.",
+        "title": "Local logger",
+        "description": "Discovered Solarman loggers: {found}. Auto-detect tries Modbus TCP port 502 (Solis S2-WL-ST), then Solarman port 8899. The S2-WL-ST does not answer that discovery broadcast: type its IP from SolisCloud. The inverter must be producing. Give the stick a DHCP reservation on the router. Do not set a static address on the stick.",
         "data": {
+          "logger_kind": "Logger",
           "logger_host": "Logger IP",
+          "logger_port": "Port",
           "logger_serial": "Logger serial",
+          "slave_id": "Modbus slave",
           "inverter_serial": "Inverter serial"
         },
         "data_description": {
-          "logger_host": "Current DHCP address. The integration finds the stick again by serial when the lease changes. Reserve this address in the router.",
-          "logger_serial": "The numeric serial printed on the stick and returned by UDP discovery.",
-          "inverter_serial": "Optional. The SolisCloud inverter serial, for example 110E40182280017. Leave empty to read it from the stick when that range answers, or from SolisCloud in local-and-cloud mode. This is the entity id."
+          "logger_kind": "Auto-detect probes port 502, then 8899. Pick Solarman V5 (DLS-L/LSW) or Solis S2-WL-ST (Modbus TCP 502) when you already know the stick.",
+          "logger_host": "Current DHCP address. Reserve this address in the router. A Solarman stick is found again by serial. An S2-WL-ST is not. Its direct-cable address 10.10.100.254 is only for a laptop plugged into the stick.",
+          "logger_port": "Leave empty for 502 on an S2-WL-ST and 8899 on a Solarman stick.",
+          "logger_serial": "Solarman: the numeric serial from the label or from discovery. S2-WL-ST: the serial in the Wi-Fi name D_ or Solis_, not the inverter serial. Leave empty to use the inverter serial instead.",
+          "slave_id": "Leave empty to try slave 1, then 2, then 3. The Solis default is 1.",
+          "inverter_serial": "Optional. The SolisCloud inverter serial, for example 110E40182280017. Leave empty to read it from the stick when that range answers, or from SolisCloud in local-and-cloud mode. This is the entity id. On an S2-WL-ST it is also the config unique id when the stick serial is empty."
         }
       },
       "stations": {
@@ -58,8 +64,11 @@
         "description": "Update the API host, the plants to follow, and how often to poll.",
         "data": {
           "source": "Connection",
+          "logger_kind": "Logger",
           "logger_host": "Logger IP",
+          "logger_port": "Port",
           "logger_serial": "Logger serial",
+          "slave_id": "Modbus slave",
           "inverter_serial": "Inverter serial",
           "api_url": "API URL",
           "station_ids": "Plants",
@@ -74,8 +83,11 @@
           "request_timeout": "Seconds to wait for one HTTP call. Default 30.",
           "endpoint_interval": "Minimum seconds between calls to the same API path. Default 2, which stays under the published limit of two calls per second.",
           "source": "Cloud only, local only, or local with SolisCloud fallback.",
+          "logger_kind": "Auto-detect, Solarman V5 (DLS-L/LSW), or Solis S2-WL-ST (Modbus TCP 502).",
           "logger_host": "Current logger IP. Leave empty to keep the saved address.",
-          "logger_serial": "Logger serial. Fill this together with the IP to attach a stick to an existing cloud entry.",
+          "logger_port": "Leave empty for the default port of the selected logger.",
+          "logger_serial": "Logger serial. Fill this together with the IP to attach a stick to an existing cloud entry. For an S2-WL-ST this is the serial in the Wi-Fi name.",
+          "slave_id": "Leave empty to try slave 1, then 2, then 3.",
           "inverter_serial": "Optional SolisCloud inverter serial. Set it so local and cloud entities stay the same device.",
           "api_url": "Use the host that issued the key, including the port. The international service listens on port 13333.",
           "station_ids": "Only the selected plants are polled. Change the set later with reconfigure."
@@ -107,7 +119,11 @@
       "no_stations": "The account returned no plants. Check the API key and that the plant has an id.",
       "unknown": "Unexpected SolisCloud error.",
       "logger_asleep": "No route to the logger, or it timed out. At night the inverter powers the stick off. Try again while it is producing.",
-      "logger_busy": "The logger reset or refused the local session. It can still be uploading to SolisCloud. Wait at least 10 seconds and try once. Do not retry in a tight loop."
+      "logger_busy": "The logger reset or refused the local session. It can still be uploading to SolisCloud. Wait at least 10 seconds and try once. Do not retry in a tight loop.",
+      "logger_tcp_disabled": "Port 502 is closed. The S2-WL-ST serves Modbus TCP from firmware 100101B4. Some later updates close the port, and enabling TCP on older firmware disconnects SolisCloud. Ask Solis for a build that keeps port 502 open, such as 100121cf or a 100141dx release, and enable Modbus in the stick or the SolisCloud app.",
+      "logger_modbus_silent": "The stick accepted TCP on port 502 and sent no Modbus reply. It often allows only one client. On older firmware that client is SolisCloud or this integration, not both. Disconnect the other Modbus client, or ask Solis for firmware 100121cf, 100121d0 or 100141dx, which are reported to allow both.",
+      "logger_identity": "This S2-WL-ST did not yield a stable id. Type the logger serial from the Wi-Fi name (D_ or Solis_) or the inverter serial from the label.",
+      "invalid_logger": "The port must be 1 to 65535, the slave 1 to 247, and a Solarman serial must be the number printed on the stick."
     },
     "abort": {
       "already_configured": "This API key is already configured.",
@@ -145,8 +161,16 @@
       "description": "SolisCloud has been unreachable long enough that live readings are hidden, so an old power sample is not shown as current. Energy totals stay at the last good value and will not move backwards. This notice clears itself when a poll succeeds."
     },
     "logger_locked": {
-      "title": "Solarman logger is pausing local reads",
-      "description": "The logger accepts a connection and then resets it. This happens after too many sessions or a read of a register the inverter does not have, and it usually clears within about 10 minutes or after the inverter is power-cycled. SolisCloud readings are used while a fresh cloud sample exists. The integration tries local again on its own, first after at least 10 seconds and then less often, up to about 10 minutes. A small morning power reading means the inverter is producing."
+      "title": "Local logger is pausing reads",
+      "description": "The logger accepts a connection and then resets it. On a DLS-L this follows too many sessions or a read of a register the inverter does not have. On an S2-WL-ST the stick often allows one Modbus client, and firmware 1001318c can ignore port 502 for several minutes after a connection is closed. It usually clears within about 10 minutes or after the inverter is power-cycled. SolisCloud readings are used while a fresh cloud sample exists. The integration tries local again on its own, first after at least 10 seconds and then less often, up to about 10 minutes. A small morning power reading means the inverter is producing."
+    },
+    "logger_tcp_disabled": {
+      "title": "S2-WL-ST Modbus TCP is disabled",
+      "description": "Port 502 is closed while the logger is on the network. Firmware before 100101B4 has no Modbus TCP. Some later updates close the port again, and the official setup note says enabling TCP can disconnect SolisCloud. Ask Solis for a firmware that keeps port 502 open and still uploads, such as 100121cf, 100121d0 or a 100141dx build. This notice clears when a local read succeeds."
+    },
+    "logger_modbus_silent": {
+      "title": "S2-WL-ST accepted TCP and sent no Modbus",
+      "description": "The socket opened and no register reply came back. The stick often allows one local connection. On older firmware SolisCloud holds that connection and local Modbus stays silent, which is the official 'enabling TCP disconnects SolisCloud' case in reverse. Stop the other Modbus client, or ask Solis for firmware that allows both (100121cf, 100121d0, 100141dx). This notice clears when a local read succeeds."
     }
   },
   "entity": {
@@ -299,7 +323,13 @@
       "message": "SolisCloud update failed."
     },
     "update_logger_busy": {
-      "message": "The Solarman logger reset the local session. It will be tried again after a pause. SolisCloud is used when a fresh sample is available."
+      "message": "The local logger reset the session. It will be tried again after a pause. SolisCloud is used when a fresh sample is available."
+    },
+    "update_logger_tcp_disabled": {
+      "message": "The S2-WL-ST closed port 502. Modbus TCP is disabled on this firmware. SolisCloud is used when a fresh sample is available."
+    },
+    "update_logger_modbus_silent": {
+      "message": "The S2-WL-ST accepted TCP and sent no Modbus reply. Another client may hold the only connection. SolisCloud is used when a fresh sample is available."
     }
   }
 }

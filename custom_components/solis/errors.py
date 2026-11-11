@@ -80,11 +80,13 @@ class SolisLoggerOffline(SolisCloudError):
         code: str | None = None,
         connected: bool = False,
         refused: bool = False,
+        reason: str = "",
     ) -> None:
         """Record whether a socket was established before the failure."""
         super().__init__(message, code=code)
         self.connected = connected
         self.refused = refused
+        self.reason = reason
 
 
 class SolisLoggerBusy(SolisCloudError):
@@ -95,14 +97,36 @@ class SolisLoggerBusy(SolisCloudError):
     open another socket or extend the pause.
     """
 
-    def __init__(self, message: str, *, code: str | None = None, waiting: bool = False) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str | None = None,
+        waiting: bool = False,
+        reason: str = "locked",
+    ) -> None:
         """Record whether this is a new reset or the quiet period after one."""
         super().__init__(message, code=code)
         self.waiting = waiting
+        self.reason = reason
 
 
 def logger_failure_text(host: str, err: BaseException) -> str:
     """Return the sentence a manual read should print for this failure."""
+    reason = str(getattr(err, "reason", "") or "")
+    if reason == "tcp_disabled":
+        return (
+            f"{host} refused port 502. Modbus TCP on the S2-WL-ST starts with "
+            "firmware 100101B4. Some later updates close the port again. On older "
+            "firmware, enabling TCP disconnects SolisCloud."
+        )
+    if reason == "silent":
+        return (
+            f"{host} accepted TCP and sent no Modbus reply. The stick often allows "
+            "one local client. On older firmware that client is SolisCloud or "
+            "Home Assistant, not both. Firmware 100121cf, 100121d0 and the "
+            "100141dx releases are the ones reported to allow both."
+        )
     if isinstance(err, SolisLoggerBusy):
         return (
             f"{host} reset or refused the local session. The inverter can still "

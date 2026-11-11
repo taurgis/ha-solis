@@ -24,8 +24,11 @@ from .const import (
     CONF_INVERTER_SERIAL,
     CONF_KEY_ID,
     CONF_KEY_SECRET,
+    CONF_LOGGER_FUNCTION,
     CONF_LOGGER_HOST,
+    CONF_LOGGER_KIND,
     CONF_LOGGER_MAC,
+    CONF_LOGGER_PORT,
     CONF_LOGGER_PROTOCOL,
     CONF_LOGGER_SERIAL,
     CONF_REGISTER_MAP,
@@ -41,6 +44,7 @@ from .const import (
     ISSUE_LEGACY_CONTROL,
     LOCAL_REQUEST_GAP,
     LOCAL_TIMEOUT_CAP,
+    LOGGER_S2,
     POLL_REPAIRS,
     REGISTER_STRING,
     SOURCE_BOTH,
@@ -124,9 +128,16 @@ def _build_transport(
         if cloud is None:
             raise ConfigEntryNotReady("Solis has no cloud account or local logger")
         return cloud
+    kind = str(entry.data.get(CONF_LOGGER_KIND) or "")
+    serial_text = str(entry.data.get(CONF_LOGGER_SERIAL) or "0")
+    logger_serial = int(serial_text) if serial_text.isdigit() else 0
+    port_text = str(entry.data.get(CONF_LOGGER_PORT) or "")
+    port = int(port_text) if port_text.isdigit() and int(port_text) > 0 else None
+    function_text = str(entry.data.get(CONF_LOGGER_FUNCTION, 4))
+    function = int(function_text) if function_text.isdigit() else 4
     local = SolisLocalTransport(
         str(entry.data[CONF_LOGGER_HOST]),
-        int(entry.data[CONF_LOGGER_SERIAL]),
+        logger_serial,
         slave=int(entry.data.get(CONF_SLAVE_ID, 1)),
         register_map=str(entry.data.get(CONF_REGISTER_MAP, REGISTER_STRING)),
         inverter_serial=str(entry.data.get(CONF_INVERTER_SERIAL) or ""),
@@ -138,6 +149,10 @@ def _build_transport(
             float(entry.options.get(CONF_REQUEST_TIMEOUT, DEFAULT_REQUEST_TIMEOUT)),
         ),
         gap=LOCAL_REQUEST_GAP,
+        port=port,
+        kind=kind,
+        stick_serial=serial_text if kind == LOGGER_S2 else "",
+        function=function,
         on_host=lambda host, mac: _store_logger_host(hass, entry, host, mac),
         on_protocol=lambda protocol: _store_text(hass, entry, CONF_LOGGER_PROTOCOL, protocol),
         on_serial=lambda serial: _store_inverter_serial(hass, entry, serial),
@@ -168,7 +183,8 @@ def _store_logger_host(hass: HomeAssistant, entry: SolisConfigEntry, host: str, 
         not mac or entry.data.get(CONF_LOGGER_MAC) == mac
     ):
         return
-    _LOGGER.info("Solarman logger %s is now at %s", entry.data.get(CONF_LOGGER_SERIAL), host)
+    label = "S2-WL-ST" if entry.data.get(CONF_LOGGER_KIND) == LOGGER_S2 else "Solarman"
+    _LOGGER.info("%s logger %s is now at %s", label, entry.data.get(CONF_LOGGER_SERIAL), host)
     data = {**entry.data, CONF_LOGGER_HOST: host}
     if mac:
         data[CONF_LOGGER_MAC] = mac

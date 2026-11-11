@@ -24,6 +24,9 @@ CONF_REGISTER_MAP = "register_map"
 CONF_INVERTER_SERIAL = "inverter_serial"
 CONF_LOGGER_PROTOCOL = "logger_protocol"
 CONF_SERIAL_UNSUPPORTED = "serial_unsupported"
+CONF_LOGGER_KIND = "logger_kind"
+CONF_LOGGER_PORT = "logger_port"
+CONF_LOGGER_FUNCTION = "logger_function"
 
 SOURCE_CLOUD = "cloud"
 SOURCE_LOCAL = "local"
@@ -35,6 +38,18 @@ PROTOCOL_V5 = "v5"
 PROTOCOL_MBTCP = "mbtcp"
 PROTOCOL_MBTCP_ALT = "mbtcp30003"
 MBTCP_ALT_PORT = 30003
+SOLARMAN_PORT = 8899
+S2_PORT = 502
+LOGGER_AUTO = "auto"
+LOGGER_SOLARMAN = "solarman"
+LOGGER_S2 = "s2_wl_st"
+REASON_LOCKED = "locked"
+REASON_TCP_DISABLED = "tcp_disabled"
+REASON_SILENT = "silent"
+REASON_TIMEOUT = "timeout"
+REASON_CLOSED = "closed"
+REASON_REFUSED = "refused"
+REASON_GARBAGE = "garbage"
 # The 4G string map that answered on this stick stops before 3050.
 # 3050 and the 33000 hybrid block are what lock the local port.
 REGISTER_SAFE_CEILING = 3050
@@ -68,6 +83,8 @@ ISSUE_ABNORMAL = "abnormal_data"
 ISSUE_OUTAGE = "cloud_outage"
 ISSUE_LEGACY_CONTROL = "legacy_control"
 ISSUE_LOGGER_LOCKED = "logger_locked"
+ISSUE_LOGGER_TCP = "logger_tcp_disabled"
+ISSUE_LOGGER_SILENT = "logger_modbus_silent"
 
 # Polls that fail this many times in a row, or a snapshot older than
 # STALE_AFTER, are a sustained outage rather than a blip.
@@ -82,4 +99,6 @@ POLL_REPAIRS = (
     ISSUE_ABNORMAL,
     ISSUE_OUTAGE,
     ISSUE_LOGGER_LOCKED,
+    ISSUE_LOGGER_TCP,
+    ISSUE_LOGGER_SILENT,
 )

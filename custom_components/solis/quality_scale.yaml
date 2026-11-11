@@ -139,13 +139,17 @@ rules:
     comment: >-
       Solarman loggers are found with the IGEN UDP 48899 broadcast
       (WIFIKIT-214028-READ and HF-A11ASSISTHREAD). DHCP watches the
-      BC:54:F9 OUI and updates an existing entry's address.
+      BC:54:F9 OUI and updates an existing entry's address. An S2-WL-ST
+      has no UDP discovery and no published OUI. Auto-detect probes TCP
+      502, then 8899. A stored MAC still updates that entry.
   discovery-update-info:
     status: done
     comment: >-
-      The logger is identified by its serial and MAC. UDP discovery and
-      DHCP both write the current IP into the config entry and reload it.
-      The change is logged once at info.
+      A Solarman logger is identified by its serial and MAC. An S2-WL-ST
+      uses the stick serial, or the inverter serial read from registers
+      when the stick serial was not typed. UDP discovery and DHCP both
+      write the current IP into the config entry and reload it. The change
+      is logged once at info.
   docs-data-update: done
   docs-examples: done
   docs-known-limitations: done
@@ -192,10 +196,12 @@ rules:
     status: done
     comment: >-
       Auth, clock, abnormal data, an empty plant, legacy control, a
-      sustained SolisCloud outage, and a local logger that keeps resetting
-      for 10 minutes open repairs. The logger repair does not treat a steady
-      red stick LED as a fault. Outage and logger repairs clear when a poll
-      succeeds. Unloading the entry removes the poll repairs.
+      sustained SolisCloud outage, a local logger that keeps resetting for
+      10 minutes, an S2-WL-ST whose port 502 is closed, and an S2-WL-ST
+      that accepts TCP without a Modbus reply open repairs. The logger
+      repair does not treat a steady red stick LED as a fault. Outage and
+      logger repairs clear when a poll succeeds. Unloading the entry
+      removes the poll repairs.
   stale-devices:
     status: done
     comment: >-
