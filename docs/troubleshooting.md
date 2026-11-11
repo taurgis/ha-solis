@@ -56,9 +56,26 @@ note is that enabling TCP disconnects SolisCloud. Firmware `100121cf`,
 run a second Modbus integration against the same stick.
 
 **The logger changed address.** DHCP can hand the stick a new lease after it
-wakes. The integration finds it by serial (UDP 48899) or by MAC prefix
-`BC:54:F9` and updates the existing entry. One info log names the new
-address. You do not add the stick again.
+wakes. The integration finds a Solarman stick by serial (UDP 48899) or by
+MAC prefix `BC:54:F9` and updates the existing entry. One info log names the
+new address. You do not add the stick again. An S2, an S5 and a gateway are
+not in that broadcast. Reserve the address, or change it with Reconfigure.
+
+**Gateway refused the port.** The repair `logger_gateway` means nothing
+accepted TCP. Check the IP and the port. This is not the inverter switching
+a Solis stick off. A gateway powered from the inverter's USB port goes quiet
+at night and this repair is what opens after 10 minutes.
+
+**Wrong framing.** The repair `logger_wrong_protocol` means the bytes were
+not the kind stored on the entry. Transparent mode is Modbus RTU over TCP.
+Modbus conversion mode is the Modbus TCP gateway. A value off by 256 is the
+same mistake. The repair also covers a reply from the wrong slave and a
+device that is not serving the Solis register map.
+
+**S3, S4, S6 and 4G sticks.** There is no local port to type. Use
+SolisCloud, or wire a gateway to the inverter RS485 port and pick Modbus
+TCP gateway. Details and sources are in
+[docs/research/dongles.md](research/dongles.md).
 
 **Energy dropped to 0 in the middle of the day.** A null or zero sample is
 held at the last good value for that period. If the number still falls, the

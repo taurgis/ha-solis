@@ -8,6 +8,7 @@ issue 517 describes.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 import ipaddress
 import logging
 from typing import Any, cast
@@ -19,7 +20,7 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.const import CONF_NAME
 from homeassistant.core import callback
-from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import config_validation as cv, selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import SolisCloudClient
@@ -34,6 +35,7 @@ from .const import (
     CONF_LOGGER_KIND,
     CONF_LOGGER_MAC,
     CONF_LOGGER_PORT,
+    CONF_LOGGER_PRESET,
     CONF_LOGGER_SERIAL,
     CONF_REQUEST_TIMEOUT,
     CONF_SCAN_INTERVAL,
@@ -48,8 +50,10 @@ from .const import (
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     LOGGER_AUTO,
+    LOGGER_MBTCP,
     LOGGER_S2,
     LOGGER_SOLARMAN,
+    MIN_CLOUD_SCAN_INTERVAL,
     MIN_LOCAL_SCAN_INTERVAL,
     SOLARMAN_OUI,
     SOURCE_BOTH,
@@ -65,12 +69,16 @@ from .errors import (
     SolisTimeoutError,
 )
 from .local_transport import (
+    LoggerProbe,
+    LoggerRequest,
     identify_logger,
     logger_form_error,
     logger_setup,
     parse_logger_form,
     s2_needs_identity,
 )
+from .loggers import SELECTABLE_KINDS, kind_label
+from .loggers.fingerprint import hostname_is_known_gateway
 from .solarman import Stick, discover_sticks, format_mac
 
 _LOGGER = logging.getLogger(__name__)
@@ -90,6 +98,20 @@ _USER_SCHEMA = vol.Schema(
 def _schema(schema: vol.Schema) -> Any:
     """Adapt a voluptuous schema to the config-flow type of this Home Assistant."""
     return cast(Any, schema)
+
+
+def _scan_bounds(entry: ConfigEntry) -> tuple[int, int]:
+    """Cloud stays at 60 seconds or slower. A local logger may poll every 30."""
+    source = str(entry.data.get(CONF_SOURCE, SOURCE_CLOUD))
+    if source == SOURCE_CLOUD:
+        return MIN_CLOUD_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
+    return MIN_LOCAL_SCAN_INTERVAL, DEFAULT_LOCAL_SCAN_INTERVAL
+
+
+def _shown_scan(entry: ConfigEntry) -> int:
+    floor, default = _scan_bounds(entry)
+    saved = int(entry.options.get(CONF_SCAN_INTERVAL, default))
+    return max(floor, min(3600, saved))
 
 
 def _normalize_url(url: str) -> str:
@@ -141,6 +163,7 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
         self._credentials: dict[str, Any] = {}
         self._source = SOURCE_CLOUD
         self._sticks: list[Stick] = []
+        self._choice: tuple[LoggerRequest, LoggerProbe, str] | None = None
 
     @staticmethod
     @callback
@@ -326,6 +349,7 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
 
     def _reconfigure_schema(self, entry: ConfigEntry) -> vol.Schema:
         options = entry.options
+        floor, _default_scan = _scan_bounds(entry)
         return vol.Schema(
             {
                 vol.Required(
@@ -337,8 +361,8 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
                 ): cv.multi_select(self._discovered),
                 vol.Required(
                     CONF_SCAN_INTERVAL,
-                    default=options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
-                ): vol.All(vol.Coerce(int), vol.Range(min=MIN_LOCAL_SCAN_INTERVAL, max=3600)),
+                    default=_shown_scan(entry),
+                ): vol.All(vol.Coerce(int), vol.Range(min=floor, max=3600)),
                 vol.Required(
                     CONF_REQUEST_TIMEOUT,
                     default=options.get(CONF_REQUEST_TIMEOUT, DEFAULT_REQUEST_TIMEOUT),
@@ -364,13 +388,14 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_INVERTER_SERIAL, default=str(entry.data.get(CONF_INVERTER_SERIAL, ""))
                 ): str,
                 vol.Optional(
-                    CONF_LOGGER_KIND,
-                    default=str(entry.data.get(CONF_LOGGER_KIND) or LOGGER_SOLARMAN),
-                ): vol.In([LOGGER_AUTO, LOGGER_SOLARMAN, LOGGER_S2]),
-                vol.Optional(
                     CONF_LOGGER_PORT, default=str(entry.data.get(CONF_LOGGER_PORT) or "")
                 ): str,
+                **_logger_kind_field(
+                    str(entry.data.get(CONF_LOGGER_KIND) or LOGGER_SOLARMAN),
+                    required=False,
+                ),
                 vol.Optional(CONF_SLAVE_ID, default=str(entry.data.get(CONF_SLAVE_ID) or "")): str,
+                **_preset_field(str(entry.data.get(CONF_LOGGER_PRESET) or "default")),
             }
         )
 
@@ -392,6 +417,30 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
         self._discovered = stations
         return {}
 
+    def _logger_defaults(self, found: Stick | None) -> dict[str, str]:
+        """Prefill a reconfigure. A new entry still starts from discovery."""
+        entry = self._get_reconfigure_entry() if self.source == "reconfigure" else None
+        saved = entry.data if entry is not None else {}
+        if entry is None:
+            return {
+                "kind": LOGGER_AUTO,
+                "host": "" if found is None else found.host,
+                "port": "",
+                "serial": "" if found is None else str(found.serial),
+                "slave": "",
+                "inverter": "",
+                "preset": "default",
+            }
+        return {
+            "kind": str(saved.get(CONF_LOGGER_KIND) or LOGGER_AUTO),
+            "host": str(saved.get(CONF_LOGGER_HOST) or ""),
+            "port": str(saved.get(CONF_LOGGER_PORT) or ""),
+            "serial": str(saved.get(CONF_LOGGER_SERIAL) or ""),
+            "slave": str(saved.get(CONF_SLAVE_ID) or ""),
+            "inverter": str(saved.get(CONF_INVERTER_SERIAL) or ""),
+            "preset": str(saved.get(CONF_LOGGER_PRESET) or "default"),
+        }
+
     async def async_step_logger(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Confirm a local logger. The inverter has to be producing."""
         errors: dict[str, str] = {}
@@ -399,23 +448,23 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
             self._sticks = await discover_sticks(timeout=1.2)
         else:
             fields, unique, failure = await self._logger_updates(user_input, source=self._source)
+            if failure == "logger_choice":
+                return await self.async_step_logger_choice()
             if failure:
                 errors["base"] = failure
             else:
                 return await self._finish_logger(fields, unique)
         found = self._sticks[0] if self._sticks else None
+        defaults = self._logger_defaults(found)
         schema = vol.Schema(
             {
-                vol.Required(CONF_LOGGER_KIND, default=LOGGER_AUTO): vol.In(
-                    [LOGGER_AUTO, LOGGER_SOLARMAN, LOGGER_S2]
-                ),
-                vol.Required(CONF_LOGGER_HOST, default="" if found is None else found.host): str,
-                vol.Optional(CONF_LOGGER_PORT, default=""): str,
-                vol.Optional(
-                    CONF_LOGGER_SERIAL, default="" if found is None else str(found.serial)
-                ): str,
-                vol.Optional(CONF_SLAVE_ID, default=""): str,
-                vol.Optional(CONF_INVERTER_SERIAL, default=""): str,
+                **_logger_kind_field(defaults["kind"], required=True),
+                vol.Required(CONF_LOGGER_HOST, default=defaults["host"]): str,
+                vol.Optional(CONF_LOGGER_PORT, default=defaults["port"]): str,
+                vol.Optional(CONF_LOGGER_SERIAL, default=defaults["serial"]): str,
+                vol.Optional(CONF_SLAVE_ID, default=defaults["slave"]): str,
+                vol.Optional(CONF_INVERTER_SERIAL, default=defaults["inverter"]): str,
+                **_preset_field(defaults["preset"]),
             }
         )
         return self.async_show_form(
@@ -427,6 +476,44 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
                 or "none",
             },
         )
+
+    async def async_step_logger_choice(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Ask which device answered port 502 when the web page did not."""
+        pending = self._choice
+        assert pending is not None
+        _request, probe, _source = pending
+        errors: dict[str, str] = {}
+        suggested = probe.suggested_kind or LOGGER_S2
+        if user_input is not None:
+            chosen = str(user_input.get(CONF_LOGGER_KIND) or suggested)
+            return await self._finish_choice(pending, chosen)
+        schema = vol.Schema({**_choice_field(suggested)})
+        return self.async_show_form(
+            step_id="logger_choice",
+            data_schema=_schema(schema),
+            errors=errors,
+            description_placeholders={"note": probe.identify_note},
+        )
+
+    async def _finish_choice(
+        self,
+        pending: tuple[LoggerRequest, LoggerProbe, str],
+        chosen: str,
+    ) -> ConfigFlowResult:
+        request, probe, source = pending
+        detection = "confirmed_s2_wl_st" if chosen == LOGGER_S2 else "confirmed_modbus_tcp"
+        chosen_probe = replace(
+            probe,
+            kind=chosen,
+            needs_choice=False,
+            confidence="confirmed",
+            detection=detection,
+        )
+        mac = _mac_for(self._sticks, request.logger_serial, chosen_probe.kind)
+        fields, unique = logger_setup(request, chosen_probe, mac=mac, source=source)
+        return await self._finish_logger(fields, unique)
 
     async def _logger_updates(
         self, user_input: Mapping[str, Any], *, source: str
@@ -441,6 +528,9 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
             return {}, "", logger_form_error(err)
         if s2_needs_identity(probe, request.logger_serial, request.inverter_serial):
             return {}, "", "logger_identity"
+        if probe.needs_choice:
+            self._choice = (request, probe, source)
+            return {}, "", "logger_choice"
         mac = _mac_for(self._sticks, request.logger_serial, probe.kind)
         fields, unique = logger_setup(request, probe, mac=mac, source=source)
         return fields, unique, ""
@@ -484,8 +574,12 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
             if entry.data.get(CONF_LOGGER_HOST) == host:
                 return self.async_abort(reason="already_configured")
             kind = entry.data.get(CONF_LOGGER_KIND)
-            label = "S2-WL-ST" if kind == LOGGER_S2 else "Solarman"
-            _LOGGER.info("%s logger %s is now at %s", label, serial, host)
+            _LOGGER.info(
+                "%s logger %s is now at %s",
+                kind_label(str(kind or "")),
+                serial,
+                host,
+            )
             if str(entry.unique_id) == serial:
                 await self.async_set_unique_id(serial)
                 self._abort_if_unique_id_configured(updates={CONF_LOGGER_HOST: host})
@@ -494,6 +588,25 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
                 data_updates={CONF_LOGGER_HOST: host},
                 reason="already_configured",
             )
+        hostname = str(_info(discovery_info, "hostname") or "")
+        if hostname_is_known_gateway(hostname):
+            adopted = _entry_at_host(self._async_current_entries(), host)
+            if adopted is None:
+                return self.async_abort(reason="logger_not_setup")
+            if not format_mac(str(adopted.data.get(CONF_LOGGER_MAC) or "")):
+                _LOGGER.info(
+                    "%s logger %s is at %s (%s)",
+                    kind_label(str(adopted.data.get(CONF_LOGGER_KIND) or "")),
+                    adopted.data.get(CONF_LOGGER_SERIAL),
+                    host,
+                    mac,
+                )
+                return self.async_update_reload_and_abort(
+                    adopted,
+                    data_updates={CONF_LOGGER_MAC: mac},
+                    reason="already_configured",
+                )
+            return self.async_abort(reason="already_configured")
         if not mac.startswith(SOLARMAN_OUI):
             return self.async_abort(reason="not_solis_logger")
         return self.async_abort(reason="logger_not_setup")
@@ -512,6 +625,7 @@ class SolisOptionsFlow(OptionsFlow):
         """Edit scan interval, timeout, the per-endpoint gap and the timezone."""
         errors: dict[str, str] = {}
         options = self.config_entry.options
+        floor, _default_scan = _scan_bounds(self.config_entry)
         if user_input is not None:
             zone, zone_error = clean_time_zone(
                 user_input.get(CONF_TIME_ZONE, options.get(CONF_TIME_ZONE, ""))
@@ -531,8 +645,8 @@ class SolisOptionsFlow(OptionsFlow):
             {
                 vol.Required(
                     CONF_SCAN_INTERVAL,
-                    default=options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
-                ): vol.All(vol.Coerce(int), vol.Range(min=MIN_LOCAL_SCAN_INTERVAL, max=3600)),
+                    default=_shown_scan(self.config_entry),
+                ): vol.All(vol.Coerce(int), vol.Range(min=floor, max=3600)),
                 vol.Required(
                     CONF_REQUEST_TIMEOUT,
                     default=options.get(CONF_REQUEST_TIMEOUT, DEFAULT_REQUEST_TIMEOUT),
@@ -572,13 +686,61 @@ async def _fetch_stations(hass: Any, data: Mapping[str, Any]) -> dict[str, str]:
 
 def _mac_for(sticks: list[Stick], serial: str, kind: str) -> str:
     """Return the discovered MAC when this is the Solarman stick with that serial."""
-    if kind == LOGGER_S2 or not serial.isdigit():
+    if kind != LOGGER_SOLARMAN or not serial.isdigit():
         return ""
     wanted = int(serial)
     for stick in sticks:
         if stick.serial == wanted:
             return stick.mac
     return ""
+
+
+def _choice_field(default: str) -> dict[Any, Any]:
+    """S2 or gateway. Auto-detect asks this when port 80 did not name the device."""
+    return {
+        vol.Required(CONF_LOGGER_KIND, default=default): selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                options=[LOGGER_S2, LOGGER_MBTCP],
+                translation_key="logger_choice",
+                mode=selector.SelectSelectorMode.DROPDOWN,
+            )
+        )
+    }
+
+
+def _preset_field(default: str) -> dict[Any, Any]:
+    """Factory port for a transparent RTU gateway. An explicit port still wins."""
+    return {
+        vol.Optional(CONF_LOGGER_PRESET, default=default): selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                options=["default", "elfin", "waveshare", "usr", "esp"],
+                translation_key="logger_preset",
+                mode=selector.SelectSelectorMode.DROPDOWN,
+            )
+        )
+    }
+
+
+def _entry_at_host(entries: list[ConfigEntry], host: str) -> ConfigEntry | None:
+    """Return the local entry already using this address, if there is one."""
+    for entry in entries:
+        if str(entry.data.get(CONF_LOGGER_HOST) or "") == host:
+            return entry
+    return None
+
+
+def _logger_kind_field(default: str, *, required: bool) -> dict[Any, Any]:
+    """Dropdown of logger kinds. Labels live in the translation files."""
+    marker = vol.Required if required else vol.Optional
+    return {
+        marker(CONF_LOGGER_KIND, default=default): selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                options=list(SELECTABLE_KINDS),
+                translation_key="logger_kind",
+                mode=selector.SelectSelectorMode.DROPDOWN,
+            )
+        )
+    }
 
 
 def _info(discovery: Any, key: str) -> Any:

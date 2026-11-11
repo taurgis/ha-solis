@@ -27,6 +27,8 @@ CONF_SERIAL_UNSUPPORTED = "serial_unsupported"
 CONF_LOGGER_KIND = "logger_kind"
 CONF_LOGGER_PORT = "logger_port"
 CONF_LOGGER_FUNCTION = "logger_function"
+CONF_LOGGER_DETECT = "logger_detect"
+CONF_LOGGER_PRESET = "logger_preset"
 
 SOURCE_CLOUD = "cloud"
 SOURCE_LOCAL = "local"
@@ -37,12 +39,17 @@ REGISTER_HYBRID = "hybrid"
 PROTOCOL_V5 = "v5"
 PROTOCOL_MBTCP = "mbtcp"
 PROTOCOL_MBTCP_ALT = "mbtcp30003"
+PROTOCOL_RTU = "rtu"
 MBTCP_ALT_PORT = 30003
 SOLARMAN_PORT = 8899
 S2_PORT = 502
+RTU_PORT = 8899
 LOGGER_AUTO = "auto"
 LOGGER_SOLARMAN = "solarman"
 LOGGER_S2 = "s2_wl_st"
+LOGGER_S5 = "s5_wifi_st"
+LOGGER_MBTCP = "modbus_tcp"
+LOGGER_RTU = "rtu_tcp"
 REASON_LOCKED = "locked"
 REASON_TCP_DISABLED = "tcp_disabled"
 REASON_SILENT = "silent"
@@ -50,6 +57,11 @@ REASON_TIMEOUT = "timeout"
 REASON_CLOSED = "closed"
 REASON_REFUSED = "refused"
 REASON_GARBAGE = "garbage"
+REASON_GATEWAY = "gateway_down"
+REASON_WRONG_PROTOCOL = "wrong_protocol"
+REASON_WRONG_SLAVE = "wrong_slave"
+REASON_UNSUPPORTED = "unsupported_map"
+REASON_S5_CLOSED = "s5_port_closed"
 # The 4G string map that answered on this stick stops before 3050.
 # 3050 and the 33000 hybrid block are what lock the local port.
 REGISTER_SAFE_CEILING = 3050
@@ -85,6 +97,9 @@ ISSUE_LEGACY_CONTROL = "legacy_control"
 ISSUE_LOGGER_LOCKED = "logger_locked"
 ISSUE_LOGGER_TCP = "logger_tcp_disabled"
 ISSUE_LOGGER_SILENT = "logger_modbus_silent"
+ISSUE_LOGGER_GATEWAY = "logger_gateway"
+ISSUE_LOGGER_PROTOCOL = "logger_wrong_protocol"
+ISSUE_LOGGER_S5 = "logger_s5_closed"
 
 # Polls that fail this many times in a row, or a snapshot older than
 # STALE_AFTER, are a sustained outage rather than a blip.
@@ -101,4 +116,7 @@ POLL_REPAIRS = (
     ISSUE_LOGGER_LOCKED,
     ISSUE_LOGGER_TCP,
     ISSUE_LOGGER_SILENT,
+    ISSUE_LOGGER_GATEWAY,
+    ISSUE_LOGGER_PROTOCOL,
+    ISSUE_LOGGER_S5,
 )

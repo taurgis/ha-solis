@@ -109,6 +109,7 @@ class StickEmulator:
         self._udp: asyncio.DatagramTransport | None = None
         self._control: web.AppRunner | None = None
         self._open_clients = 0
+        self.max_open = 0
 
     async def start(self, control_port: int | None = None) -> None:
         """Listen, unless the stick is in night mode."""
@@ -202,6 +203,7 @@ class StickEmulator:
 
     async def _client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         self._open_clients += 1
+        self.max_open = max(self.max_open, self._open_clients)
         now = time.monotonic()
         recent = [stamp for stamp in self.state.connections if now - stamp < 2]
         recent.append(now)

@@ -1,0 +1,403 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Verbinden met SolisCloud",
+        "description": "Kies cloud, een lokale datalogger, of lokaal eerst met SolisCloud als reserve. Lokaal zoeken werkt alleen terwijl de omvormer produceert, want de stick krijgt stroom van de omvormer en is 's nachts uit.",
+        "data": {
+          "source": "Verbinding",
+          "api_url": "API-URL",
+          "key_id": "API-sleutel-id",
+          "key_secret": "API-sleutelgeheim"
+        },
+        "data_description": {
+          "source": "Alleen cloud, een lokale logger op je netwerk, of lokaal eerst met SolisCloud als reserve. Lokaal zoeken werkt alleen terwijl de omvormer produceert.",
+          "api_url": "Gebruik de host die de sleutel uitgaf, inclusief de poort. De internationale dienst luistert op poort 13333. Laat dit leeg bij een opstelling die alleen lokaal is.",
+          "key_id": "De sleutel-id uit SolisCloud API-beheer. Dit is niet de gebruikersnaam van het portaal. Laat leeg voor alleen lokaal.",
+          "key_secret": "Eenmalig zichtbaar bij het aanmaken van de sleutel. Opgeslagen in het config-item en verborgen in diagnostiek."
+        }
+      },
+      "logger": {
+        "title": "Lokale logger",
+        "description": "Gevonden Solarman-loggers: {found}. Automatisch detecteren probeert poort 502, daarna poort 8899. Een Solis-registermap op 502 is alleen een S2-WL-ST als poort 80 de Solis-loggerpagina noemt. Een gatewaypagina wordt opgeslagen als Modbus TCP-gateway. Als de pagina het apparaat niet noemt, kies je zelf, met S2-WL-ST voorgeselecteerd. S5-WiFi-ST is experimenteel: Solis ondersteunt lokale toegang niet officieel, en nieuwere firmware sluit poort 502. De omvormer moet produceren. Reserveer het adres in de router.",
+        "data": {
+          "logger_kind": "Logger",
+          "logger_host": "Logger-IP",
+          "logger_port": "Poort",
+          "logger_serial": "Loggerserienummer",
+          "slave_id": "Modbus-slave",
+          "inverter_serial": "Omvormerserienummer",
+          "logger_preset": "RTU-gatewaymodel"
+        },
+        "data_description": {
+          "logger_kind": "Automatisch detecteren probeert poort 502, daarna 8899. Poort 502 is alleen een S2-WL-ST als de webpagina van het apparaat dat zegt. S5-WiFi-ST is experimenteel: Solis ondersteunt lokale toegang niet officieel, en een firmware-update sluit poort 502 vaak. Modbus RTU over TCP is experimenteel en gebruikt het gatewaymodel voor de fabriekspoort.",
+          "logger_host": "Huidig adres. Reserveer een stick in de router. Een Solarman-stick wordt opnieuw gevonden via het serienummer. Een S2-WL-ST, S5 en een gateway niet. 10.10.100.254 is het installatieadres van een stick of een Elfin, niet het adres op het thuisnetwerk.",
+          "logger_port": "Laat leeg voor 502 op een S2, S5 of Modbus TCP-gateway. Voor RTU over TCP: laat leeg om het gatewaymodel te gebruiken: 8899 Elfin, 4196 Waveshare, 26 USR RS485, 6638 ESPHome. Een ingevulde poort wint altijd. 23 is de USR RS232-socket.",
+          "logger_serial": "Solarman: het numerieke serienummer van het label of van de zoekactie. S2 en S5: het serienummer in de wifi-naam D_ of Solis_, niet het omvormerserienummer. Gateway en RTU: een label naar keuze, of leeg laten om het omvormerserienummer te gebruiken.",
+          "slave_id": "Laat leeg om slave 1 te proberen, daarna 2 en 3. De Solis-standaard is 1.",
+          "inverter_serial": "Optioneel. Het SolisCloud-omvormerserienummer, bijvoorbeeld 110E40182280017. Laat leeg om het van de stick te lezen als dat bereik antwoordt, of van SolisCloud in de modus lokaal-en-cloud. Dit is de entiteit-id. Op een S2-WL-ST is het ook de unieke config-id als het stickserienummer leeg is.",
+          "logger_preset": "Alleen voor Modbus RTU over TCP, en alleen als Poort leeg is. Elfin EW11/EE11 staat af fabriek op 8899. Waveshare RS485 TO ETH luistert op 4196 tot je dat wijzigt. USR-TCP232 gebruikt 26 op de RS485-socket en 23 op de RS232-socket. De stream server van ESPHome gebruikt vaak 6638."
+        }
+      },
+      "logger_choice": {
+        "title": "Welk apparaat zit op poort 502?",
+        "description": "{note} Solis documenteert Modbus TCP op de S2-WL-ST. Een Waveshare, Elfin of USR in Modbus-modus geeft dezelfde omvormerregisters terug. S5-WiFi-ST staat hier niet: die is experimenteel en nieuwere firmware sluit poort 502.",
+        "data": {
+          "logger_kind": "Apparaat"
+        },
+        "data_description": {
+          "logger_kind": "S2-WL-ST als dit de Solis-stick is. Modbus TCP-gateway als een Waveshare, Elfin of USR de omzetting doet."
+        }
+      },
+      "stations": {
+        "title": "Kies installaties",
+        "description": "Selecteer de SolisCloud-installaties die dit item volgt.",
+        "data": {
+          "station_ids": "Installaties"
+        },
+        "data_description": {
+          "station_ids": "Alleen de gekozen installaties worden uitgelezen. Wijzig de set later via herconfigureren."
+        }
+      },
+      "reauth_confirm": {
+        "title": "SolisCloud-gegevens vernieuwen",
+        "description": "De API-sleutel is geweigerd. Vul een actuele sleutel-id en geheim in.",
+        "data": {
+          "key_id": "API-sleutel-id",
+          "key_secret": "API-sleutelgeheim"
+        },
+        "data_description": {
+          "key_id": "De sleutel-id uit SolisCloud API-beheer. Dit is niet de gebruikersnaam van het portaal.",
+          "key_secret": "Eenmalig zichtbaar bij het aanmaken van de sleutel. Opgeslagen in het config-item en verborgen in diagnostiek."
+        }
+      },
+      "reconfigure": {
+        "title": "Solis herconfigureren",
+        "description": "Werk de API-host, de te volgen installaties en de uitleesfrequentie bij.",
+        "data": {
+          "source": "Verbinding",
+          "logger_kind": "Logger",
+          "logger_host": "Logger-IP",
+          "logger_port": "Poort",
+          "logger_serial": "Loggerserienummer",
+          "slave_id": "Modbus-slave",
+          "inverter_serial": "Omvormerserienummer",
+          "logger_preset": "RTU-gatewaymodel",
+          "api_url": "API-URL",
+          "station_ids": "Installaties",
+          "scan_interval": "Uitleesinterval (seconden)",
+          "request_timeout": "Time-out van een verzoek (seconden)",
+          "endpoint_interval": "Minimale pauze per endpoint (seconden)",
+          "time_zone": "Tijdzone van de installatie"
+        },
+        "data_description": {
+          "time_zone": "Laat leeg om Home Assistant te volgen als die binnen een uur van de offset van de installatie zit. Gebruik een IANA-naam zoals Europe/Amsterdam om er een af te dwingen, of plant om de numerieke offset van Solis te houden.",
+          "scan_interval": "Seconden tussen uitlezingen. Cloud-samples komen ongeveer elke vijf minuten, dus een item dat alleen cloud is blijft op 60 of langzamer (standaard 300). Een lokale logger is standaard 60 en kan niet sneller dan 30.",
+          "request_timeout": "Seconden wachten op één HTTP-aanroep. Standaard 30.",
+          "endpoint_interval": "Minimale seconden tussen aanroepen van hetzelfde API-pad. Standaard 2, onder de gepubliceerde limiet van twee aanroepen per seconde.",
+          "source": "Alleen cloud, alleen lokaal, of lokaal met SolisCloud als reserve.",
+          "logger_kind": "Automatisch detecteren, Solarman V5, Solis S2-WL-ST, een Modbus TCP-gateway, experimentele S5-WiFi-ST (Solis ondersteunt lokale toegang niet officieel; firmware sluit poort 502 vaak), of experimentele Modbus RTU over TCP. Wijzigen behoudt dezelfde entiteiten.",
+          "logger_preset": "Alleen voor Modbus RTU over TCP als Poort leeg is. Elfin-fabriekspoort is 8899. Waveshare RS485 TO ETH is 4196. USR RS485 is 26. ESPHome stream server is vaak 6638.",
+          "logger_host": "Huidig adres van de logger of gateway. Laat leeg om het opgeslagen adres te houden.",
+          "logger_port": "Laat leeg voor de standaardpoort van de gekozen logger.",
+          "logger_serial": "Loggerserienummer of een label voor een gateway. Vul dit samen met het IP in om een stick aan een bestaand cloud-item te koppelen. Bij een S2-WL-ST of S5 is dit het serienummer in de wifi-naam.",
+          "slave_id": "Laat leeg om slave 1 te proberen, daarna 2 en 3.",
+          "inverter_serial": "Optioneel SolisCloud-omvormerserienummer. Zet het zodat lokale en cloud-entiteiten hetzelfde apparaat blijven.",
+          "api_url": "Gebruik de host die de sleutel uitgaf, inclusief de poort. De internationale dienst luistert op poort 13333.",
+          "station_ids": "Alleen de gekozen installaties worden uitgelezen. Wijzig de set later via herconfigureren."
+        }
+      },
+      "init": {
+        "title": "Solis-opties",
+        "description": "Uitlezen en de tijdzone voor vandaag, deze maand en dit jaar. Gebruik Herconfigureren om het loggeradres, de poort of het type te wijzigen.",
+        "data": {
+          "scan_interval": "Uitleesinterval (seconden)",
+          "request_timeout": "Time-out van een verzoek (seconden)",
+          "endpoint_interval": "Minimale pauze per endpoint (seconden)",
+          "time_zone": "Tijdzone van de installatie"
+        },
+        "data_description": {
+          "time_zone": "Laat leeg om Home Assistant te volgen als die binnen een uur van de offset van de installatie zit. Gebruik een IANA-naam zoals Europe/Amsterdam om er een af te dwingen, of plant om de numerieke offset van Solis te houden.",
+          "scan_interval": "Seconden tussen uitlezingen. Cloud-samples komen ongeveer elke vijf minuten, dus een item dat alleen cloud is blijft op 60 of langzamer (standaard 300). Een lokale logger is standaard 60 en kan niet sneller dan 30.",
+          "request_timeout": "Seconden wachten op één HTTP-aanroep. Standaard 30.",
+          "endpoint_interval": "Minimale seconden tussen aanroepen van hetzelfde API-pad. Standaard 2, onder de gepubliceerde limiet van twee aanroepen per seconde."
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "SolisCloud heeft de API-sleutel-id of het geheim geweigerd.",
+      "invalid_timezone": "Vul een IANA-tijdzone in zoals Europe/Amsterdam, of plant om de Solis-offset te houden.",
+      "clock_skew": "SolisCloud heeft de verzoektijd geweigerd. De klok moet binnen 15 minuten van UTC zitten.",
+      "timeout": "SolisCloud antwoordde niet voor de time-out.",
+      "cannot_connect": "SolisCloud is niet bereikbaar.",
+      "no_stations": "Het account gaf geen installaties terug. Controleer de API-sleutel en of de installatie een id heeft.",
+      "unknown": "Onverwachte SolisCloud-fout.",
+      "logger_asleep": "Geen route naar de logger, of een time-out. 's Nachts zet de omvormer de stick uit. Probeer opnieuw terwijl hij produceert.",
+      "logger_busy": "De logger heeft de lokale sessie gereset of geweigerd. Uploaden naar SolisCloud kan nog doorgaan. Wacht minstens 10 seconden en probeer één keer. Probeer niet in een strakke lus.",
+      "logger_tcp_disabled": "Poort 502 is dicht. De S2-WL-ST biedt Modbus TCP vanaf firmware 100101B4. Sommige latere updates sluiten de poort, en TCP aanzetten op oudere firmware verbreekt SolisCloud. Vraag Solis om een build die poort 502 openhoudt, zoals 100121cf of een 100141dx-release, en zet Modbus aan in de stick of de SolisCloud-app.",
+      "logger_modbus_silent": "De stick accepteerde TCP op poort 502 en stuurde geen Modbus-antwoord. Vaak is er maar één client toegestaan. Op oudere firmware is die client SolisCloud of deze integratie, niet allebei. Verbreek de andere Modbus-client, of vraag Solis om firmware 100121cf, 100121d0 of 100141dx, waarvan wordt gemeld dat beide tegelijk mogen.",
+      "logger_identity": "Deze logger gaf geen stabiele id. Vul het loggerserienummer van het label of de wifi-naam in, of het omvormerserienummer.",
+      "logger_gateway": "Niets accepteerde TCP op dat adres en die poort. Controleer het gateway-IP en de poort (502 voor Modbus TCP, 8899, 26 of 23 voor een transparante tunnel). Een gateway met eigen voeding gaat niet uit met de omvormer.",
+      "logger_wrong_protocol": "Het apparaat accepteerde TCP en de bytes waren niet de gekozen framing. Gebruik Modbus TCP-gateway als het apparaat omzet naar Modbus TCP. Gebruik Modbus RTU over TCP bij een transparante seriële tunnel. Een waarde die een factor 256 scheelt wijst meestal op de andere modus.",
+      "logger_wrong_slave": "Een Modbus-antwoord kwam van een andere slave. De Solis-standaard is 1. Stel de slave in die de omvormer gebruikt.",
+      "logger_unsupported_map": "Modbus antwoordde, en noch de Solis 3000-stringmap noch de 33000-hybride map is aanwezig. Dit is geen Solis-omvormer op die slave, of de gateway wijst naar de verkeerde seriële poort.",
+      "logger_timeout": "TCP verbond en er kwam geen Solis-frame. De omvormer kan uit zijn, de baud kan niet 9600 8N1 zijn, of een transparante gateway kreeg de optie Modbus TCP. Probeer opnieuw terwijl de omvormer produceert.",
+      "logger_choice": "Poort 502 gaf een Solis-map en de webpagina noemde het apparaat niet. Zet Logger in dit formulier op Solis S2-WL-ST of Modbus TCP-gateway, niet op Automatisch detecteren.",
+      "invalid_logger": "De poort moet 1 tot 65535 zijn, de slave 1 tot 247, en een Solarman-serienummer moet het nummer op de stick zijn."
+    },
+    "abort": {
+      "already_configured": "Deze API-sleutel is al geconfigureerd.",
+      "reauth_successful": "Authenticatie vernieuwd.",
+      "reconfigure_successful": "Configuratie bijgewerkt.",
+      "cannot_connect": "SolisCloud was niet bereikbaar om installaties te laden.",
+      "not_solis_logger": "Dat apparaat is geen Solarman-logger.",
+      "logger_not_setup": "Nog geen Solis-item gebruikt deze logger.",
+      "wrong_account": "Die API-sleutel hoort bij een ander account."
+    }
+  },
+  "issues": {
+    "invalid_auth": {
+      "title": "SolisCloud heeft de API-sleutel geweigerd",
+      "description": "Werk de sleutel-id en het geheim bij. Uitlezen gebruikt alleen de API-sleutel; het portaalwachtwoord wordt niet gebruikt."
+    },
+    "clock_skew": {
+      "title": "De klok van Home Assistant valt buiten het SolisCloud-venster",
+      "description": "SolisCloud weigert verzoeken waarvan de Date-header meer dan 15 minuten van UTC afwijkt. Zet de klok en tijdzone van de host goed en herlaad Solis."
+    },
+    "no_inverters": {
+      "title": "SolisCloud gaf geen omvormers terug",
+      "description": "De installatielijst of omvormerlijst was leeg. Een installatie zonder id, of Solis-fout 'abnormal data', ziet er zo uit. De laatste geslaagde omvormerlijst blijft een paar uitlezingen bewaard."
+    },
+    "abnormal_data": {
+      "title": "SolisCloud gaf abnormale gegevens terug",
+      "description": "Het platform antwoordde met code 1 (vaak het Chinese bericht voor abnormale gegevens). Dit is een fout aan de accountkant. De API-sleutel uit- en opnieuw aanzetten, of een ticket bij Solis, is wat het oplost."
+    },
+    "legacy_control": {
+      "title": "Omvormerbesturing is niet gemigreerd",
+      "description": "De vorige Solis-integratie had de besturings-API aan. Deze versie stuurt geen /v2/api/control of /v2/api/atRead, omdat uitlezen van die aanroepen de cloudsessie van de datalogger zou laten vallen. Batterijschema's op de omvormer blijven zoals ze zijn."
+    },
+    "cloud_outage": {
+      "title": "SolisCloud is onbereikbaar",
+      "description": "SolisCloud is lang genoeg onbereikbaar dat live metingen verborgen zijn, zodat een oud vermogen niet als actueel wordt getoond. Energietotalen blijven op de laatste goede waarde en gaan niet terug. Deze melding verdwijnt als een uitlezing slaagt."
+    },
+    "logger_locked": {
+      "title": "De lokale logger pauzeert het uitlezen",
+      "description": "De logger accepteert een verbinding en reset die daarna. Op een DLS-L volgt dat op te veel sessies of een uitlezing van een register dat de omvormer niet heeft. Op een S2-WL-ST staat vaak maar één Modbus-client toe, en firmware 1001318c kan poort 502 enkele minuten negeren nadat een verbinding sluit. Het trekt meestal binnen ongeveer 10 minuten bij, of na een stroomcyclus van de omvormer. SolisCloud-metingen worden gebruikt zolang er een vers cloud-sample is. De integratie probeert lokaal vanzelf opnieuw, eerst na minstens 10 seconden en daarna minder vaak, tot ongeveer 10 minuten. Een kleine ochtendmeting van het vermogen betekent dat de omvormer produceert."
+    },
+    "logger_tcp_disabled": {
+      "title": "Modbus TCP van de S2-WL-ST is uitgeschakeld",
+      "description": "Poort 502 is dicht terwijl de logger op het netwerk zit. Firmware vóór 100101B4 heeft geen Modbus TCP. Sommige latere updates sluiten de poort weer, en de officiële installatienotitie zegt dat TCP aanzetten SolisCloud kan verbreken. Vraag Solis om firmware die poort 502 openhoudt en nog uploadt, zoals 100121cf, 100121d0 of een 100141dx-build. Deze melding verdwijnt als een lokale uitlezing slaagt."
+    },
+    "logger_modbus_silent": {
+      "title": "S2-WL-ST accepteerde TCP en stuurde geen Modbus",
+      "description": "De socket ging open en er kwam geen registerantwoord. De stick staat vaak maar één lokale verbinding toe. Op oudere firmware houdt SolisCloud die verbinding en blijft lokaal Modbus stil, het omgekeerde van de officiële notitie dat TCP aanzetten SolisCloud verbreekt. Stop de andere Modbus-client, of vraag Solis om firmware die beide toestaat (100121cf, 100121d0, 100141dx). Een S5-WiFi-ST waarvan poort 502 nog open is heeft dezelfde limiet. Deze melding verdwijnt als een lokale uitlezing slaagt."
+    },
+    "logger_gateway": {
+      "title": "De Modbus-gateway accepteert geen verbindingen",
+      "description": "Het adres weigerde TCP of was niet bereikbaar. Controleer het IP, de poort en of de gateway voeding heeft. Geef de gateway een DHCP-reservering zodat het adres niet verschuift. Als het adres wel is veranderd, gebruik Herconfigureren op het Solis-item en vul het nieuwe adres in. Dit is niet de omvormer die een Solis-stick voor de nacht uitzet. Deze melding verdwijnt als een lokale uitlezing slaagt."
+    },
+    "logger_wrong_protocol": {
+      "title": "De loggerframing komt niet overeen",
+      "description": "De socket ging open en de bytes waren niet de framing van dit item. Een Waveshare, Elfin of USR in transparante modus heeft Modbus RTU over TCP nodig. Hetzelfde apparaat in Modbus TCP-omzetting heeft de optie Modbus TCP-gateway nodig. Gebruik Herconfigureren om het type of de poort te wijzigen. Deze melding verdwijnt als een lokale uitlezing slaagt."
+    },
+    "logger_s5_closed": {
+      "title": "S5-WiFi-ST dient geen Modbus TCP meer",
+      "description": "Poort 502 is dicht. Solis ondersteunt lokale toegang op de S5-WiFi-ST niet officieel, en nieuwere firmware sluit poort 502 en de webpagina terwijl SolisCloud blijft werken. Home Assistant kan de poort niet heropenen. Gebruik Herconfigureren om dit item om te zetten naar een Modbus TCP-gateway op de RS485-poort van de omvormer, of gebruik alleen SolisCloud. Deze melding verdwijnt als de poort weer antwoordt."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "data_source": {
+        "name": "Gegevensbron",
+        "state": {
+          "local": "Lokale logger",
+          "cloud": "SolisCloud",
+          "asleep": "Omvormer slaapt",
+          "degraded": "Cloud, lokale logger gepauzeerd"
+        }
+      },
+      "status": {
+        "name": "Status",
+        "state": {
+          "online": "Online",
+          "offline": "Offline",
+          "alarm": "Alarm",
+          "stale": "Verouderd",
+          "unknown": "Onbekend"
+        }
+      },
+      "ac_power": {
+        "name": "AC-vermogen"
+      },
+      "frequency": {
+        "name": "Frequentie"
+      },
+      "temperature": {
+        "name": "Temperatuur"
+      },
+      "energy_today": {
+        "name": "Energie vandaag"
+      },
+      "energy_month": {
+        "name": "Energie deze maand"
+      },
+      "energy_year": {
+        "name": "Energie dit jaar"
+      },
+      "energy_total": {
+        "name": "Energie totaal"
+      },
+      "data_timestamp": {
+        "name": "Meettijd"
+      },
+      "grid_power": {
+        "name": "Netvermogen"
+      },
+      "consumption_power": {
+        "name": "Verbruiksvermogen"
+      },
+      "battery_power": {
+        "name": "Batterijvermogen"
+      },
+      "battery_soc": {
+        "name": "Batterij"
+      },
+      "battery_soh": {
+        "name": "Batterijconditie"
+      },
+      "battery_voltage": {
+        "name": "Batterijspanning"
+      },
+      "battery_current": {
+        "name": "Batterijstroom"
+      },
+      "battery_charge_today": {
+        "name": "Batterij vandaag geladen"
+      },
+      "battery_discharge_today": {
+        "name": "Batterij vandaag ontladen"
+      },
+      "battery_charge_total": {
+        "name": "Batterij totaal geladen"
+      },
+      "battery_discharge_total": {
+        "name": "Batterij totaal ontladen"
+      },
+      "force_charge_soc": {
+        "name": "SOC geforceerd laden"
+      },
+      "force_discharge_soc": {
+        "name": "SOC onderspanning"
+      },
+      "phase_voltage": {
+        "name": "Fase {index} spanning"
+      },
+      "phase_current": {
+        "name": "Fase {index} stroom"
+      },
+      "phase_power": {
+        "name": "Fase {index} vermogen"
+      },
+      "string_voltage": {
+        "name": "String {index} spanning"
+      },
+      "string_current": {
+        "name": "String {index} stroom"
+      },
+      "string_power": {
+        "name": "String {index} vermogen"
+      },
+      "day_energy": {
+        "name": "Energie vandaag"
+      },
+      "grid_import_today": {
+        "name": "Netimport vandaag"
+      },
+      "grid_export_today": {
+        "name": "Netexport vandaag"
+      },
+      "load_today": {
+        "name": "Verbruik vandaag"
+      },
+      "rssi": {
+        "name": "Signaalsterkte"
+      },
+      "power": {
+        "name": "Vermogen"
+      }
+    },
+    "binary_sensor": {
+      "alarm": {
+        "name": "Alarm"
+      },
+      "battery_charging": {
+        "name": "Batterij laadt"
+      }
+    }
+  },
+  "exceptions": {
+    "update_auth": {
+      "message": "SolisCloud heeft de API-sleutel geweigerd."
+    },
+    "update_clock": {
+      "message": "SolisCloud heeft de verzoektijd geweigerd. De klok moet binnen 15 minuten van UTC zitten."
+    },
+    "update_abnormal": {
+      "message": "SolisCloud gaf abnormale gegevens terug."
+    },
+    "update_timeout": {
+      "message": "SolisCloud antwoordde niet voor de time-out."
+    },
+    "update_no_inverters": {
+      "message": "SolisCloud gaf geen omvormers terug."
+    },
+    "update_failed": {
+      "message": "SolisCloud-update is mislukt."
+    },
+    "update_logger_busy": {
+      "message": "De lokale logger heeft de sessie gereset. Er wordt opnieuw geprobeerd na een pauze. SolisCloud wordt gebruikt als er een vers sample is."
+    },
+    "update_logger_tcp_disabled": {
+      "message": "De S2-WL-ST heeft poort 502 gesloten. Modbus TCP is uit op deze firmware. SolisCloud wordt gebruikt als er een vers sample is."
+    },
+    "update_logger_modbus_silent": {
+      "message": "De S2-WL-ST accepteerde TCP en stuurde geen Modbus-antwoord. Een andere client houdt mogelijk de enige verbinding. SolisCloud wordt gebruikt als er een vers sample is."
+    },
+    "update_logger_gateway": {
+      "message": "De Modbus-gateway accepteert geen verbindingen. Het laatste lokale sample blijft staan tot hij antwoordt."
+    },
+    "update_logger_wrong_protocol": {
+      "message": "De logger antwoordde met een andere framing of slave dan dit item verwacht. Wijzig het loggertype of de gatewaymodus."
+    },
+    "update_logger_s5_closed": {
+      "message": "De S5-WiFi-ST heeft poort 502 gesloten. Solis ondersteunt lokale toegang op deze stick niet officieel, en nieuwere firmware haalt die weg. SolisCloud wordt gebruikt als er een vers sample is."
+    }
+  },
+  "selector": {
+    "logger_kind": {
+      "options": {
+        "auto": "Automatisch detecteren",
+        "solarman": "Solarman V5 (DLS-W, DLS-L, LSW)",
+        "s2_wl_st": "Solis S2-WL-ST (Modbus TCP 502)",
+        "modbus_tcp": "Modbus TCP-gateway (Waveshare, Elfin, USR)",
+        "s5_wifi_st": "Solis S5-WiFi-ST (experimenteel, firmware kan poort 502 sluiten)",
+        "rtu_tcp": "Modbus RTU over TCP (experimenteel)"
+      }
+    },
+    "logger_choice": {
+      "options": {
+        "s2_wl_st": "Solis S2-WL-ST",
+        "modbus_tcp": "Modbus TCP-gateway (Waveshare, Elfin, USR)"
+      }
+    },
+    "logger_preset": {
+      "options": {
+        "default": "Elfin / Hi-Flying af fabriek (8899)",
+        "elfin": "Elfin EW11 / EE11 (8899)",
+        "waveshare": "Waveshare RS485 TO ETH (4196)",
+        "usr": "USR-TCP232 RS485-socket (26)",
+        "esp": "ESPHome stream server (6638)"
+      }
+    }
+  }
+}
