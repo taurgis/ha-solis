@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+import time
 from typing import Any
 
 import pytest
@@ -1175,7 +1176,7 @@ async def test_coordinator_opens_the_logger_repair_only_after_ten_minutes(
     assert failure.value.translation_key == "update_logger_busy"
     issues = {issue_id for (_domain, issue_id) in ir.async_get(hass).issues}
     assert not any(issue_id.startswith("logger_locked") for issue_id in issues)
-    coordinator._degraded_since = 0
+    coordinator._degraded_since = time.monotonic() - 601
     with pytest.raises(UpdateFailed):
         await coordinator._async_update_data()
     issues = {issue_id for (_domain, issue_id) in ir.async_get(hass).issues}

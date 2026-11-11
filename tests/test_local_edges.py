@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+import time
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -413,7 +414,7 @@ async def test_degraded_hold_keeps_morning_power(hass: HomeAssistant) -> None:
     assert third.inverters[0].data_source == "degraded"
     issues = {issue_id for (_domain, issue_id) in ir.async_get(hass).issues}
     assert not any(issue_id.startswith("logger_locked") for issue_id in issues)
-    coordinator._degraded_since = 0
+    coordinator._degraded_since = time.monotonic() - 601
     await coordinator._async_update_data()
     issues = {issue_id for (_domain, issue_id) in ir.async_get(hass).issues}
     assert any(issue_id.startswith("logger_locked") for issue_id in issues)
