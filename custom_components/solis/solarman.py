@@ -24,6 +24,7 @@ import errno
 import ipaddress
 import logging
 import struct
+import weakref
 
 from .errors import SolisLoggerBusy, SolisLoggerOffline
 
@@ -294,6 +295,57 @@ def _is_unreachable(err: BaseException) -> bool:
     return cause is not None and cause is not err and _is_unreachable(cause)
 
 
+_GATES: dict[tuple[str, int], tuple[asyncio.AbstractEventLoop, asyncio.Lock]] = {}
+_DEPTH: dict[tuple[str, int], tuple[asyncio.Task[object] | None, int]] = {}
+
+
+class _HostSlot:
+    """One stick, one socket. The task that owns the slot may enter it again."""
+
+    def __init__(self, host: str, port: int) -> None:
+        self._key = (host, port)
+        self._lock: asyncio.Lock | None = None
+
+    async def __aenter__(self) -> _HostSlot:
+        task = asyncio.current_task()
+        holder, depth = _DEPTH.get(self._key, (None, 0))
+        if task is not None and holder is task:
+            _DEPTH[self._key] = (task, depth + 1)
+            return self
+        loop = asyncio.get_running_loop()
+        current = _GATES.get(self._key)
+        if current is None or current[0] is not loop:
+            lock = asyncio.Lock()
+            _GATES[self._key] = (loop, lock)
+            _DEPTH.pop(self._key, None)
+        else:
+            lock = current[1]
+        await lock.acquire()
+        _DEPTH[self._key] = (task, 1)
+        self._lock = lock
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: object,
+        exc: BaseException | None,
+        traceback: object,
+    ) -> None:
+        _holder, depth = _DEPTH.get(self._key, (None, 0))
+        if depth > 1:
+            _DEPTH[self._key] = (_holder, depth - 1)
+            return
+        _DEPTH.pop(self._key, None)
+        if self._lock is not None:
+            self._lock.release()
+            self._lock = None
+
+
+def host_gate(host: str, port: int) -> _HostSlot:
+    """Serialize every client that talks to this host and port."""
+    return _HostSlot(host, port)
+
+
 def classify_io(err: BaseException, *, connected: bool) -> SolisLoggerOffline | SolisLoggerBusy:
     """Turn a socket error into a lock or an asleep logger."""
     if isinstance(err, SolisLoggerBusy):
@@ -331,6 +383,7 @@ class _PacedClient:
         self._writer: asyncio.StreamWriter | None = None
         self._lock = asyncio.Lock()
         self._sent = False
+        _LIVE.add(self)
 
     async def close(self) -> None:
         """Close the socket if it is open."""
@@ -340,13 +393,10 @@ class _PacedClient:
         self._sent = False
         if writer is None:
             return
-        transport = writer.transport
         writer.close()
-        if transport is not None and transport.is_closing():
-            return
         try:
-            await writer.wait_closed()
-        except (ConnectionError, OSError):
+            await asyncio.wait_for(writer.wait_closed(), timeout=min(self._timeout, 2.0))
+        except (ConnectionError, OSError, TimeoutError, RuntimeError):
             return
 
     async def _pace(self) -> None:
@@ -357,6 +407,7 @@ class _PacedClient:
     async def _ensure(self) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
         if self._writer is not None and self._reader is not None:
             return self._reader, self._writer
+        await _release_other_sockets(self)
         try:
             reader, writer = await asyncio.wait_for(
                 asyncio.open_connection(self.host, self._port),
@@ -371,9 +422,24 @@ class _PacedClient:
     async def _send(self, writer: asyncio.StreamWriter, payload: bytes) -> None:
         try:
             writer.write(payload)
-            await writer.drain()
+            # A peer that never reads must not leave this task parked on drain.
+            await asyncio.wait_for(writer.drain(), timeout=self._timeout)
         except (TimeoutError, ConnectionError, OSError) as err:
             raise classify_io(err, connected=True) from err
+
+
+_LIVE: weakref.WeakSet[_PacedClient] = weakref.WeakSet()
+
+
+async def _release_other_sockets(client: _PacedClient) -> None:
+    """Close idle clients on this stick before opening another socket."""
+    others = [
+        item
+        for item in list(_LIVE)
+        if item is not client and item.host == client.host and item._port == client._port
+    ]
+    for item in others:
+        await item.close()
 
 
 class SolarmanClient(_PacedClient):
@@ -401,7 +467,7 @@ class SolarmanClient(_PacedClient):
 
     async def read_input(self, slave: int, address: int, count: int) -> list[int]:
         """Read input registers. A reset becomes ``SolisLoggerBusy``."""
-        async with self._lock:
+        async with host_gate(self.host, self._port), self._lock:
             await self._pace()
             reader, writer = await self._ensure()
             sequence = self._sequence & 0xFFFF
@@ -410,13 +476,16 @@ class SolarmanClient(_PacedClient):
             try:
                 await self._send(writer, request)
                 frame = await self._read_matching(reader, sequence)
+                words = decode_read(modbus_from_frame(frame))
+                if len(words) != count:
+                    raise ValueError("solarman register count does not match")
             except (SolisLoggerBusy, SolisLoggerOffline):
                 await self.close()
                 raise
             except _IO_ERRORS as err:
                 await self.close()
                 raise classify_io(err, connected=True) from err
-            return decode_read(modbus_from_frame(frame))
+            return words
 
     async def _read_matching(self, reader: asyncio.StreamReader, sequence: int) -> bytes:
         for _ in range(8):
@@ -477,7 +546,7 @@ class ModbusTcpClient(_PacedClient):
 
     async def read_input(self, slave: int, address: int, count: int) -> list[int]:
         """Read input registers over MBAP."""
-        async with self._lock:
+        async with host_gate(self.host, self._port), self._lock:
             await self._pace()
             try:
                 return await self._exchange(slave, address, count)
@@ -508,7 +577,22 @@ class ModbusTcpClient(_PacedClient):
             raise SolisLoggerOffline(
                 "modbus tcp transaction did not match", connected=True, reason="garbage"
             )
-        return decode_mbap(frame)
+        if len(frame) < 7 or frame[6] != (slave & 0xFF):
+            await self.close()
+            raise SolisLoggerOffline(
+                "modbus tcp unit id did not match",
+                connected=True,
+                reason="wrong_slave",
+            )
+        words = decode_mbap(frame)
+        if len(words) != count:
+            await self.close()
+            raise SolisLoggerOffline(
+                "modbus tcp register count did not match",
+                connected=True,
+                reason="garbage",
+            )
+        return words
 
     async def _read_response(self, reader: asyncio.StreamReader) -> bytes:
         try:

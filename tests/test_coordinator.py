@@ -227,3 +227,85 @@ async def test_storage_failure_does_not_fail_a_good_poll(hass: HomeAssistant) ->
     coordinator = SolisCoordinator(hass, entry, _Scripted([good]))
     with patch.object(coordinator._store, "async_save", side_effect=OSError("disk")):
         assert await coordinator._async_update_data() is good
+
+
+def _stored_snapshot() -> SolisSnapshot:
+    from custom_components.solis.models import InverterSnapshot
+
+    now = datetime.now(UTC)
+    inverter = InverterSnapshot(
+        serial="SOLIS001",
+        device_id="SOLIS001",
+        station_id="local",
+        name="SOLIS001",
+        model="Solis 4G",
+        product_model="1",
+        hmi_version=None,
+        state=1,
+        ac_output_type=0,
+        data_timestamp=now,
+        collector_serial="1",
+        ac_power_w=500.0,
+        frequency_hz=50.0,
+        temperature_c=None,
+        energy_today_kwh=5.9,
+        energy_month_kwh=30.0,
+        energy_year_kwh=2690.0,
+        energy_total_kwh=21970.0,
+        battery_power_w=None,
+        battery_soc=None,
+        battery_soh=None,
+        battery_voltage_v=None,
+        battery_current_a=None,
+        battery_charge_today_kwh=None,
+        battery_discharge_today_kwh=None,
+        battery_charge_total_kwh=None,
+        battery_discharge_total_kwh=None,
+        grid_power_w=None,
+        consumption_power_w=None,
+        force_charge_soc=None,
+        force_discharge_soc=None,
+        phases=(),
+        strings=(),
+        data_source="local",
+    )
+    return SolisSnapshot(
+        stations=(),
+        inverters=(inverter,),
+        alarms=(),
+        collectors=(),
+        epms=(),
+        fetched_at=now,
+        partial=False,
+        source="local",
+    )
+
+
+async def test_restart_while_offline_restores_stored_energy(hass: HomeAssistant) -> None:
+    """A night-time restart publishes zero power and the stored lifetime total."""
+    from custom_components.solis.errors import SolisLoggerOffline
+
+    entry = _entry(hass)
+    first = SolisCoordinator(hass, entry, _Scripted([_stored_snapshot()]))
+    await first._async_update_data()
+    restarted = SolisCoordinator(hass, entry, _Scripted([SolisLoggerOffline("night")]))
+    asleep = await restarted._async_update_data()
+    assert asleep.source == "asleep"
+    assert asleep.inverters[0].ac_power_w == 0
+    assert asleep.inverters[0].energy_total_kwh == 21970
+
+
+async def test_restart_while_gateway_is_down_holds_power(hass: HomeAssistant) -> None:
+    """A down gateway after restart keeps the last power sample."""
+    from custom_components.solis.errors import SolisLoggerBusy
+
+    entry = _entry(hass)
+    first = SolisCoordinator(hass, entry, _Scripted([_stored_snapshot()]))
+    await first._async_update_data()
+    restarted = SolisCoordinator(
+        hass, entry, _Scripted([SolisLoggerBusy("down", reason="gateway_down")])
+    )
+    held = await restarted._async_update_data()
+    assert held.source == "degraded"
+    assert held.inverters[0].ac_power_w == 500
+    assert held.inverters[0].energy_total_kwh == 21970

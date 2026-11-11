@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import suppress
 from dataclasses import dataclass
+import re
 
 from ..const import LOGGER_MBTCP, LOGGER_S2
 
@@ -127,25 +128,39 @@ def rtu_default_port(preset: str) -> int:
     return {"waveshare": 4196, "usr": 26, "esp": 6638}.get(preset, RTU_PORT)
 
 
+_PROBE_HOST = re.compile(r"\A[A-Za-z0-9.-]{1,253}\Z")
+
+
+def _probe_host_ok(host: str) -> bool:
+    """Accept a hostname or IP. Reject header injection and URLs."""
+    return _PROBE_HOST.fullmatch(host) is not None and ".." not in host
+
+
 async def read_http_banner(host: str, *, timeout: float = 1.2, port: int = 80) -> str:
-    """Read the first bytes of the device web page. A closed port is an empty string."""
-    try:
-        reader, writer = await asyncio.wait_for(
-            asyncio.open_connection(host, port),
-            timeout=timeout,
-        )
-    except (TimeoutError, OSError):
+    """Read the device page on this host only.
+
+    The request is one GET with a size cap. Redirects are not followed, so a
+    Location header cannot send the probe to another machine. Connect, write
+    and read share one timeout.
+    """
+    if not _probe_host_ok(host):
         return ""
     try:
-        target = host.encode("ascii", errors="ignore") or b"logger"
+        return await asyncio.wait_for(_read_banner(host, port), timeout=timeout)
+    except (TimeoutError, OSError):
+        return ""
+
+
+async def _read_banner(host: str, port: int) -> str:
+    reader, writer = await asyncio.open_connection(host, port)
+    try:
+        target = host.encode("ascii")
         writer.write(b"GET / HTTP/1.0\r\nHost: " + target + b"\r\nConnection: close\r\n\r\n")
         await writer.drain()
-        data = await asyncio.wait_for(reader.read(4096), timeout=timeout)
-    except (TimeoutError, OSError):
-        return ""
+        data = await reader.read(4096)
     finally:
         writer.close()
-        with suppress(ConnectionError, OSError):
+        with suppress(ConnectionError, OSError, TimeoutError):
             await writer.wait_closed()
     return data.decode("latin-1", errors="ignore")
 

@@ -85,6 +85,8 @@ async def test_http_banner_timeouts_and_a_page(socket_enabled: None) -> None:
         await server.wait_closed()
     assert "S2-WL-ST" in text
     assert await read_http_banner("127.0.0.1", port=1, timeout=0.3) == ""
+    assert await read_http_banner("127.0.0.1\r\nX: y", timeout=0.2) == ""
+    assert await read_http_banner("http://127.0.0.1", timeout=0.2) == ""
 
     async def _silent(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         await asyncio.sleep(30)
@@ -376,3 +378,51 @@ async def test_dhcp_remembers_a_gateway_mac_and_ignores_a_stranger(
         data={"ip": "10.9.9.8", "macaddress": "11:22:33:44:55:77", "hostname": "usr-tcp232-410s"},
     )
     assert missing["reason"] == "logger_not_setup"
+
+
+async def test_choice_rejects_a_kind_that_is_not_offered(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch, socket_enabled: None
+) -> None:
+    """The identification question only accepts S2-WL-ST or a Modbus TCP gateway."""
+    from custom_components.solis.local_transport import LoggerProbe
+
+    probe = LoggerProbe(
+        1,
+        "string",
+        "SOLIS001",
+        "mbtcp",
+        False,
+        kind="s2_wl_st",
+        port=502,
+        needs_choice=True,
+        suggested_kind="s2_wl_st",
+        identify_note="Pick the device.",
+    )
+
+    async def _named(_request: object) -> LoggerProbe:
+        return probe
+
+    monkeypatch.setattr("custom_components.solis.config_flow.identify_logger", _named)
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {"source": SOURCE_LOCAL, "api_url": "http://127.0.0.1:9", "key_id": "", "key_secret": ""},
+    )
+    choice = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {"logger_kind": "auto", "logger_host": "127.0.0.1", "logger_serial": "5A120011"},
+    )
+    assert choice["step_id"] == "logger_choice"
+    from homeassistant.data_entry_flow import InvalidData
+
+    with pytest.raises(InvalidData):
+        await hass.config_entries.flow.async_configure(
+            choice["flow_id"],
+            {"logger_kind": "solarman"},
+        )
+    created = await hass.config_entries.flow.async_configure(
+        choice["flow_id"],
+        {"logger_kind": "s2_wl_st"},
+    )
+    assert created["type"] is FlowResultType.CREATE_ENTRY
+    assert created["result"].data["logger_kind"] == "s2_wl_st"

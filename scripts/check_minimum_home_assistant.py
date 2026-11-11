@@ -724,7 +724,7 @@ def _add_logger(base: str, token: str, source: str, host: str) -> str:
         base,
         token,
         flow_id,
-        {"logger_host": host, "logger_serial": LOGGER_SERIAL},
+        {"logger_kind": "auto", "logger_host": host, "logger_serial": LOGGER_SERIAL},
     )
     if current.get("type") != "create_entry":
         raise CheckError(f"logger flow did not create an entry: {json.dumps(current)[:1500]}")

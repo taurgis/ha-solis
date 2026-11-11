@@ -1,0 +1,15 @@
+# Home Assistant for the dongle lab. The emulator listens on the host
+# (see tools/lab/README.md). From the repo root:
+#
+#   HA_VERSION=2026.11.1 HA_CONFIG=/tmp/ha-solis-lab \
+#     docker compose -f tools/lab/docker-compose.yml up -d
+#
+# HA_CONFIG must already contain configuration.yaml and custom_components/solis.
+
+services:
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:${HA_VERSION:-2026.11.1}
+    container_name: ha-solis-lab-core
+    network_mode: host
+    volumes:
+      - ${HA_CONFIG:?set HA_CONFIG to the Home Assistant config directory}:/config

@@ -24,7 +24,7 @@ from ..const import (
 )
 from ..errors import SolisLoggerBusy, SolisLoggerOffline
 from ..local_transport import LoggerProbe, LoggerRequest, _detect_map, _serial_once
-from ..solarman import ModbusTcpClient
+from ..solarman import ModbusTcpClient, host_gate
 from .fingerprint import rtu_default_port
 from .rtu import RtuTcpClient
 
@@ -34,6 +34,24 @@ _BridgeClient = ModbusTcpClient | RtuTcpClient
 async def probe_bridge(request: LoggerRequest, *, serial_unsupported: bool) -> LoggerProbe:
     """Confirm a Solis map over MBAP or raw RTU. One socket, then close it."""
     port, client, protocol = _open_bridge(request)
+    async with host_gate(request.host, port):
+        return await _probe_bridge_locked(
+            request,
+            port=port,
+            client=client,
+            protocol=protocol,
+            serial_unsupported=serial_unsupported,
+        )
+
+
+async def _probe_bridge_locked(
+    request: LoggerRequest,
+    *,
+    port: int,
+    client: _BridgeClient,
+    protocol: str,
+    serial_unsupported: bool,
+) -> LoggerProbe:
     numeric = int(request.logger_serial) if request.logger_serial.isdigit() else 0
     answered = False
     try:
