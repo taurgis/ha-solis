@@ -1,7 +1,7 @@
 ---
 id: solis-goal
 type: goal-and-requirements
-status: draft
+status: active
 title: Solis for Home Assistant — goal and requirements
 ---
 

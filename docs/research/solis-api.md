@@ -1,3 +1,11 @@
+---
+id: solis-api-research
+type: module-design
+title: SolisCloud API and local access research
+status: active
+parent: solis-architecture
+---
+
 # Solis research
 
 This note is the research behind `taurgis/ha-solis`. The code is a rewrite of
@@ -47,8 +55,8 @@ dropped on purpose.
 A second domain would let this sit next to upstream in one Home Assistant.
 That cannot preserve recorder history, because history follows the entity id
 under the `solis` domain. Side-by-side evaluation needs a second Home Assistant
-instance, or uninstalling one of the two. That trade-off is called out for
-Thomas at the end.
+instance, or uninstalling one of the two. Keeping `solis` is the decision
+(see [Decisions](#decisions)).
 
 ## SolisCloud Platform API v2
 
@@ -531,24 +539,27 @@ SolisCloud, and writing holdings from a map for a different HMI.
 
 ### Local mode
 
-Solarman V5 on TCP 8899 is implemented, read-only, and preferred when a
-logger is configured. Cloud remains the path for an S3-WIFI-ST, which has no
-local port. The protocol, the register check against a real stick, the night
-model, and why the client lives in this repo are in
-[solarman-local.md](solarman-local.md). Modbus TCP on port 502 is a later
-dongle behind the same snapshot type. Writes stay out.
+Local reads are implemented, read-only, and preferred when a logger is
+configured: Solarman V5 on TCP 8899 (with plain Modbus TCP on 8899 or 30003
+as a fallback), Modbus TCP on port 502 for a Solis S2-WL-ST or a Waveshare /
+Elfin / USR gateway, and, experimentally, an S5-WiFi-ST with port 502 open
+and Modbus RTU over a transparent TCP tunnel. All of them return the same
+snapshot type. Cloud remains the path for an S3-WIFI-ST, which has no local
+port. The protocol, the register check against a real stick, the night model,
+and why the client lives in this repo are in
+[solarman-local.md](solarman-local.md); the S2 is in
+[s2-wl-st.md](s2-wl-st.md) and the other loggers in
+[dongles.md](dongles.md). Writes stay out.
 
-## What Thomas should decide
+## Decisions
 
-- Keep domain `solis` (this PR) or rename so it can be installed beside
-  upstream and accept new entity ids.
-- Is the first real fleet mostly S3-WIFI-ST (cloud only) or S2 / RS485 (local
-  is worth scheduling)?
-- If there is a local phase, is it read-only at first?
-- Should plant-level energy or the per-inverter energy be what the energy
-  dashboard uses when a plant has several inverters? Both are exposed.
-- The changeset in this PR will ask the release workflow for a version bump
-  after merge. Delete it if `0.1.0` should be tagged by hand. This PR does
-  not create a release or a tag.
-- Brand art is original. Using the Solis wordmark needs a licence we do not
-  have.
+The questions this note originally left open, and how they were settled:
+
+- **Domain.** Stays `solis`, so replacing upstream keeps config entries and,
+  after unique-id migration, entity history. Installing beside upstream is a
+  non-goal.
+- **Cloud and local.** Both are supported. Local is read-only, like cloud.
+- **Energy dashboard.** The per-inverter **Energy total** is the documented
+  solar-production source; plant-level energy sensors stay exposed.
+- **Brand art** is original. Using the Solis wordmark needs a licence the
+  project does not have.
