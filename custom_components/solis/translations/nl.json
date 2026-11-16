@@ -108,23 +108,7 @@
           "inverter_serial": "Optioneel SolisCloud-omvormerserienummer. Zet het zodat lokale en cloud-entiteiten hetzelfde apparaat blijven.",
           "api_url": "Gebruik de host die de sleutel uitgaf, inclusief de poort. De internationale dienst luistert op poort 13333.",
           "station_ids": "Alleen de gekozen installaties worden uitgelezen. Wijzig de set later via herconfigureren.",
-          "logger_password": "Alleen voor Solis webpagina. Leeg laten voor het fabrieks wachtwoord 123456789. Sommige firmware vervangt het door het wifi-wachtwoord."
-        }
-      },
-      "init": {
-        "title": "Solis-opties",
-        "description": "Uitlezen en de tijdzone voor vandaag, deze maand en dit jaar. Gebruik Herconfigureren om het loggeradres, de poort of het type te wijzigen.",
-        "data": {
-          "scan_interval": "Uitleesinterval (seconden)",
-          "request_timeout": "Time-out van een verzoek (seconden)",
-          "endpoint_interval": "Minimale pauze per endpoint (seconden)",
-          "time_zone": "Tijdzone van de installatie"
-        },
-        "data_description": {
-          "time_zone": "Laat leeg om Home Assistant te volgen als die binnen een uur van de offset van de installatie zit. Gebruik een IANA-naam zoals Europe/Amsterdam om er een af te dwingen, of plant om de numerieke offset van Solis te houden.",
-          "scan_interval": "Seconden tussen uitlezingen. Cloud-samples komen ongeveer elke vijf minuten, dus een item dat alleen cloud is blijft op 60 of langzamer (standaard 300). Een lokale logger is standaard 60 en kan niet sneller dan 30.",
-          "request_timeout": "Seconden wachten op één HTTP-aanroep. Standaard 30.",
-          "endpoint_interval": "Minimale seconden tussen aanroepen van hetzelfde API-pad. Standaard 2, onder de gepubliceerde limiet van twee aanroepen per seconde."
+          "logger_password": "Wachtwoord van de webpagina van de stick. Laat leeg om het opgeslagen wachtwoord te houden. Typ 123456789 voor het fabriekswachtwoord. Sommige firmware vervangt het door het wifi-wachtwoord."
         }
       }
     },
@@ -149,10 +133,11 @@
       "logger_choice": "Poort 502 gaf een Solis-map en de webpagina noemde het apparaat niet. Zet Logger in dit formulier op Solis S2-WL-ST of Modbus TCP-gateway, niet op Automatisch detecteren.",
       "invalid_logger": "De poort moet 1 tot 65535 zijn, de slave 1 tot 247, en een Solarman-serienummer moet het nummer op de stick zijn.",
       "logger_web_password": "De stick weigerde het webwachtwoord. De gebruiker is admin en het fabrieks wachtwoord is 123456789. Sommige firmware vervangt het door je wifi-wachtwoord. Vul het wachtwoordveld in en probeer opnieuw.",
-      "logger_web_page": "De stick antwoordde op poort 80 en de pagina was niet de Solis-omvormerpagina, of er kwam geen pagina terug. Open het adres van de stick in een browser en controleer of de omvormerstatus verschijnt."
+      "logger_web_page": "De stick antwoordde op poort 80 en de pagina was niet de Solis-omvormerpagina, of er kwam geen pagina terug. Open het adres van de stick in een browser en controleer of de omvormerstatus verschijnt.",
+      "already_configured": "Deze account of logger is al ingesteld."
     },
     "abort": {
-      "already_configured": "Deze API-sleutel is al geconfigureerd.",
+      "already_configured": "Deze account of logger is al ingesteld.",
       "reauth_successful": "Authenticatie vernieuwd.",
       "reconfigure_successful": "Configuratie bijgewerkt.",
       "cannot_connect": "SolisCloud was niet bereikbaar om installaties te laden.",
@@ -384,6 +369,9 @@
     },
     "update_logger_web": {
       "message": "De webpagina van de stick weigerde het wachtwoord of gaf geen omvormerdata. SolisCloud wordt gebruikt als er een vers sample is."
+    },
+    "no_source": {
+      "message": "Er is geen SolisCloud-account of lokale logger ingesteld."
     }
   },
   "selector": {
@@ -412,6 +400,29 @@
         "usr": "USR-TCP232 RS485-socket (26)",
         "esp": "ESPHome stream server (6638)"
       }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Solis-opties",
+        "description": "Uitlezen en de tijdzone voor vandaag, deze maand en dit jaar. Gebruik Herconfigureren om het loggeradres, de poort of het type te wijzigen.",
+        "data": {
+          "scan_interval": "Uitleesinterval (seconden)",
+          "request_timeout": "Time-out van een verzoek (seconden)",
+          "endpoint_interval": "Minimale pauze per endpoint (seconden)",
+          "time_zone": "Tijdzone van de installatie"
+        },
+        "data_description": {
+          "time_zone": "Laat leeg om Home Assistant te volgen als die binnen een uur van de offset van de installatie zit. Gebruik een IANA-naam zoals Europe/Amsterdam om er een af te dwingen, of plant om de numerieke offset van Solis te houden.",
+          "scan_interval": "Seconden tussen uitlezingen. Cloud-samples komen ongeveer elke vijf minuten, dus een item dat alleen cloud is blijft op 60 of langzamer (standaard 300). Een lokale logger is standaard 60 en kan niet sneller dan 30.",
+          "request_timeout": "Seconden wachten op één HTTP-aanroep. Standaard 30.",
+          "endpoint_interval": "Minimale seconden tussen aanroepen van hetzelfde API-pad. Standaard 2, onder de gepubliceerde limiet van twee aanroepen per seconde."
+        }
+      }
+    },
+    "error": {
+      "invalid_timezone": "Vul een IANA-tijdzone in zoals Europe/Amsterdam, of plant om de Solis-offset te houden."
     }
   }
 }

@@ -22,8 +22,11 @@ last good snapshot.
   configured one; while a logger sleeps it backs off from 1 min to 15 min.
   The next success restores the configured interval.
 - **Error policy** (by class, see the architecture's snapshot contract):
-  - auth → fail the update, open the `invalid_auth` repair and start reauth
-    once;
+  - auth → open the `invalid_auth` repair and raise `ConfigEntryAuthFailed`,
+    so Home Assistant starts reauth and stops polling with the rejected key;
+    a local-plus-cloud entry whose local read works still publishes, and the
+    transport's `cloud_error` opens the same repair (and one reauth) or the
+    clock repair beside the data;
   - clock / abnormal data / no inverters → fail the update with a repair;
   - transient cloud errors → hold the last snapshot;
   - logger busy → hold as degraded; a lock lasting 10 min opens a repair;
@@ -37,7 +40,8 @@ last good snapshot.
   energy totals stay, and the `cloud_outage` repair opens; it clears on the
   next real success. A poll with no live inverter counts as a failure.
 - **Persistence.** The last good snapshot is stored per entry
-  (`solis.snapshot.<entry_id>`), so a restart at night or during an outage
+  (`solis.snapshot.<entry_id>`), written at most every 5 minutes and once at
+  shutdown to spare flash storage, and deleted when the entry is removed, so a restart at night or during an outage
   restores totals instead of failing setup. With no stored snapshot the first
   refresh raises `ConfigEntryNotReady` so Home Assistant retries.
 - **Logging.** Each failure kind is logged once, not every poll.

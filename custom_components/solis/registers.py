@@ -31,7 +31,8 @@ def s32(words: dict[int, int], address: int) -> int:
 
 
 def _scale(words: dict[int, int], address: int, factor: float) -> float:
-    return (words.get(address, 0) & 0xFFFF) * factor
+    # Rounded so 28 * 0.1 is 2.8 and not 2.8000000000000003 in the recorder.
+    return round((words.get(address, 0) & 0xFFFF) * factor, 2)
 
 
 def serial_from_words(words: dict[int, int]) -> str:
@@ -165,7 +166,7 @@ def _pv_strings(words: dict[int, int], count: int) -> tuple[PvString, ...]:
             break
         voltage = _scale(words, address, 0.1)
         current = _scale(words, address + 1, 0.1)
-        power = None if voltage == 0 and current == 0 else voltage * current
+        power = None if voltage == 0 and current == 0 else round(voltage * current, 2)
         rows.append(PvString(index=index, voltage_v=voltage, current_a=current, power_w=power))
     return tuple(rows)
 

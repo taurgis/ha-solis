@@ -433,6 +433,7 @@ class SolisSensor(SolisEntity, RestoreSensor, SensorEntity):
         self._index = index
         self._energy_last: float | None = None
         self._period_key: str | None = None
+        self._carried = False
         if index is not None:
             self._attr_translation_placeholders = {"index": str(index)}
 
@@ -510,6 +511,7 @@ class SolisSensor(SolisEntity, RestoreSensor, SensorEntity):
             value,
             monotonic=period is None,
             period_changed=changed,
+            carried=self._carried,
         )
         if isinstance(value, float) and published != value:
             _LOGGER.debug(
@@ -518,6 +520,9 @@ class SolisSensor(SolisEntity, RestoreSensor, SensorEntity):
                 published,
                 value,
             )
+        self._carried = (
+            published is not None if changed else self._carried and published == self._energy_last
+        )
         self._period_key = period_key
         if changed or published is not None:
             self._energy_last = published
@@ -531,7 +536,7 @@ class SolisSensor(SolisEntity, RestoreSensor, SensorEntity):
             now,
         )
         return plant_period_start(
-            self._offset(),
+            self._offset() or 0.0,
             now,
             self.entity_description.period or "day",
             zone,
@@ -559,16 +564,17 @@ class SolisSensor(SolisEntity, RestoreSensor, SensorEntity):
                 return inverter
         return None
 
-    def _offset(self) -> float:
+    def _offset(self) -> float | None:
+        """The plant's UTC offset, or None when no cloud station reported one."""
         station_id = self._station_id
         if station_id is None:
             inverter = self._inverter()
             station_id = inverter.station_id if inverter else None
         if station_id is None:
-            return 0.0
+            return None
         station = self.coordinator.data.station(station_id)
-        if station is None or station.timezone_offset_hours is None:
-            return 0.0
+        if station is None:
+            return None
         return station.timezone_offset_hours
 
 

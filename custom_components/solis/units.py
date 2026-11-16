@@ -8,6 +8,7 @@ unit strings fall back to the unit the V2.0 field tables use for that family.
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 _POWER_TO_W = {"w": 1.0, "kw": 1_000.0, "mw": 1_000_000.0}
@@ -29,13 +30,15 @@ def as_float(value: Any) -> float | None:
     if is_missing(value) or isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
+        number = float(value)
+    elif isinstance(value, str):
         try:
-            return float(value.strip())
+            number = float(value.strip())
         except ValueError:
             return None
-    return None
+    else:
+        return None
+    return number if math.isfinite(number) else None
 
 
 def unit_key(value: Any) -> str | None:

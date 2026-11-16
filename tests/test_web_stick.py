@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+import errno
 import time
 from typing import Any
 
@@ -54,24 +54,13 @@ from custom_components.solis.models import SolisSnapshot
 from custom_components.solis.registers import decode_string
 from custom_components.solis.web_transport import SolisWebTransport, probe_web
 from mock_soliscloud.stick import captured_registers
-from mock_soliscloud.web_stick import WebStickEmulator, WebStickState
+from mock_soliscloud.web_stick import WebStickEmulator
 
 PAGE = "110E40182280017;0F000F;E4;38.4;382;2.800000;21986;NO;"
 COLLECTOR = (
     "\x00" * 33 + ";2;7A122C096F409F31;10010106;Disabled;null;null;Disabled;null;null;"
     "192.168.0.112;B8:D6:1A:58:A7:0B;Connected;null;"
 )
-
-
-@pytest.fixture
-async def stick(socket_enabled: None) -> AsyncIterator[WebStickEmulator]:
-    """A web-page stick on an ephemeral port."""
-    emulator = WebStickEmulator(WebStickState())
-    await emulator.start()
-    try:
-        yield emulator
-    finally:
-        await emulator.close()
 
 
 def _transport(stick: WebStickEmulator, **kwargs: Any) -> SolisWebTransport:
@@ -173,17 +162,7 @@ async def test_client_names_each_failure(stick: WebStickEmulator) -> None:
     with pytest.raises(SolisLoggerBusy) as reset:
         await good.read_inverter()
     assert reset.value.reason == REASON_WEB_PAGE
-
-    async def reset_by_peer(path: str) -> bytes:
-        good._connected = True
-        raise ConnectionResetError
-
-    original = good._exchange
-    good._exchange = reset_by_peer  # type: ignore[method-assign]
-    with pytest.raises(SolisLoggerBusy) as dropped:
-        await good.read_inverter()
-    assert dropped.value.reason == REASON_WEB_PAGE
-    good._exchange = original  # type: ignore[method-assign]
+    assert "reset" in str(reset.value)
     stick.state.mode = "garbage"
     assert await good.read_collector() is None
     stick.state.mode = "hang"
@@ -254,22 +233,35 @@ async def test_identity_and_session_info(stick: WebStickEmulator) -> None:
     assert "123456789" not in str(info)
 
 
+def _no_route(transport: SolisWebTransport) -> None:
+    """The stick is powered down: the network has no route to it."""
+
+    async def unreachable(path: str) -> bytes:
+        raise OSError(errno.EHOSTUNREACH, "no route to host")
+
+    transport._client._exchange = unreachable  # type: ignore[method-assign]
+
+
 async def test_night_keeps_totals_and_a_dark_stick_without_a_sample_is_offline(
     stick: WebStickEmulator,
 ) -> None:
     """No route is asleep, as for the other inverter-powered sticks."""
     transport = _transport(stick)
     await transport.async_read()
-    port = stick.port
-    await stick.close()
+    _no_route(transport)
     asleep = await transport.async_read()
     assert asleep.source == "asleep"
     assert asleep.inverters[0].ac_power_w == 0.0
     assert asleep.inverters[0].energy_total_kwh == 21986.0
     assert (await transport.async_read()).source == "asleep"
-    fresh = SolisWebTransport("127.0.0.1", "123456789", port=port, timeout=1)
+    fresh = SolisWebTransport("127.0.0.1", "123456789", port=stick.port, timeout=1)
+    _no_route(fresh)
     with pytest.raises(SolisLoggerOffline):
         await fresh.async_read()
+    refused = SolisWebTransport("127.0.0.1", "123456789", port=1, timeout=1)
+    with pytest.raises(SolisLoggerBusy) as fault:
+        await refused.async_read()
+    assert fault.value.reason == REASON_WEB_PAGE
 
 
 async def test_wrong_password_pauses_and_recovers(
@@ -530,14 +522,13 @@ async def test_both_mode_falls_back_to_a_fresh_cloud_sample(stick: WebStickEmula
     degraded = await transport.async_read()
     assert degraded.source == "degraded"
     assert transport.degraded_reason == REASON_WEB_AUTH
-    await stick.close()
-    dark = SolisPriorityTransport(
-        "both", SolisWebTransport("127.0.0.1", "x", port=port, timeout=1), _Cloud()
-    )
+    dark_stick = SolisWebTransport("127.0.0.1", "x", port=port, timeout=1)
+    _no_route(dark_stick)
+    dark = SolisPriorityTransport("both", dark_stick, _Cloud())
     assert (await dark.async_read()).source == "asleep"
-    only = SolisPriorityTransport(
-        "both", SolisWebTransport("127.0.0.1", "x", port=port, timeout=1), _DownCloud()
-    )
+    gone = SolisWebTransport("127.0.0.1", "x", port=port, timeout=1)
+    _no_route(gone)
+    only = SolisPriorityTransport("both", gone, _DownCloud())
     with pytest.raises(SolisLoggerOffline):
         await only.async_read()
 

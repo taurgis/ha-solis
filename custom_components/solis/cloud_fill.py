@@ -32,7 +32,7 @@ def fill_from_cloud(
     """Return the web snapshot with every field it lacks taken from ``cloud``.
 
     ``fresh`` is false for a cloud sample older than the freshness window: only
-    the slow counters and names are kept then, not live readings.
+    the slow counters and names are kept then, not live readings or alarms.
     """
     donor = match_inverter(cloud, serial)
     if donor is None or not web.inverters:
@@ -70,8 +70,8 @@ def fill_from_cloud(
         web,
         stations=cloud.stations or web.stations,
         inverters=(merged, *web.inverters[1:]),
-        alarms=cloud.alarms,
+        alarms=cloud.alarms if fresh else (),
         collectors=cloud.collectors or web.collectors,
-        epms=cloud.epms,
+        epms=cloud.epms if fresh else (),
         partial=False,
     )

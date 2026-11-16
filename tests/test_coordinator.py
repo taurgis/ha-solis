@@ -10,6 +10,7 @@ import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import UpdateFailed
 
 from custom_components.solis.const import DOMAIN
@@ -82,12 +83,10 @@ async def test_auth_starts_reauth_once_then_clears(hass: HomeAssistant) -> None:
         entry,
         _Scripted([SolisAuthError("bad"), SolisAuthError("still bad"), _snapshot()]),
     )
-    with patch.object(entry, "async_start_reauth") as start_reauth:
-        with pytest.raises(UpdateFailed) as first:
-            await coordinator._async_update_data()
-        with pytest.raises(UpdateFailed):
-            await coordinator._async_update_data()
-        start_reauth.assert_called_once_with(hass)
+    with pytest.raises(ConfigEntryAuthFailed) as first:
+        await coordinator._async_update_data()
+    with pytest.raises(ConfigEntryAuthFailed):
+        await coordinator._async_update_data()
     assert first.value.translation_key == "update_auth"
     assert any(key.startswith("invalid_auth") for key in _issue_keys(hass))
     assert await coordinator._async_update_data()

@@ -89,7 +89,7 @@ async def test_http_banner_timeouts_and_a_page(socket_enabled: None) -> None:
     assert await read_http_banner("http://127.0.0.1", timeout=0.2) == ""
 
     async def _silent(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        await asyncio.sleep(30)
+        await reader.read()
         writer.close()
 
     stalled = await asyncio.start_server(_silent, "127.0.0.1", 0)
@@ -98,6 +98,7 @@ async def test_http_banner_timeouts_and_a_page(socket_enabled: None) -> None:
         assert await read_http_banner("127.0.0.1", port=stalled_port, timeout=0.2) == ""
     finally:
         stalled.close()
+        stalled.close_clients()
         await stalled.wait_closed()
 
 

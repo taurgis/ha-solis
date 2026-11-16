@@ -32,12 +32,17 @@ def consider_energy(
     *,
     monotonic: bool,
     period_changed: bool,
+    carried: bool = False,
 ) -> float | None:
     """Return the reading to publish.
 
     Lifetime counters never move backwards. A daily, monthly or yearly counter
     may drop only when its plant-local period has rolled. Inside a period, a
     null, a zero or a smaller number keeps the last good reading.
+
+    ``carried`` marks a reading kept from the poll that crossed into the new period.
+    A source that still shows yesterday's number at that moment would otherwise pin
+    the new period to it, so the first lower value is a reset, not a dip.
     """
     value = sanitize_kwh(value)
     if period_changed and not monotonic:
@@ -45,6 +50,8 @@ def consider_energy(
     if value is None:
         return last
     if last is None:
+        return value
+    if carried and not monotonic and value < last:
         return value
     if value < last or value - last > MAX_JUMP_KWH:
         return last

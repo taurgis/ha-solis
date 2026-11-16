@@ -46,10 +46,14 @@ documentation for users is `docs/configuration.md`.
   logger's identity (see `local-transport`) is the unique id of a local one.
   The same key or stick cannot be added twice; a duplicate updates the host.
 - **Reauth** replaces the key id and secret and refuses a key from another
-  account.
+  account. The account is told by the key id stored on the entry, because the
+  unique id of an entry with a stick is the stick's.
 - **Reconfigure** changes URL, plants, polling numbers, timezone, and the
   logger address/port/kind without deleting entities; a cloud entry can gain
-  a logger here.
+  a logger here. The Connection field switches an entry back to cloud only
+  (the saved logger fields stay). A logger id another entry already uses is
+  refused, and a saved web password is reused only for the host it was saved
+  for.
 - **Options** hold poll interval, request timeout, endpoint gap and plant
   timezone only; they never ask for the logger address.
 - **DHCP** (`manifest.json`: OUI `BC54F9*` and known gateway hostnames)
@@ -65,7 +69,8 @@ documentation for users is `docs/configuration.md`.
 - Diagnostics include the snapshot and the local session (kind, protocol,
   port, slave, register map, experimental flag, detection code with its
   sentence). Key id, secret, portal credentials, the logger web password, location,
-  host, MAC and serials are redacted.
+  host, MAC and the logger serial are redacted. Inverter serials and plant ids
+  stay so a device report can be matched to its rows.
 
 ## Boundary
 

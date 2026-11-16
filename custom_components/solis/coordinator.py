@@ -12,6 +12,7 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -74,6 +75,7 @@ _LOGGER = logging.getLogger(__name__)
 
 _BACKOFF_CAP = 900.0
 _LOCK_REPAIR_AFTER = 600.0
+_SAVE_EVERY = 300.0
 _FIXABLE_LOGGER_ISSUES = {ISSUE_LOGGER_GATEWAY, ISSUE_LOGGER_PROTOCOL, ISSUE_LOGGER_S5}
 _LOGGER_ISSUES = (
     ISSUE_LOGGER_LOCKED,
@@ -226,6 +228,11 @@ _SUPPORTS_RETRY_AFTER = "retry_after" in inspect.signature(UpdateFailed.__init__
 _TRANSIENT = (SolisTimeoutError, SolisServerError, SolisRateLimitError)
 
 
+def snapshot_store(hass: HomeAssistant, entry_id: str) -> Store[dict[str, Any]]:
+    """The file that keeps the last good snapshot across restarts."""
+    return Store(hass, 1, f"{DOMAIN}.snapshot.{entry_id}")
+
+
 def _failed(key: str, retry_after: float | None = None) -> UpdateFailed:
     """Return a translated update failure. The coordinator logs it once."""
     if retry_after is not None and _SUPPORTS_RETRY_AFTER:
@@ -300,11 +307,8 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
         self._degraded_logged = False
         self._reason = ""
         self._last_good: SolisSnapshot | None = None
-        self._store: Store[dict[str, Any]] = Store(
-            hass,
-            1,
-            f"{DOMAIN}.snapshot.{entry.entry_id}",
-        )
+        self._saved_at = float("-inf")
+        self._store = snapshot_store(hass, entry.entry_id)
 
     async def _async_update_data(self) -> SolisSnapshot:
         """Fetch a snapshot.
@@ -319,12 +323,12 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
         try:
             snapshot = await self.transport.async_read()
         except SolisAuthError as err:
-            already = self._issue_id(ISSUE_AUTH) in self._open_issues
             self.auth_failed = True
             self._open(ISSUE_AUTH, ir.IssueSeverity.ERROR, fixable=True)
-            if not already:
-                self.config_entry.async_start_reauth(self.hass)
-            raise _failed("update_auth") from err
+            # Home Assistant starts reauth and stops polling with the rejected key.
+            raise ConfigEntryAuthFailed(
+                translation_domain=DOMAIN, translation_key="update_auth"
+            ) from err
         except SolisClockError as err:
             self._open(ISSUE_CLOCK, ir.IssueSeverity.ERROR, fixable=False)
             raise _failed("update_clock") from err
@@ -345,7 +349,26 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
             raise _failed("update_failed") from err
         if not _has_live_inverter(snapshot):
             return await self._hold(SolisServerError("no live inverter readings"))
-        return await self._accept(snapshot)
+        accepted = await self._accept(snapshot)
+        self._flag_cloud_side()
+        return accepted
+
+    def _cloud_side_keys(self) -> set[str]:
+        """Repairs the cloud half of a local-plus-cloud entry still needs open."""
+        error = getattr(self.transport, "cloud_error", None)
+        if isinstance(error, SolisAuthError):
+            return {ISSUE_AUTH}
+        if isinstance(error, SolisClockError):
+            return {ISSUE_CLOCK}
+        return set()
+
+    def _flag_cloud_side(self) -> None:
+        """A local read worked while SolisCloud rejected the key or the clock."""
+        for key in self._cloud_side_keys():
+            already = self._issue_id(key) in self._open_issues
+            self._open(key, ir.IssueSeverity.ERROR, fixable=key == ISSUE_AUTH)
+            if key == ISSUE_AUTH and not already:
+                self.config_entry.async_start_reauth(self.hass)
 
     async def _accept(self, snapshot: SolisSnapshot) -> SolisSnapshot:
         if snapshot.source == "asleep":
@@ -489,11 +512,23 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
         delay: float = min(_BACKOFF_CAP, paced)
         return delay
 
-    async def _persist(self, snapshot: SolisSnapshot) -> None:
+    async def _persist(self, snapshot: SolisSnapshot, *, force: bool = False) -> None:
+        """Keep the last snapshot for a restart. Writes are spaced out to spare flash storage."""
+        now = time.monotonic()
+        if not force and now - self._saved_at < _SAVE_EVERY:
+            return
         try:
             await self._store.async_save(snapshot_to_dict(snapshot))
         except (OSError, TypeError, ValueError):
             _LOGGER.debug("Could not store the last Solis snapshot", exc_info=True)
+        else:
+            self._saved_at = now
+
+    async def async_shutdown(self) -> None:
+        """Write the last good snapshot once, so a restart starts from it."""
+        if self._last_good is not None:
+            await self._persist(self._last_good, force=True)
+        await super().async_shutdown()
 
     async def _load_stored(self) -> SolisSnapshot | None:
         try:
@@ -544,7 +579,10 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
         self._open_issues.add(issue_id)
 
     def _clear_recovered(self) -> None:
+        kept = self._cloud_side_keys()
         for key in POLL_REPAIRS:
+            if key in kept:
+                continue
             issue_id = self._issue_id(key)
             if issue_id in self._open_issues:
                 ir.async_delete_issue(self.hass, DOMAIN, issue_id)

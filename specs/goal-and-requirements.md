@@ -63,7 +63,8 @@ hultenvp/solis-sensor. Installed through HACS or by copying
   and device ids are rewritten on startup so history carries over.
 - **Discovery and moving addresses.** Solarman sticks and known gateways are
   matched over DHCP; a logger is identified by serial/MAC, never by IP.
-- **Diagnostics** with secrets, location, host, MAC and serials redacted.
+- **Diagnostics** with secrets, location, host, MAC and the logger serial redacted. Inverter and plant ids stay so a device
+  report can be matched to its rows.
 - **Translations**: English and Dutch.
 
 ## Non-goals

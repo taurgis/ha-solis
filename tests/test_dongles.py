@@ -85,12 +85,13 @@ class RtuBox:
     async def close(self) -> None:
         if self._server is not None:
             self._server.close()
+            self._server.close_clients()
             await self._server.wait_closed()
 
     async def _client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
             if self.mode == "silent":
-                await asyncio.sleep(30)
+                await reader.read()
                 return
             if self.mode == "close":
                 return
@@ -100,7 +101,7 @@ class RtuBox:
             if self.mode == "partial":
                 writer.write(b"\x01\x04")
                 await writer.drain()
-                await asyncio.sleep(30)
+                await reader.read()
                 return
             while True:
                 request = await asyncio.wait_for(reader.readexactly(8), timeout=2)
@@ -175,6 +176,7 @@ class MbapBox:
     async def close(self) -> None:
         if self._server is not None:
             self._server.close()
+            self._server.close_clients()
             await self._server.wait_closed()
 
     async def _client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -182,7 +184,7 @@ class MbapBox:
             if self.mode == "partial":
                 writer.write(b"\x00\x01\x00")
                 await writer.drain()
-                await asyncio.sleep(30)
+                await reader.read()
                 return
             if self.mode == "reset":
                 await _linger_reset(reader, writer)

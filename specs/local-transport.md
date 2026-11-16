@@ -62,13 +62,21 @@ config form reads `SELECTABLE_KINDS`, so the list is not copied.
   no page (`web_page`) is a paused session with the usual backoff, not night;
   no route is asleep. Both reasons share one repair. Evidence and field
   layout: `docs/research/web-page-stick.md`.
+- **One paced cloud read.** `SolisPriorityTransport._optional_cloud` is the only
+  cloud read behind a local source: at most every 5 minutes (60 s after a
+  failure), within a 20 s budget, cached. The fill, the identity read and the
+  degraded, asleep and offline fallbacks all use it, so a paused stick never
+  turns every poll into a full cloud read. A rejected key or a wrong clock is
+  kept in `cloud_error` for the coordinator instead of being swallowed.
 - **Cloud fills a web-page stick.** The page lacks month and year energy,
   frequency, phases, strings, the series name, the plant and alarms. In `both`
   mode the page wins for the fields it has and `fill_from_cloud` takes the
   rest from a cached cloud sample, read at most every 5 minutes (60 s after a
   failure) because both sources share the five-minute cycle. A failed read
-  keeps the cache; a sample older than 15 minutes supplies totals and names
-  only, never live readings. The cloud inverter is matched by serial. Other
+  keeps the cache; a sample fetched or measured more than 15 minutes ago
+  supplies totals and names only, never live readings, phases, strings or
+  alarms. A snapshot without a matching fill is `partial`, so the sensor
+  platform does not prune the plant's devices. The cloud inverter is matched by serial. Other
   local kinds keep the older rule: cloud identity once, energy fill only when
   the local sample is asleep or degraded (`LocalSource.cloud_fill`).
 - **Port 502 is named from port 80, not Modbus.** An S2 and a gateway return

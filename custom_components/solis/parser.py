@@ -74,7 +74,10 @@ def parse_epoch(value: Any) -> datetime | None:
         number = number / 1000.0
     if number < 1_000_000_000:
         return None
-    return datetime.fromtimestamp(number, UTC)
+    try:
+        return datetime.fromtimestamp(number, UTC)
+    except (OverflowError, ValueError, OSError):
+        return None
 
 
 def parse_offset_hours(value: Any) -> float | None:

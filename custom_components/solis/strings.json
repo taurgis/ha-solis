@@ -108,23 +108,7 @@
           "inverter_serial": "Optional SolisCloud inverter serial. Set it so local and cloud entities stay the same device.",
           "api_url": "Use the host that issued the key, including the port. The international service listens on port 13333.",
           "station_ids": "Only the selected plants are polled. Change the set later with reconfigure.",
-          "logger_password": "Only for Solis web page. Leave empty for the factory password 123456789. Some firmware replaces it with the Wi-Fi password."
-        }
-      },
-      "init": {
-        "title": "Solis options",
-        "description": "Polling and the timezone used for today, this month and this year. To change the logger address, port or type, use Reconfigure.",
-        "data": {
-          "scan_interval": "Poll interval (seconds)",
-          "request_timeout": "Request timeout (seconds)",
-          "endpoint_interval": "Minimum gap per endpoint (seconds)",
-          "time_zone": "Plant timezone"
-        },
-        "data_description": {
-          "time_zone": "Leave empty to follow Home Assistant when it is within an hour of the plant offset. Use an IANA name such as Europe/London to force one, or plant to keep the numeric offset from Solis.",
-          "scan_interval": "Seconds between polls. Cloud samples arrive about every five minutes, so a cloud-only entry stays at 60 or slower (default 300). A local logger defaults to 60 and cannot be faster than 30.",
-          "request_timeout": "Seconds to wait for one HTTP call. Default 30.",
-          "endpoint_interval": "Minimum seconds between calls to the same API path. Default 2, which stays under the published limit of two calls per second."
+          "logger_password": "Web password of the stick page. Leave empty to keep the saved password. Type 123456789 for the factory password. Some firmware replaces it with the Wi-Fi password."
         }
       }
     },
@@ -149,10 +133,11 @@
       "logger_choice": "Port 502 returned a Solis map and the web page did not name the device. In this form, set Logger to Solis S2-WL-ST or Modbus TCP gateway instead of Auto-detect.",
       "invalid_logger": "The port must be 1 to 65535, the slave 1 to 247, and a Solarman serial must be the number printed on the stick.",
       "logger_web_password": "The stick rejected the web password. The user is admin and the factory password is 123456789. Some firmware replaces it with your Wi-Fi password. Fill the password field and try again.",
-      "logger_web_page": "The stick answered on port 80 and the page was not the Solis inverter page, or no page came back. Open the stick address in a browser and check that it shows the inverter status."
+      "logger_web_page": "The stick answered on port 80 and the page was not the Solis inverter page, or no page came back. Open the stick address in a browser and check that it shows the inverter status.",
+      "already_configured": "This account or logger is already configured."
     },
     "abort": {
-      "already_configured": "This API key is already configured.",
+      "already_configured": "This account or logger is already configured.",
       "reauth_successful": "Authentication refreshed.",
       "reconfigure_successful": "Configuration updated.",
       "cannot_connect": "Could not reach SolisCloud to load plants.",
@@ -384,6 +369,9 @@
     },
     "update_logger_web": {
       "message": "The stick web page rejected the password or did not return inverter data. SolisCloud is used when a fresh sample is available."
+    },
+    "no_source": {
+      "message": "Solis has no cloud account or local logger."
     }
   },
   "selector": {
@@ -412,6 +400,29 @@
         "usr": "USR-TCP232 RS485 socket (26)",
         "esp": "ESPHome stream server (6638)"
       }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Solis options",
+        "description": "Polling and the timezone used for today, this month and this year. To change the logger address, port or type, use Reconfigure.",
+        "data": {
+          "scan_interval": "Poll interval (seconds)",
+          "request_timeout": "Request timeout (seconds)",
+          "endpoint_interval": "Minimum gap per endpoint (seconds)",
+          "time_zone": "Plant timezone"
+        },
+        "data_description": {
+          "time_zone": "Leave empty to follow Home Assistant when it is within an hour of the plant offset. Use an IANA name such as Europe/London to force one, or plant to keep the numeric offset from Solis.",
+          "scan_interval": "Seconds between polls. Cloud samples arrive about every five minutes, so a cloud-only entry stays at 60 or slower (default 300). A local logger defaults to 60 and cannot be faster than 30.",
+          "request_timeout": "Seconds to wait for one HTTP call. Default 30.",
+          "endpoint_interval": "Minimum seconds between calls to the same API path. Default 2, which stays under the published limit of two calls per second."
+        }
+      }
+    },
+    "error": {
+      "invalid_timezone": "Enter an IANA timezone such as Europe/London, or plant to keep the Solis offset."
     }
   }
 }

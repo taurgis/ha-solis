@@ -9,8 +9,9 @@ known, and registers at 3050 and above are not retried after they fail.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 import logging
 import random
@@ -48,7 +49,6 @@ from .const import (
     PROTOCOL_MBTCP_ALT,
     PROTOCOL_RTU,
     PROTOCOL_V5,
-    REASON_CLOSED,
     REASON_GARBAGE,
     REASON_GATEWAY,
     REASON_LOCKED,
@@ -72,7 +72,13 @@ from .const import (
     SOURCE_LOCAL,
     WEB_DEFAULT_PASSWORD,
 )
-from .errors import SolisCloudError, SolisLoggerBusy, SolisLoggerOffline
+from .errors import (
+    SolisAuthError,
+    SolisClockError,
+    SolisCloudError,
+    SolisLoggerBusy,
+    SolisLoggerOffline,
+)
 from .loggers import detection_code, spec_for
 from .loggers.rtu import RtuTcpClient
 from .models import (
@@ -106,6 +112,8 @@ _FRESH = timedelta(minutes=15)
 # fill is read at that pace, and again sooner after a failed read.
 _FILL_EVERY = 300.0
 _FILL_RETRY = 60.0
+# One cloud read may take 3 tries of 30 s. The local poll must not wait that long for it.
+_CLOUD_BUDGET = 20.0
 _PROTOCOLS = (PROTOCOL_V5, PROTOCOL_MBTCP, PROTOCOL_MBTCP_ALT)
 _KNOWN_PROTOCOLS = (*_PROTOCOLS, PROTOCOL_RTU)
 _FC3_KINDS = {LOGGER_S2, LOGGER_S5, LOGGER_MBTCP, LOGGER_RTU}
@@ -221,10 +229,15 @@ def _asleep_inverter(inverter: InverterSnapshot, now: datetime) -> InverterSnaps
         consumption_power_w=0.0 if inverter.consumption_power_w is not None else None,
         battery_power_w=0.0 if inverter.battery_power_w is not None else None,
         frequency_hz=None,
+        temperature_c=None,
         data_source="asleep",
         unreachable=False,
-        phases=tuple(replace(phase, power_w=0.0, current_a=0.0) for phase in inverter.phases),
-        strings=tuple(replace(pv, power_w=0.0, current_a=0.0) for pv in inverter.strings),
+        phases=tuple(
+            replace(phase, voltage_v=None, power_w=0.0, current_a=0.0) for phase in inverter.phases
+        ),
+        strings=tuple(
+            replace(pv, voltage_v=None, power_w=0.0, current_a=0.0) for pv in inverter.strings
+        ),
     )
 
 
@@ -599,6 +612,7 @@ class SolisPriorityTransport:
         self._cloud = cloud
         self._fill: SolisSnapshot | None = None
         self._fill_due = 0.0
+        self.cloud_error: SolisCloudError | None = None
 
     async def async_read(self) -> SolisSnapshot:
         """Read local first. Night keeps totals. A reset uses the cloud when it is fresh."""
@@ -641,25 +655,22 @@ class SolisPriorityTransport:
         """Fill fields the reader lacks from a cached cloud sample, refreshed every 5 minutes."""
         transport = self._local
         assert transport is not None
-        if self._cloud is not None and time.monotonic() >= self._fill_due:
-            sample = await self._optional_cloud()
-            if sample is None:
-                self._fill_due = time.monotonic() + _FILL_RETRY
-            else:
-                self._fill = sample
-                self._fill_due = time.monotonic() + _FILL_EVERY
-        if self._fill is None:
+        if self._cloud is None:
             return local
+        sample = await self._optional_cloud()
+        # A fill that is missing or for another inverter must not prune the plant's devices.
+        unfilled = replace(local, partial=True)
+        if sample is None:
+            return unfilled
         serial = transport.inverter_serial
-        donor = match_inverter(self._fill, serial)
+        donor = match_inverter(sample, serial)
         if donor is None:
-            return local
+            return unfilled
         if placeholder_serial(serial, transport.logger_serial) and donor.serial:
             transport.adopt_serial(donor.serial)
             serial = donor.serial
         transport.note_identity(donor)
-        fresh = datetime.now(UTC) - self._fill.fetched_at <= _FRESH
-        return fill_from_cloud(local, self._fill, serial=serial, fresh=fresh)
+        return fill_from_cloud(local, sample, serial=serial, fresh=_donor_is_fresh(sample, donor))
 
     async def _with_identity(self, local: SolisSnapshot) -> SolisSnapshot:
         """One cloud read can supply the inverter serial, series and model code."""
@@ -694,12 +705,28 @@ class SolisPriorityTransport:
         return replace(local, inverters=(named, *local.inverters[1:]))
 
     async def _optional_cloud(self) -> SolisSnapshot | None:
+        """The cloud sample, read at most every 5 minutes. A failure is retried after a minute.
+
+        The cloud publishes about every 5 minutes, so a faster read only spends rate limit.
+        A rejected key or a wrong clock is kept in ``cloud_error`` for the coordinator.
+        """
         if self._cloud is None:
             return None
-        try:
-            return _tagged(await _read_cloud(self._cloud), "cloud")
-        except SolisCloudError:
-            return None
+        now = time.monotonic()
+        if now >= self._fill_due:
+            try:
+                async with asyncio.timeout(_CLOUD_BUDGET):
+                    sample = _tagged(await _read_cloud(self._cloud), "cloud")
+            except (SolisCloudError, TimeoutError) as err:
+                self._fill_due = now + _FILL_RETRY
+                self.cloud_error = (
+                    err if isinstance(err, (SolisAuthError, SolisClockError)) else None
+                )
+            else:
+                self._fill = sample
+                self._fill_due = now + _FILL_EVERY
+                self.cloud_error = None
+        return self._fill
 
     async def close(self) -> None:
         """Close the local socket. The cloud client uses Home Assistant's session."""
@@ -732,6 +759,28 @@ def _cloud_is_fresh(snapshot: SolisSnapshot) -> bool:
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=UTC)
     return datetime.now(UTC) - moment <= _FRESH
+
+
+def _donor_is_fresh(sample: SolisSnapshot, donor: InverterSnapshot) -> bool:
+    """True when the cloud was read recently and its inverter reading is recent too."""
+    now = datetime.now(UTC)
+    if now - sample.fetched_at > _FRESH:
+        return False
+    moment = donor.data_timestamp
+    if moment is None:
+        return True
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    return now - moment <= _FRESH
+
+
+def _period_value(previous: float | None, incoming: float | None) -> float | None:
+    """A today, month or year counter belongs to its period, so the newer sample wins.
+
+    The previous snapshot may hold yesterday's number. The sensor keeps a counter from
+    dropping inside a period, so a slightly older cloud value cannot cause a dip.
+    """
+    return previous if incoming is None else incoming
 
 
 def _prefer(previous: float | None, incoming: float | None) -> float | None:
@@ -770,13 +819,13 @@ def _degraded_cloud(local: LocalSource, cloud: SolisSnapshot) -> SolisSnapshot:
         model=model,
         model_code=code,
         hmi_version=version,
-        energy_today_kwh=_prefer(
+        energy_today_kwh=_period_value(
             previous.energy_today_kwh if previous else None, donor.energy_today_kwh
         ),
-        energy_month_kwh=_prefer(
+        energy_month_kwh=_period_value(
             previous.energy_month_kwh if previous else None, donor.energy_month_kwh
         ),
-        energy_year_kwh=_prefer(
+        energy_year_kwh=_period_value(
             previous.energy_year_kwh if previous else None, donor.energy_year_kwh
         ),
         energy_total_kwh=_prefer(
@@ -1061,7 +1110,7 @@ class LoggerRequest:
     timeout: float = 5.0
     gap: float = LOCAL_REQUEST_GAP
     preset: str = ""
-    password: str = ""
+    password: str = field(default="", repr=False)
 
 
 def parse_logger_form(user_input: Mapping[str, Any]) -> tuple[LoggerRequest | None, str]:
@@ -1245,8 +1294,6 @@ def _s2_busy(host: str, err: SolisLoggerOffline | None) -> SolisLoggerBusy | Non
         return SolisLoggerBusy(f"{host} port {S2_PORT} is closed", reason=REASON_TCP_DISABLED)
     if err.connected and err.reason in {REASON_TIMEOUT, REASON_GARBAGE, REASON_SILENT}:
         return SolisLoggerBusy(f"{host} accepted TCP and sent no Modbus", reason=REASON_SILENT)
-    if err.reason == REASON_CLOSED or not err.connected:
-        return None
     return None
 
 

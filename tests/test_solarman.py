@@ -689,6 +689,21 @@ async def test_reconfigure_local_and_attach(
             {"logger_host": "127.0.0.1", "logger_serial": str(SERIAL)},
         )
         assert retried["reason"] == "reconfigure_successful"
+        # The first stick now owns this logger id, so a second entry cannot take it.
+        taken = await hass.config_entries.flow.async_configure(
+            started["flow_id"],
+            {
+                "api_url": url,
+                "station_ids": ["1900000000000001001", "1900000000000001002"],
+                "scan_interval": 120,
+                "request_timeout": 30,
+                "endpoint_interval": 0.5,
+                "logger_host": "127.0.0.1",
+                "logger_serial": str(SERIAL),
+            },
+        )
+        assert taken["errors"]["base"] == "already_configured"
+        await hass.config_entries.async_remove(local.entry_id)
         updated = await hass.config_entries.flow.async_configure(
             started["flow_id"],
             {

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+import errno
 import time
 
 import pytest
@@ -172,11 +173,9 @@ async def test_frame_edges() -> None:
         decode_mbap(b"\x00\x01\x00\x00\x00\x02\x01\x84")
     with pytest.raises(ValueError):
         decode_mbap(b"\x00\x01\x00\x00\x00\x03\x01\x01\x00")
-    refused_os = OSError()
-    refused_os.errno = 111
-    assert classify_io(refused_os, connected=False).refused  # type: ignore[union-attr]
-    down = OSError()
-    down.errno = 113
+    refused = classify_io(OSError(errno.ECONNREFUSED, "refused"), connected=False)
+    assert isinstance(refused, SolisLoggerOffline) and refused.refused
+    down = OSError(errno.EHOSTUNREACH, "no route")
     assert isinstance(classify_io(down, connected=False), SolisLoggerOffline)
     wrapped = ConnectionError("x")
     wrapped.__cause__ = ConnectionResetError()
@@ -193,8 +192,7 @@ async def test_frame_edges() -> None:
     assert take_frame(b"\xa5\x10\x00" + b"\x00" * 8)[0] is None
     with pytest.raises(ValueError):
         decode_mbap(b"\x00\x01\x00\x00\x00\x04\x01\x04\x01\x00")
-    piped = OSError()
-    piped.errno = 32
+    piped = OSError(errno.EPIPE, "broken pipe")
     assert isinstance(classify_io(piped, connected=True), SolisLoggerBusy)
     from custom_components.solis.solarman import SolarmanClient
 

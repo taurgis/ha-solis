@@ -14,6 +14,7 @@ import asyncio
 import base64
 from contextlib import suppress
 from dataclasses import dataclass
+import math
 
 from ..const import (
     REASON_REFUSED,
@@ -34,6 +35,10 @@ _COLLECTOR_FIELDS = 13
 _NO_ALARM = "NO"
 # The stick pads its replies. A real stick pads the front with NUL bytes.
 _PAD = " \t\r\n\x00"
+# A reading outside these bounds is a garbled page, not a measurement.
+_MAX_POWER_W = 10_000_000.0
+_TEMPERATURE_RANGE_C = (-80.0, 300.0)
+_MAX_KWH = 10_000_000.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,16 +83,30 @@ def parse_inverter(body: str) -> WebInverter:
     fields = [item.strip(_PAD) for item in body.split(";")]
     if len(fields) < _INVERTER_FIELDS:
         raise ValueError("inverter.cgi has too few fields")
+    if not fields[7]:
+        raise ValueError("inverter.cgi has no alarm word")
+    temperature = _number(fields[3], *_TEMPERATURE_RANGE_C)
+    power = _number(fields[4], -_MAX_POWER_W, _MAX_POWER_W)
+    today = _number(fields[5], 0.0, _MAX_KWH)
+    total = _number(fields[6], 0.0, _MAX_KWH)
     return WebInverter(
         serial=fields[0],
         firmware=fields[1],
         model_code=fields[2],
-        temperature_c=float(fields[3]),
-        power_w=float(fields[4]),
-        energy_today_kwh=float(fields[5]),
-        energy_total_kwh=float(fields[6]),
+        temperature_c=temperature,
+        power_w=power,
+        energy_today_kwh=today,
+        energy_total_kwh=total,
         alarm=fields[7],
     )
+
+
+def _number(text: str, low: float, high: float) -> float:
+    """Parse one field. NaN, infinity and out-of-range numbers raise ``ValueError``."""
+    number = float(text)
+    if not math.isfinite(number) or not low <= number <= high:
+        raise ValueError(f"{text!r} is not a plausible reading")
+    return number
 
 
 def parse_collector(body: str) -> WebCollector | None:
@@ -117,6 +136,18 @@ def _split_response(raw: bytes) -> tuple[int, str]:
     if len(parts) < 2 or not parts[0].startswith(b"HTTP/") or not parts[1].isdigit():
         raise ValueError("not an HTTP reply")
     return int(parts[1]), body.decode("latin-1", errors="replace")
+
+
+def _complete(raw: bytes) -> bool:
+    """True once the body has reached its declared length, so the read need not wait for EOF."""
+    head, sep, body = raw.partition(b"\r\n\r\n")
+    if not sep:
+        return False
+    for line in head.split(b"\r\n")[1:]:
+        name, _colon, value = line.partition(b":")
+        if name.strip().lower() == b"content-length" and value.strip().isdigit():
+            return len(body) >= int(value.strip())
+    return False
 
 
 class WebStickClient:
@@ -185,16 +216,16 @@ class WebStickClient:
         try:
             writer.write(_request(self.host, path, self._password))
             await writer.drain()
-            chunks: list[bytes] = []
-            size = 0
-            while size < _MAX_BODY:
+            received = b""
+            while len(received) < _MAX_BODY:
                 chunk = await reader.read(2048)
                 if not chunk:
                     break
-                chunks.append(chunk)
-                size += len(chunk)
+                received += chunk
+                if _complete(received):
+                    break
         finally:
             writer.close()
             with suppress(ConnectionError, OSError, TimeoutError):
                 await writer.wait_closed()
-        return b"".join(chunks)
+        return received

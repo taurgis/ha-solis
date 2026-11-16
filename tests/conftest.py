@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Any
 
 from aiohttp import web
@@ -11,6 +12,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.solis.const import DOMAIN
 from mock_soliscloud.app import MockState, create_app
 from mock_soliscloud.catalog import KEY_ID, SECRET
+from mock_soliscloud.web_stick import WebStickEmulator, WebStickState
 
 
 @pytest.fixture(autouse=True)
@@ -34,6 +36,17 @@ async def solis_server(socket_enabled: None) -> Any:
         yield state, f"http://127.0.0.1:{port}"
     finally:
         await runner.cleanup()
+
+
+@pytest.fixture
+async def stick(socket_enabled: None) -> AsyncIterator[WebStickEmulator]:
+    """A web-page stick on an ephemeral port."""
+    emulator = WebStickEmulator(WebStickState())
+    await emulator.start()
+    try:
+        yield emulator
+    finally:
+        await emulator.close()
 
 
 def entry_data(url: str, stations: list[str] | None = None) -> dict[str, Any]:

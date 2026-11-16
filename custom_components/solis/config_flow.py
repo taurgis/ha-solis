@@ -85,6 +85,9 @@ from .solarman import Stick, discover_sticks, format_mac
 
 _LOGGER = logging.getLogger(__name__)
 
+_SECRET = selector.TextSelector(
+    selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
+)
 _USER_SCHEMA = vol.Schema(
     {
         vol.Optional(CONF_SOURCE, default=SOURCE_CLOUD): vol.In(
@@ -92,7 +95,7 @@ _USER_SCHEMA = vol.Schema(
         ),
         vol.Required(CONF_API_URL, default=DEFAULT_API_URL): str,
         vol.Optional(CONF_KEY_ID, default=""): str,
-        vol.Optional(CONF_KEY_SECRET, default=""): str,
+        vol.Optional(CONF_KEY_SECRET, default=""): _SECRET,
     }
 )
 
@@ -196,9 +199,10 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
                 if not errors:
                     self._credentials = user_input
                     return await self.async_step_stations()
-        return self.async_show_form(
-            step_id="user", data_schema=_schema(_USER_SCHEMA), errors=errors
-        )
+        schema = _schema(_USER_SCHEMA)
+        if user_input is not None:
+            schema = self.add_suggested_values_to_schema(schema, user_input)
+        return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
 
     async def async_step_stations(
         self, user_input: dict[str, Any] | None = None
@@ -262,8 +266,10 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
             }
             errors = await self._load_stations(candidate)
             if not errors:
-                await self.async_set_unique_id(candidate[CONF_KEY_ID])
-                self._abort_if_unique_id_mismatch(reason="wrong_account")
+                # The unique id is a logger id on entries with a local stick, so the key
+                # id on the entry is what tells an account apart.
+                if candidate[CONF_KEY_ID] != str(entry.data.get(CONF_KEY_ID) or ""):
+                    return self.async_abort(reason="wrong_account")
                 return self.async_update_reload_and_abort(
                     entry,
                     data_updates={
@@ -274,7 +280,7 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
         schema = vol.Schema(
             {
                 vol.Required(CONF_KEY_ID, default=entry.data.get(CONF_KEY_ID, "")): str,
-                vol.Required(CONF_KEY_SECRET): str,
+                vol.Required(CONF_KEY_SECRET): _SECRET,
             }
         )
         return self.async_show_form(
@@ -314,12 +320,20 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
                 host = str(user_input.get(CONF_LOGGER_HOST) or "").strip()
                 serial_text = str(user_input.get(CONF_LOGGER_SERIAL) or "").strip()
                 kind_text = str(user_input.get(CONF_LOGGER_KIND) or "")
-                if host and (serial_text or kind_text == LOGGER_WEB):
+                current = str(entry.data.get(CONF_SOURCE, SOURCE_CLOUD))
+                chosen = str(user_input.get(CONF_SOURCE) or current)
+                if chosen == SOURCE_CLOUD and current != SOURCE_CLOUD:
+                    # Back to cloud only. The saved logger fields stay for a later switch.
+                    data_updates[CONF_SOURCE] = SOURCE_CLOUD
+                elif host and (serial_text or kind_text == LOGGER_WEB):
+                    # A logger on a cloud entry makes it local with a cloud fallback.
                     fields, unique, failure = await self._logger_updates(
-                        user_input, source=SOURCE_BOTH
+                        user_input, source=SOURCE_BOTH if chosen == SOURCE_CLOUD else chosen
                     )
                     if failure:
                         errors["base"] = failure
+                    elif self._unique_id_taken(unique, entry):
+                        errors["base"] = "already_configured"
                     else:
                         data_updates.update(fields)
                         unique_id = unique
@@ -528,8 +542,12 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
         if error or request is None:
             return {}, "", error or "invalid_logger"
         if self.source == "reconfigure" and not request.password:
-            saved = self._get_reconfigure_entry().data.get(CONF_LOGGER_PASSWORD)
-            request = replace(request, password=str(saved or ""))
+            # The saved password goes only to the host it was saved for.
+            saved_entry = self._get_reconfigure_entry().data
+            if request.host == str(saved_entry.get(CONF_LOGGER_HOST) or ""):
+                request = replace(
+                    request, password=str(saved_entry.get(CONF_LOGGER_PASSWORD) or "")
+                )
         try:
             probe = await identify_logger(request)
         except (SolisLoggerBusy, SolisLoggerOffline, ValueError, TimeoutError) as err:
@@ -543,10 +561,17 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
         fields, unique = logger_setup(request, probe, mac=mac, source=source)
         return fields, unique, ""
 
+    def _unique_id_taken(self, unique: str, entry: ConfigEntry) -> bool:
+        """True when another entry already uses this unique id."""
+        other = self.hass.config_entries.async_entry_for_domain_unique_id(DOMAIN, unique)
+        return other is not None and other.entry_id != entry.entry_id
+
     async def _finish_logger(self, logger_data: dict[str, Any], unique: str) -> ConfigFlowResult:
         await self.async_set_unique_id(unique)
         if self.source == "reconfigure":
             entry = self._get_reconfigure_entry()
+            if self._unique_id_taken(unique, entry):
+                return self.async_abort(reason="already_configured")
             base = dict(entry.data)
             base.update(logger_data)
             return self.async_update_reload_and_abort(

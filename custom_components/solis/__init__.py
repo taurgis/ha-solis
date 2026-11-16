@@ -52,7 +52,7 @@ from .const import (
     SOURCE_BOTH,
     SOURCE_CLOUD,
 )
-from .coordinator import SolisCoordinator
+from .coordinator import SolisCoordinator, snapshot_store
 from .local_transport import SolisLocalTransport, SolisPriorityTransport
 from .loggers import kind_label
 from .migration import async_adopt_inverter_serial, async_migrate_devices
@@ -96,6 +96,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolisConfigEntry) -> boo
     return True
 
 
+async def async_remove_entry(hass: HomeAssistant, entry: SolisConfigEntry) -> None:
+    """Delete what the entry left behind: the stored snapshot and the migration repair."""
+    await snapshot_store(hass, entry.entry_id).async_remove()
+    ir.async_delete_issue(hass, DOMAIN, f"{ISSUE_LEGACY_CONTROL}_{entry.entry_id}")
+
+
 async def async_unload_entry(hass: HomeAssistant, entry: SolisConfigEntry) -> bool:
     """Unload a config entry and drop poll-failure repairs."""
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
@@ -130,7 +136,7 @@ def _build_transport(
         )
     if source == SOURCE_CLOUD or not entry.data.get(CONF_LOGGER_HOST):
         if cloud is None:
-            raise ConfigEntryNotReady("Solis has no cloud account or local logger")
+            raise ConfigEntryNotReady(translation_domain=DOMAIN, translation_key="no_source")
         return cloud
     kind = str(entry.data.get(CONF_LOGGER_KIND) or "")
     serial_text = str(entry.data.get(CONF_LOGGER_SERIAL) or "0")
@@ -210,6 +216,9 @@ def _store_logger_host(hass: HomeAssistant, entry: SolisConfigEntry, host: str, 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Migrate a solis-sensor 4.x entry, then mark cloud-only entries as version 3."""
+    if entry.version > 3:
+        _LOGGER.error("This Solis config entry was written by a newer release; not loading it")
+        return False
     _LOGGER.info("Migrating Solis config entry from version %s", entry.version)
     if entry.version < 2:
         had_control = bool(entry.data.get("portal_control_api"))

@@ -31,7 +31,8 @@ from .local_transport import (
     placeholder_serial,
 )
 from .loggers import spec_for
-from .loggers.web import WebInverter, WebStickClient
+from .loggers.fingerprint import read_http_banner
+from .loggers.web import WebInverter, WebStickClient, is_solis_web_banner
 from .models import InverterSnapshot, SolisSnapshot
 from .solarman import host_gate
 
@@ -155,8 +156,8 @@ class SolisWebTransport:
             self._busy_logged = True
 
     def _after_offline(self, err: SolisLoggerOffline) -> SolisSnapshot:
-        """TCP that opened and then gave no page is a fault. No route is night."""
-        if err.connected:
+        """TCP that opened or a port that refused means the stick is up. No route is night."""
+        if err.connected or err.refused:
             failure = SolisLoggerBusy(str(err), reason=REASON_WEB_PAGE)
             self._pause(failure)
             raise failure from err
@@ -242,9 +243,6 @@ async def probe_web(request: LoggerRequest, *, auto: bool) -> LoggerProbe:
     Raises ``SolisLoggerBusy`` with a web reason for a wrong password or a page
     in another format, and ``SolisLoggerOffline`` when nothing answers.
     """
-    from .loggers.fingerprint import read_http_banner
-    from .loggers.web import is_solis_web_banner
-
     port = request.port or WEB_PORT
     if auto and not is_solis_web_banner(
         await read_http_banner(request.host, timeout=min(request.timeout, 3.0), port=port)

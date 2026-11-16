@@ -35,7 +35,7 @@ _MONTHS = (
 
 def content_md5(body: bytes) -> str:
     """Return the Base64 MD5 of the exact request body."""
-    return base64.b64encode(hashlib.md5(body).digest()).decode("ascii")
+    return base64.b64encode(hashlib.md5(body, usedforsecurity=False).digest()).decode("ascii")
 
 
 def format_http_date(moment: datetime) -> str:
@@ -107,7 +107,7 @@ def signature_matches(
     provided_auth = headers.get("Authorization", "")
     if not provided_md5 or not date_value or not provided_auth:
         return False
-    if not hmac.compare_digest(provided_md5, content_md5(body)):
+    if not hmac.compare_digest(provided_md5.encode(), content_md5(body).encode()):
         return False
     expected = authorization_value(
         key_id,
@@ -118,4 +118,4 @@ def signature_matches(
             path=path,
         ),
     )
-    return hmac.compare_digest(provided_auth, expected)
+    return hmac.compare_digest(provided_auth.encode(), expected.encode())

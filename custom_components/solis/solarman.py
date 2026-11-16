@@ -263,7 +263,11 @@ def parse_discovery(payload: bytes) -> Stick | None:
         serial = int(parts[2])
     except ValueError:
         return None
-    return Stick(host=parts[0], mac=format_mac(parts[1]), serial=serial)
+    try:
+        host = str(ipaddress.ip_address(parts[0]))
+    except ValueError:
+        return None
+    return Stick(host=host, mac=format_mac(parts[1]), serial=serial)
 
 
 def _is_refused(err: BaseException) -> bool:
@@ -584,7 +588,15 @@ class ModbusTcpClient(_PacedClient):
                 connected=True,
                 reason="wrong_slave",
             )
-        words = decode_mbap(frame)
+        try:
+            words = decode_mbap(frame)
+        except ValueError as err:
+            await self.close()
+            raise SolisLoggerOffline(
+                "modbus tcp reply is not a valid read response",
+                connected=True,
+                reason="garbage",
+            ) from err
         if len(words) != count:
             await self.close()
             raise SolisLoggerOffline(

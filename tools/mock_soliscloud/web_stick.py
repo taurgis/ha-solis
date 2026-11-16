@@ -70,6 +70,8 @@ class WebStickEmulator:
         """Stop listening, as when the inverter powers the stick off."""
         if self._server is not None:
             self._server.close()
+            if hasattr(self._server, "close_clients"):  # Python 3.13 and later
+                self._server.close_clients()
             await self._server.wait_closed()
             self._server = None
 
@@ -86,12 +88,14 @@ class WebStickEmulator:
             if self.state.mode == "reset":
                 self.state.requests.append("reset")
                 sock = writer.get_extra_info("socket")
-                if isinstance(sock, socket.socket):
+                if sock is not None:
+                    # Closing with a zero linger sends a TCP reset instead of a FIN.
                     sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
                 return
             if self.state.mode == "hang":
                 self.state.requests.append("hang")
-                await asyncio.sleep(30)
+                await reader.read()  # until the client gives up and closes
+                return
             reply = self._reply(head.decode("latin-1"))
             if reply:
                 writer.write(reply)
