@@ -631,7 +631,7 @@ async def test_empty_cloud_key_is_rejected(
         {"source": "cloud", "api_url": "http://127.0.0.1:9", "key_id": "", "key_secret": ""},
     )
     assert result["type"] is FlowResultType.FORM
-    assert result["errors"]["base"] == "invalid_auth"
+    assert result["errors"]["base"] == "key_required"
 
 
 async def test_reconfigure_local_and_attach(

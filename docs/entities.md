@@ -32,7 +32,7 @@ can offer that without a second set of sensors here.
 | Sensor | Unit | State class | Notes |
 | --- | --- | --- | --- |
 | Status | | | online, offline, alarm, stale, unknown |
-| Data source | | | Diagnostic. `local`, `cloud`, or `asleep` |
+| Data source | | | Diagnostic. `local`, `cloud`, `asleep`, or `degraded` (the local logger is paused; the last values are held or SolisCloud is used) |
 | AC power | W | measurement | 0 when freshly offline |
 | Frequency | Hz | measurement | |
 | Temperature | °C | measurement | |

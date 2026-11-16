@@ -54,6 +54,7 @@ sudo /usr/sbin/ip addr add 192.168.250.13/32 dev lo
 sudo /usr/sbin/ip addr add 192.168.250.14/32 dev lo
 sudo /usr/sbin/ip addr add 192.168.250.15/32 dev lo
 sudo /usr/sbin/ip addr add 192.168.250.16/32 dev lo
+sudo /usr/sbin/ip addr add 192.168.250.17/32 dev lo
 sudo python3 tools/lab/dongles.py
 ```
 

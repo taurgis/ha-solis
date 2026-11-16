@@ -4,7 +4,15 @@
 signature did not match. Create a new key in SolisCloud and use
 reauthentication. A portal password is not accepted. The log does not contain
 the secret. Diagnostics redact the key id, the secret and the config-entry
-unique id, which is the key id.
+unique id.
+
+**Local logger is pausing reads.** The repair `logger_locked` means the stick accepted TCP and then reset the session. The integration keeps the last values (the data source reads `degraded`) and retries after at least 10 seconds, growing to about 10 minutes. Power-cycling the inverter, or waiting, clears it. A repair opens after 10 minutes.
+
+**S5-WiFi-ST port 502 closed.** The repair `logger_s5_closed` means the S5 stick does not listen on 502, which its firmware often does. Use a Modbus TCP gateway on the inverter RS485 port, or SolisCloud only.
+
+**Control not migrated.** The repair `legacy_control` says the upstream integration's control settings were not carried over. Nothing on the inverter changed. The repair stays until you dismiss it.
+
+**No inverters.** The repair `no_inverters` has the same cause as "No plants" below.
 
 **Clock.** SolisCloud rejects requests whose `Date` header is more than 15
 minutes from UTC. If the response includes a Date header, the client signs

@@ -33,6 +33,8 @@ CONF_LOGGER_PASSWORD = "logger_password"
 
 SOURCE_CLOUD = "cloud"
 SOURCE_LOCAL = "local"
+# The placeholder plant of a local read: no values, and shared by every local entry.
+LOCAL_STATION = "local"
 SOURCE_BOTH = "both"
 DATA_DEGRADED = "degraded"
 REGISTER_STRING = "string"

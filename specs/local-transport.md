@@ -32,7 +32,7 @@ config form reads `SELECTABLE_KINDS`, so the list is not copied.
 
 | Kind | Framing | Port | Notes |
 | --- | --- | --- | --- |
-| `solarman` | V5, then plain Modbus TCP on the same port, then 30003 | 8899 | Found by UDP 48899 discovery and DHCP OUI `BC:54:F9`. |
+| `solarman` | V5, then plain Modbus TCP on the same port, then 30003 | 8899 | Found by UDP 48899 discovery (a reply counts only when it names the address it came from, and that is private or loopback) and DHCP OUI `BC:54:F9`. A frame read has an overall deadline of twice the timeout, so a peer that streams junk cannot hold the entry. |
 | `s2_wl_st` | Modbus TCP | 502 | Solis S2-WL-ST from firmware `100101B4`. |
 | `modbus_tcp` | Modbus TCP | 502 or typed | Waveshare / Elfin / USR gateway; mains-powered, so a refused port is a fault, not night. |
 | `s5_wifi_st` (experimental) | Modbus TCP | 502 | Only while firmware keeps 502 open. |

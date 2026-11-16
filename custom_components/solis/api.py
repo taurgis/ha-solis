@@ -246,6 +246,7 @@ class SolisCloudClient:
                 data=body,
                 headers=headers,
                 timeout=timeout,
+                allow_redirects=False,
             ) as response:
                 raw = await response.read()
                 status = response.status

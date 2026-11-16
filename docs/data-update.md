@@ -11,8 +11,8 @@ station detail, the day-energy row and the inverter list, then each inverter
 detail, then alarms, collectors and EPMs. Calls to one path are at least two
 seconds apart by default.
 
-HTTP 429, timeouts and HTTP 5xx are retried with exponential backoff, jitter
-and an 8 second cap. A `Retry-After` header is the minimum wait, including on
+Timeouts and HTTP 5xx are retried with exponential backoff, jitter and an
+8 second cap. HTTP 429 waits the `Retry-After` value (with a little jitter, at most 60 seconds). A `Retry-After` header is also the minimum wait on
 a 503. A 408 whose response carries a Date header is signed again at that
 clock. Other 4xx responses are not retried. Auth failures, a clock the server
 will not correct, and platform code `1` (abnormal data) are not retried.
@@ -30,7 +30,7 @@ raises `ConfigEntryNotReady`, so Home Assistant retries instead of failing
 the entry permanently.
 
 A Solarman logger is polled on its own interval. While the stick is off
-with the inverter, the interval backs off from one minute and stops at 15
+with the inverter, the interval backs off from two minutes and stops at 15
 minutes. The next successful connect, including one that finds the stick on
 a new address, returns to the configured interval. A reset after the TCP
 handshake is a different pause: at least 10 seconds, doubling up to about

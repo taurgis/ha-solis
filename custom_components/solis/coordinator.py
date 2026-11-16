@@ -308,6 +308,7 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
         self._reason = ""
         self._last_good: SolisSnapshot | None = None
         self._saved_at = float("-inf")
+        self._cleared_stale = False
         self._store = snapshot_store(hass, entry.entry_id)
 
     async def _async_update_data(self) -> SolisSnapshot:
@@ -524,10 +525,14 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
         else:
             self._saved_at = now
 
-    async def async_shutdown(self) -> None:
-        """Write the last good snapshot once, so a restart starts from it."""
+    async def async_save_now(self) -> None:
+        """Write the last good snapshot, so a restart starts from it."""
         if self._last_good is not None:
             await self._persist(self._last_good, force=True)
+
+    async def async_shutdown(self) -> None:
+        """Save on unload. A plain Home Assistant stop calls ``async_save_now`` instead."""
+        await self.async_save_now()
         await super().async_shutdown()
 
     async def _load_stored(self) -> SolisSnapshot | None:
@@ -580,10 +585,16 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
 
     def _clear_recovered(self) -> None:
         kept = self._cloud_side_keys()
+        first = not self._cleared_stale
+        self._cleared_stale = True
         for key in POLL_REPAIRS:
             if key in kept:
                 continue
             issue_id = self._issue_id(key)
+            if first:
+                # A repair opened by a setup that failed was never unloaded, so this
+                # coordinator does not know about it. Deleting is harmless when absent.
+                ir.async_delete_issue(self.hass, DOMAIN, issue_id)
             if issue_id in self._open_issues:
                 ir.async_delete_issue(self.hass, DOMAIN, issue_id)
                 self._open_issues.discard(issue_id)

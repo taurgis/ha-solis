@@ -75,7 +75,7 @@ before Home Assistant can read it. The integration probes port 502, then
    and Modbus together. Older firmware disconnects SolisCloud while TCP is
    enabled, and some later updates close port 502 entirely. See
    [docs/research/s2-wl-st.md](docs/research/s2-wl-st.md).
-3. In Home Assistant add Solis, choose Local or Local and cloud, and leave
+3. In Home Assistant add Solis, set Connection to local only or local with SolisCloud fallback, and leave
    Logger on Auto-detect. Type the IP. The logger serial is the suffix of the
    setup Wi-Fi name `D_` or `Solis_` (for example `5A12…`), not the inverter
    serial. Slave stays empty unless the inverter is not address 1. Polling
@@ -135,5 +135,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). The mock SolisCloud server checks the
 real HMAC signature:
 
 ```bash
-PYTHONPATH=. .venv/bin/python -m mock_soliscloud --port 8765
+PYTHONPATH=.:tools .venv/bin/python -m mock_soliscloud --port 8765
 ```

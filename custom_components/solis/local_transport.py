@@ -37,6 +37,7 @@ from .const import (
     CONF_SOURCE,
     DATA_DEGRADED,
     LOCAL_REQUEST_GAP,
+    LOCAL_STATION,
     LOGGER_AUTO,
     LOGGER_MBTCP,
     LOGGER_RTU,
@@ -230,6 +231,8 @@ def _asleep_inverter(inverter: InverterSnapshot, now: datetime) -> InverterSnaps
         battery_power_w=0.0 if inverter.battery_power_w is not None else None,
         frequency_hz=None,
         temperature_c=None,
+        battery_current_a=0.0 if inverter.battery_current_a is not None else None,
+        battery_voltage_v=None,
         data_source="asleep",
         unreachable=False,
         phases=tuple(
@@ -682,12 +685,16 @@ class SolisPriorityTransport:
             or not transport.needs_cloud_identity
         ):
             return local
-        transport.identity_checked = True
         cloud = await self._optional_cloud()
         if cloud is None or not cloud.inverters or not local.inverters:
             return local
-        donor = cloud.inverters[0]
+        transport.identity_checked = True
         serial = transport.inverter_serial
+        donor = match_inverter(cloud, serial)
+        if donor is None and len(cloud.inverters) == 1:
+            donor = cloud.inverters[0]
+        if donor is None:
+            return local
         if placeholder_serial(serial, transport.logger_serial) and donor.serial:
             transport.adopt_serial(donor.serial)
             serial = donor.serial
@@ -838,6 +845,8 @@ def _degraded_cloud(local: LocalSource, cloud: SolisSnapshot) -> SolisSnapshot:
         inverters=(inverter,),
         source=DATA_DEGRADED,
         fetched_at=datetime.now(UTC),
+        # The cloud plant is not this entry's local device set, so nothing may be pruned.
+        partial=True,
     )
 
 
@@ -847,7 +856,7 @@ def local_snapshot(
     return SolisSnapshot(
         stations=(
             StationSnapshot(
-                station_id="local",
+                station_id=LOCAL_STATION,
                 name="Local",
                 timezone_offset_hours=None,
                 day_energy_kwh=None,
@@ -865,7 +874,7 @@ def local_snapshot(
         collectors=(
             CollectorSnapshot(
                 serial=logger,
-                station_id="local",
+                station_id=LOCAL_STATION,
                 model=model,
                 state=1,
                 rssi=None,

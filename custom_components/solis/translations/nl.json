@@ -38,7 +38,7 @@
           "slave_id": "Laat leeg om slave 1 te proberen, daarna 2 en 3. De Solis-standaard is 1.",
           "inverter_serial": "Optioneel. Het SolisCloud-omvormerserienummer, bijvoorbeeld 110E40182280017. Laat leeg om het van de stick te lezen als dat bereik antwoordt, of van SolisCloud in de modus lokaal-en-cloud. Dit is de entiteit-id. Op een S2-WL-ST is het ook de unieke config-id als het stickserienummer leeg is.",
           "logger_preset": "Alleen voor Modbus RTU over TCP, en alleen als Poort leeg is. Elfin EW11/EE11 staat af fabriek op 8899. Waveshare RS485 TO ETH luistert op 4196 tot je dat wijzigt. USR-TCP232 gebruikt 26 op de RS485-socket en 23 op de RS232-socket. De stream server van ESPHome gebruikt vaak 6638.",
-          "logger_password": "Alleen voor Solis webpagina. Leeg laten voor het fabrieks wachtwoord 123456789. Sommige firmware vervangt het door het wifi-wachtwoord."
+          "logger_password": "Alleen voor Solis webpagina. Leeg laten voor het fabriekswachtwoord 123456789. Sommige firmware vervangt het door het wifi-wachtwoord."
         }
       },
       "logger_choice": {
@@ -75,7 +75,7 @@
       },
       "reconfigure": {
         "title": "Solis herconfigureren",
-        "description": "Werk de API-host, de te volgen installaties en de uitleesfrequentie bij.",
+        "description": "Werk de API-host, de installaties, het pollen, de tijdzone en de verbinding bij. Voeg een lokale logger toe door Verbinding op lokaal of lokaal met cloud te zetten en het logger-IP in te vullen (plus het logger-serienummer; een webpagina-stick heeft alleen het IP nodig). Kies alleen SolisCloud om de logger niet meer te gebruiken; de opgeslagen logger-velden blijven bewaard.",
         "data": {
           "source": "Verbinding",
           "logger_kind": "Logger",
@@ -118,7 +118,7 @@
       "clock_skew": "SolisCloud heeft de verzoektijd geweigerd. De klok moet binnen 15 minuten van UTC zitten.",
       "timeout": "SolisCloud antwoordde niet voor de time-out.",
       "cannot_connect": "SolisCloud is niet bereikbaar.",
-      "no_stations": "Het account gaf geen installaties terug. Controleer de API-sleutel en of de installatie een id heeft.",
+      "no_stations": "Het account gaf geen installaties terug. Controleer de API-sleutel en of de installatie een id heeft, of selecteer minstens één installatie.",
       "unknown": "Onverwachte SolisCloud-fout.",
       "logger_asleep": "Geen route naar de logger, of een time-out. 's Nachts zet de omvormer de stick uit. Probeer opnieuw terwijl hij produceert.",
       "logger_busy": "De logger heeft de lokale sessie gereset of geweigerd. Uploaden naar SolisCloud kan nog doorgaan. Wacht minstens 10 seconden en probeer één keer. Probeer niet in een strakke lus.",
@@ -132,9 +132,11 @@
       "logger_timeout": "TCP verbond en er kwam geen Solis-frame. De omvormer kan uit zijn, de baud kan niet 9600 8N1 zijn, of een transparante gateway kreeg de optie Modbus TCP. Probeer opnieuw terwijl de omvormer produceert.",
       "logger_choice": "Poort 502 gaf een Solis-map en de webpagina noemde het apparaat niet. Zet Logger in dit formulier op Solis S2-WL-ST of Modbus TCP-gateway, niet op Automatisch detecteren.",
       "invalid_logger": "De poort moet 1 tot 65535 zijn, de slave 1 tot 247, en een Solarman-serienummer moet het nummer op de stick zijn.",
-      "logger_web_password": "De stick weigerde het webwachtwoord. De gebruiker is admin en het fabrieks wachtwoord is 123456789. Sommige firmware vervangt het door je wifi-wachtwoord. Vul het wachtwoordveld in en probeer opnieuw.",
+      "logger_web_password": "De stick weigerde het webwachtwoord. De gebruiker is admin en het fabriekswachtwoord is 123456789. Sommige firmware vervangt het door je wifi-wachtwoord. Vul het wachtwoordveld in en probeer opnieuw.",
       "logger_web_page": "De stick antwoordde op poort 80 en de pagina was niet de Solis-omvormerpagina, of er kwam geen pagina terug. Open het adres van de stick in een browser en controleer of de omvormerstatus verschijnt.",
-      "already_configured": "Deze account of logger is al ingesteld."
+      "already_configured": "Deze account of logger is al ingesteld.",
+      "key_required": "Vul de API-sleutel-ID en het geheim in voor cloud of lokaal met cloud. Alleen bij alleen lokaal mogen ze leeg blijven.",
+      "logger_host_required": "Vul het IP-adres van de logger in, of kies Alleen SolisCloud."
     },
     "abort": {
       "already_configured": "Deze account of logger is al ingesteld.",
@@ -197,7 +199,7 @@
     },
     "logger_web": {
       "title": "Solis-webpaginastick geeft geen omvormerdata",
-      "description": "De webpagina van de stick weigerde het wachtwoord of gaf de Solis-omvormerpagina niet terug. Gebruik Herconfigureren op de Solis-invoer en controleer het webwachtwoord (gebruiker admin, fabrieks wachtwoord 123456789; sommige firmware gebruikt je wifi-wachtwoord). Een stick die 's nachts met de omvormer uitgaat is niet deze fout. Deze melding verdwijnt als een uitlezing slaagt."
+      "description": "De webpagina van de stick weigerde het wachtwoord of gaf de Solis-omvormerpagina niet terug. Gebruik Herconfigureren op de Solis-invoer en controleer het webwachtwoord (gebruiker admin, fabriekswachtwoord 123456789; sommige firmware gebruikt je wifi-wachtwoord). Een stick die 's nachts met de omvormer uitgaat is niet deze fout. Deze melding verdwijnt als een uitlezing slaagt."
     }
   },
   "entity": {
@@ -208,7 +210,7 @@
           "local": "Lokale logger",
           "cloud": "SolisCloud",
           "asleep": "Omvormer slaapt",
-          "degraded": "Cloud, lokale logger gepauzeerd"
+          "degraded": "Lokale logger gepauzeerd (laatste waarden of SolisCloud)"
         }
       },
       "status": {
@@ -399,6 +401,13 @@
         "waveshare": "Waveshare RS485 TO ETH (4196)",
         "usr": "USR-TCP232 RS485-socket (26)",
         "esp": "ESPHome stream server (6638)"
+      }
+    },
+    "source": {
+      "options": {
+        "cloud": "Alleen SolisCloud",
+        "local": "Alleen lokale logger",
+        "both": "Lokale logger met SolisCloud als terugval"
       }
     }
   },

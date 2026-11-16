@@ -363,7 +363,7 @@ async def test_the_key_form_keeps_what_was_typed(hass: HomeAssistant) -> None:
         result["flow_id"],
         {"source": "cloud", "api_url": "http://127.0.0.1:9", "key_id": "", "key_secret": "abc"},
     )
-    assert again["errors"]["base"] == "invalid_auth"
+    assert again["errors"]["base"] == "key_required"
     suggested = {
         str(key): key.description["suggested_value"]
         for key in again["data_schema"].schema

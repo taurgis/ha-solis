@@ -70,8 +70,14 @@ class SolisAlarmBinarySensor(SolisEntity, BinarySensorEntity):
 
     @property
     def is_on(self) -> bool:
-        """Return whether a pending alarm exists."""
-        return bool(self.coordinator.data.active_alarms(self._serial))
+        """Return whether a pending alarm exists, or the inverter itself reports one."""
+        if self.coordinator.data.active_alarms(self._serial):
+            return True
+        inverter = next(
+            (item for item in self.coordinator.data.inverters if item.serial == self._serial),
+            None,
+        )
+        return inverter is not None and inverter.condition(dt_util.utcnow()) == "alarm"
 
     @property
     def extra_state_attributes(self) -> dict[str, str]:
@@ -117,11 +123,11 @@ class SolisBatteryChargingBinarySensor(SolisEntity, BinarySensorEntity):
         return inverter.condition(dt_util.utcnow()) != "stale"
 
     @property
-    def is_on(self) -> bool:
-        """Return whether the battery is charging."""
+    def is_on(self) -> bool | None:
+        """Return whether the battery is charging, or None without a power reading."""
         inverter = self._inverter()
         if inverter is None or inverter.battery_power_w is None:
-            return False
+            return None
         return inverter.battery_power_w > 0
 
     def _inverter(self) -> InverterSnapshot | None:

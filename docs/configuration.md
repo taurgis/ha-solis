@@ -2,14 +2,16 @@
 
 | Field | Where | Meaning |
 | --- | --- | --- |
-| Connection | Entry | `cloud`, `local`, or `both`. Cloud is the default. `local` is a data logger. `both` reads the logger first and lets SolisCloud fill energy totals the logger left empty. |
+| Connection | Entry | SolisCloud only (`cloud`, the default), a local logger only (`local`), or a local logger with SolisCloud fallback (`both`). `both` reads the logger first and lets SolisCloud fill what the logger lacks. On Reconfigure, choosing SolisCloud only stops using the saved logger and keeps its fields for later. |
 | API URL | Entry | SolisCloud host, including the port. Public http is upgraded to https. |
-| Logger | Entry | `auto`, `solarman` (DLS-W / DLS-L / LSW, V5 on 8899), `s2_wl_st` (Modbus TCP 502), `modbus_tcp` (Waveshare, Elfin or USR in Modbus mode), `s5_wifi_st` (experimental; Solis does not officially support local access), or `rtu_tcp` (experimental transparent RTU). Auto-detect probes 502, then 8899. Port 502 is an S2 only when port 80 names the Solis page, a gateway when port 80 names the vendor, and a question otherwise. |
+| Logger | Entry | `auto`, `solarman` (DLS-W / DLS-L / LSW, V5 on 8899), `s2_wl_st` (Modbus TCP 502), `modbus_tcp` (Waveshare, Elfin or USR in Modbus mode), `s5_wifi_st` (experimental; Solis does not officially support local access), or `rtu_tcp` (experimental transparent RTU), or `solis_web` (a stick with only a status web page on port 80, some S3-class firmware). Auto-detect probes 502, then 8899, then a Solis web page on port 80. Port 502 is an S2 only when port 80 names the Solis page, a gateway when port 80 names the vendor, and a question otherwise. |
 | Logger address | Entry | Current IP of the stick. Solarman discovery fills it in. A later DHCP lease is written back when the MAC is known. |
 | Logger port | Entry | Empty uses 502 or 8899 for the detected stick. For RTU over TCP, empty uses the gateway model: 8899 Elfin, 4196 Waveshare, 26 USR RS485, 6638 ESPHome. A typed port wins. |
 | Modbus slave | Entry | Empty tries 1, then 2, then 3. The Solis default is 1. |
 | Logger serial | Entry | Solarman: the numeric serial. That is the config-entry unique id. S2-WL-ST and S5: the serial in the Wi-Fi name `D_` or `Solis_`. The unique id is `s2:` plus that serial, or `s2:` plus the inverter serial when the stick serial was not typed. A gateway is `tcp:` plus the label or the inverter serial. RTU over TCP is `rtu:` plus the same token. |
-| API key ID | Entry | Key id from API management. Also the config-entry unique id. Diagnostics redact it. |
+| Stick web password | Entry | Web password of a `solis_web` stick. Empty means the factory `123456789`. On Reconfigure an empty field keeps the saved password, but only for the same host. Diagnostics redact it. |
+| RTU gateway model | Entry | Picks the default port for Modbus RTU over TCP when Port is empty. |
+| API key ID | Entry | Key id from API management. The config-entry unique id of a cloud-only entry; an entry with a logger uses the logger's id. Diagnostics redact it. |
 | API key secret | Entry | Key secret. Stored in the config entry. Diagnostics redact it. It is not written to the log. |
 | Plants | Entry | Which stations to poll. Reconfigure to change the set. |
 | Poll interval | Options | Seconds between polls. Cloud default 300, and a cloud-only entry never polls faster than 60. A local logger defaults to 60 and cannot be faster than 30. Maximum 3600. |
@@ -96,4 +98,4 @@ source reads `degraded`, and local is tried again after a pause of at least
 10 seconds that grows to about 10 minutes. A few tens of watts in the morning
 is production.
 
-The same API key cannot be added twice.
+Do not add the same API key to two entries: each would poll the account, and an entry with a logger is keyed by the logger, so Home Assistant does not stop it.

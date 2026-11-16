@@ -142,7 +142,11 @@ class RtuTcpClient(_PacedClient):
             ) from err
 
     async def _read_frame(self, reader: asyncio.StreamReader, *, echo: bytes = b"") -> bytes:
+        # A peer that keeps sending junk would reset a per-chunk timeout for ever.
+        deadline = asyncio.get_running_loop().time() + 2 * self._timeout
         while True:
+            if asyncio.get_running_loop().time() > deadline:
+                raise classify_io(TimeoutError(), connected=True)
             if echo and (self._buffer.startswith(echo) or echo.startswith(self._buffer)):
                 if len(self._buffer) < len(echo):
                     self._buffer += await self._read_chunk(reader)

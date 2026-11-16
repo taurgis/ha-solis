@@ -145,8 +145,9 @@ def _complete(raw: bytes) -> bool:
         return False
     for line in head.split(b"\r\n")[1:]:
         name, _colon, value = line.partition(b":")
-        if name.strip().lower() == b"content-length" and value.strip().isdigit():
-            return len(body) >= int(value.strip())
+        length = value.strip()
+        if name.strip().lower() == b"content-length" and length.isdigit() and len(length) <= 9:
+            return len(body) >= int(length)
     return False
 
 

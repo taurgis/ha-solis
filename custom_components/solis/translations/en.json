@@ -75,7 +75,7 @@
       },
       "reconfigure": {
         "title": "Reconfigure Solis",
-        "description": "Update the API host, the plants to follow, and how often to poll.",
+        "description": "Update the API host, plants, polling, timezone and Connection. To add a local logger, set Connection to a local option and fill in Logger IP and Logger serial (a web-page stick needs only the IP). Set Connection to SolisCloud only to stop using the logger; the saved logger fields stay.",
         "data": {
           "source": "Connection",
           "logger_kind": "Logger",
@@ -118,7 +118,7 @@
       "clock_skew": "SolisCloud rejected the request time. The clock must be within 15 minutes of UTC.",
       "timeout": "SolisCloud did not answer before the timeout.",
       "cannot_connect": "Could not reach SolisCloud.",
-      "no_stations": "The account returned no plants. Check the API key and that the plant has an id.",
+      "no_stations": "The account returned no plants. Check the API key and that the plant has an id, or select at least one plant.",
       "unknown": "Unexpected SolisCloud error.",
       "logger_asleep": "No route to the logger, or it timed out. At night the inverter powers the stick off. Try again while it is producing.",
       "logger_busy": "The logger reset or refused the local session. It can still be uploading to SolisCloud. Wait at least 10 seconds and try once. Do not retry in a tight loop.",
@@ -134,7 +134,9 @@
       "invalid_logger": "The port must be 1 to 65535, the slave 1 to 247, and a Solarman serial must be the number printed on the stick.",
       "logger_web_password": "The stick rejected the web password. The user is admin and the factory password is 123456789. Some firmware replaces it with your Wi-Fi password. Fill the password field and try again.",
       "logger_web_page": "The stick answered on port 80 and the page was not the Solis inverter page, or no page came back. Open the stick address in a browser and check that it shows the inverter status.",
-      "already_configured": "This account or logger is already configured."
+      "already_configured": "This account or logger is already configured.",
+      "key_required": "Enter the API key id and secret for cloud or local with cloud. Leave them empty only for local only.",
+      "logger_host_required": "Enter the logger IP, or set Connection to SolisCloud only."
     },
     "abort": {
       "already_configured": "This account or logger is already configured.",
@@ -208,7 +210,7 @@
           "local": "Local logger",
           "cloud": "SolisCloud",
           "asleep": "Inverter asleep",
-          "degraded": "Cloud, local logger paused"
+          "degraded": "Local logger paused (last values held, or SolisCloud)"
         }
       },
       "status": {
@@ -399,6 +401,13 @@
         "waveshare": "Waveshare RS485 TO ETH (4196)",
         "usr": "USR-TCP232 RS485 socket (26)",
         "esp": "ESPHome stream server (6638)"
+      }
+    },
+    "source": {
+      "options": {
+        "cloud": "SolisCloud only",
+        "local": "Local logger only",
+        "both": "Local logger with SolisCloud fallback"
       }
     }
   },

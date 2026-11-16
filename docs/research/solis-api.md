@@ -544,8 +544,7 @@ configured: Solarman V5 on TCP 8899 (with plain Modbus TCP on 8899 or 30003
 as a fallback), Modbus TCP on port 502 for a Solis S2-WL-ST or a Waveshare /
 Elfin / USR gateway, and, experimentally, an S5-WiFi-ST with port 502 open
 and Modbus RTU over a transparent TCP tunnel. All of them return the same
-snapshot type. Cloud remains the path for an S3-WIFI-ST, which has no local
-port. The protocol, the register check against a real stick, the night model,
+snapshot type. An S3-class stick with no Modbus or Solarman port can still be read through its web page (`solis_web`, see `web-page-stick.md`). The protocol, the register check against a real stick, the night model,
 and why the client lives in this repo are in
 [solarman-local.md](solarman-local.md); the S2 is in
 [s2-wl-st.md](s2-wl-st.md) and the other loggers in

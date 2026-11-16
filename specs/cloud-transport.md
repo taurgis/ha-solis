@@ -28,8 +28,9 @@ commits to.
   common cause of HTTP 502). A poll is sequential: station list, then per
   selected plant the detail, day-energy row and inverter list, then each
   inverter detail, then alarms, collectors and EPMs.
-- **Retries.** 429, timeouts, DNS/TLS errors and 5xx retry with exponential
-  backoff, jitter and an 8 s cap; `Retry-After` is a floor. Other 4xx,
+- **Retries.** Timeouts, DNS/TLS errors and 5xx retry with exponential
+  backoff, jitter and an 8 s cap; `Retry-After` is a floor. A 429 waits
+  `Retry-After` (jittered, at most 60 s). Other 4xx,
   auth failures, an uncorrectable clock, and platform code `1` (abnormal
   data) are not retried.
 - **Error classification.** HTML, truncated or non-JSON bodies are gateway

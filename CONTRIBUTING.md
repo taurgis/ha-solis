@@ -22,7 +22,7 @@ coverage gate.
 The mock SolisCloud server checks the real HMAC signature:
 
 ```bash
-PYTHONPATH=. .venv/bin/python -m mock_soliscloud --port 8765
+PYTHONPATH=.:tools .venv/bin/python -m mock_soliscloud --port 8765
 ```
 
 `lab/docker-compose.yml` boots Home Assistant next to that mock. Add the

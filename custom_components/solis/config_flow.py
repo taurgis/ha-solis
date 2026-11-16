@@ -88,11 +88,16 @@ _LOGGER = logging.getLogger(__name__)
 _SECRET = selector.TextSelector(
     selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
 )
+_SOURCE = selector.SelectSelector(
+    selector.SelectSelectorConfig(
+        options=[SOURCE_CLOUD, SOURCE_LOCAL, SOURCE_BOTH],
+        translation_key="source",
+        mode=selector.SelectSelectorMode.DROPDOWN,
+    )
+)
 _USER_SCHEMA = vol.Schema(
     {
-        vol.Optional(CONF_SOURCE, default=SOURCE_CLOUD): vol.In(
-            [SOURCE_CLOUD, SOURCE_LOCAL, SOURCE_BOTH]
-        ),
+        vol.Optional(CONF_SOURCE, default=SOURCE_CLOUD): _SOURCE,
         vol.Required(CONF_API_URL, default=DEFAULT_API_URL): str,
         vol.Optional(CONF_KEY_ID, default=""): str,
         vol.Optional(CONF_KEY_SECRET, default=""): _SECRET,
@@ -136,13 +141,18 @@ def _normalize_url(url: str) -> str:
 
 
 def _http_allowed(host: str) -> bool:
-    if host in {"localhost", "mock"} or "." not in host:
-        return True
     try:
         address = ipaddress.ip_address(host)
     except ValueError:
-        return False
+        return host in {"localhost", "mock"} or ("." not in host and not host.isdigit())
     return address.is_private or address.is_loopback or address.is_link_local
+
+
+def _is_private_host(host: str) -> bool:
+    try:
+        return ipaddress.ip_address(host).is_private
+    except ValueError:
+        return False
 
 
 def clean_time_zone(value: object) -> tuple[str, str | None]:
@@ -184,7 +194,7 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
             if self._source == SOURCE_LOCAL:
                 return await self.async_step_logger()
             if not str(user_input.get(CONF_KEY_ID) or "").strip():
-                errors["base"] = "invalid_auth"
+                errors["base"] = "key_required"
             else:
                 user_input = {
                     **user_input,
@@ -325,6 +335,8 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
                 if chosen == SOURCE_CLOUD and current != SOURCE_CLOUD:
                     # Back to cloud only. The saved logger fields stay for a later switch.
                     data_updates[CONF_SOURCE] = SOURCE_CLOUD
+                elif chosen != SOURCE_CLOUD and not host:
+                    errors["base"] = "logger_host_required"
                 elif host and (serial_text or kind_text == LOGGER_WEB):
                     # A logger on a cloud entry makes it local with a cloud fallback.
                     fields, unique, failure = await self._logger_updates(
@@ -394,7 +406,7 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
                 ): str,
                 vol.Optional(
                     CONF_SOURCE, default=str(entry.data.get(CONF_SOURCE, SOURCE_CLOUD))
-                ): vol.In([SOURCE_CLOUD, SOURCE_LOCAL, SOURCE_BOTH]),
+                ): _SOURCE,
                 vol.Optional(
                     CONF_LOGGER_HOST, default=str(entry.data.get(CONF_LOGGER_HOST, ""))
                 ): str,
@@ -599,6 +611,8 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
         """Update a known logger when DHCP hands it a new address."""
         mac = format_mac(str(_info(discovery_info, "macaddress")))
         host = str(_info(discovery_info, "ip"))
+        if not _is_private_host(host):
+            return self.async_abort(reason="not_solis_logger")
         for entry in self._async_current_entries():
             stored = format_mac(str(entry.data.get(CONF_LOGGER_MAC) or ""))
             serial = str(entry.data.get(CONF_LOGGER_SERIAL) or "")
@@ -607,6 +621,9 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
             if entry.data.get(CONF_LOGGER_HOST) == host:
                 return self.async_abort(reason="already_configured")
             kind = entry.data.get(CONF_LOGGER_KIND)
+            if kind == LOGGER_WEB:
+                # This entry sends a password to its host, so a broadcast cannot move it.
+                return self.async_abort(reason="already_configured")
             _LOGGER.info(
                 "%s logger %s is now at %s",
                 kind_label(str(kind or "")),

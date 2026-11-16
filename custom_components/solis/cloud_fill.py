@@ -73,5 +73,6 @@ def fill_from_cloud(
         alarms=cloud.alarms if fresh else (),
         collectors=cloud.collectors or web.collectors,
         epms=cloud.epms if fresh else (),
-        partial=False,
+        # Without live cloud data the plant's devices are not known to be gone.
+        partial=not fresh,
     )

@@ -29,6 +29,8 @@ TO_REDACT = {
     "logger_host",
     "logger_mac",
     "logger_serial",
+    "title",
+    "name",
 }
 
 

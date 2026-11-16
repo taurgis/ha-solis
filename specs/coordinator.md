@@ -19,7 +19,7 @@ last good snapshot.
 - **Poll interval.** Cloud defaults to 300 s, never faster than 60. Local
   defaults to 60 s, never faster than 30. During an outage the interval
   backs off with jitter up to 15 min and never goes faster than the
-  configured one; while a logger sleeps it backs off from 1 min to 15 min.
+  configured one; while a logger sleeps it backs off from 2 min to 15 min.
   The next success restores the configured interval.
 - **Error policy** (by class, see the architecture's snapshot contract):
   - auth → open the `invalid_auth` repair and raise `ConfigEntryAuthFailed`,
@@ -41,7 +41,7 @@ last good snapshot.
   next real success. A poll with no live inverter counts as a failure.
 - **Persistence.** The last good snapshot is stored per entry
   (`solis.snapshot.<entry_id>`), written at most every 5 minutes and once at
-  shutdown to spare flash storage, and deleted when the entry is removed, so a restart at night or during an outage
+  shutdown (entry unload, and Home Assistant stopping) to spare flash storage, and deleted when the entry is removed, so a restart at night or during an outage
   restores totals instead of failing setup. With no stored snapshot the first
   refresh raises `ConfigEntryNotReady` so Home Assistant retries.
 - **Logging.** Each failure kind is logged once, not every poll.

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from .const import LOCAL_STATION
 from .models import InverterSnapshot, Phase, PvString
 
 STRING_BLOCKS: tuple[tuple[int, int], ...] = ((3000, 20), (3020, 20), (3040, 10))
@@ -33,6 +34,11 @@ def s32(words: dict[int, int], address: int) -> int:
 def _scale(words: dict[int, int], address: int, factor: float) -> float:
     # Rounded so 28 * 0.1 is 2.8 and not 2.8000000000000003 in the recorder.
     return round((words.get(address, 0) & 0xFFFF) * factor, 2)
+
+
+def _grid_frequency(value: float) -> float | None:
+    """A register that reads 0 (no grid) is no frequency, as in the cloud parser."""
+    return value if 40.0 <= value <= 70.0 else None
 
 
 def serial_from_words(words: dict[int, int]) -> str:
@@ -101,7 +107,7 @@ def decode_string(
     return InverterSnapshot(
         serial=serial,
         device_id=serial,
-        station_id="local",
+        station_id=LOCAL_STATION,
         name=serial,
         model="Solis 4G",
         product_model="1",
@@ -111,7 +117,7 @@ def decode_string(
         data_timestamp=moment,
         collector_serial=logger_serial,
         ac_power_w=float(s32(words, 3004)),
-        frequency_hz=_scale(words, 3042, 0.01),
+        frequency_hz=_grid_frequency(_scale(words, 3042, 0.01)),
         temperature_c=_scale(words, 3041, 0.1),
         energy_today_kwh=_scale(words, 3014, 0.1),
         energy_month_kwh=float(u32(words, 3010)),
@@ -194,7 +200,7 @@ def decode_hybrid(
     return InverterSnapshot(
         serial=serial,
         device_id=serial,
-        station_id="local",
+        station_id=LOCAL_STATION,
         name=serial,
         model="Hybrid inverter",
         product_model="2",

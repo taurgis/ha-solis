@@ -32,7 +32,7 @@ from homeassistant.helpers.typing import StateType
 from homeassistant.util import dt as dt_util
 
 from . import SolisConfigEntry
-from .const import CONF_TIME_ZONE, DOMAIN, MANUFACTURER
+from .const import CONF_TIME_ZONE, DOMAIN, LOCAL_STATION, MANUFACTURER
 from .coordinator import SolisCoordinator
 from .energy import consider_energy, sanitize_kwh
 from .entity import SolisEntity, collector_device, epm_device, inverter_device, station_device
@@ -520,13 +520,29 @@ class SolisSensor(SolisEntity, RestoreSensor, SensorEntity):
                 published,
                 value,
             )
-        self._carried = (
-            published is not None if changed else self._carried and published == self._energy_last
-        )
+        if (
+            period is not None
+            and self._energy_last is None
+            and published is not None
+            and self._inverter_is_dark(now)
+        ):
+            # No baseline (a restart, or a null at the rollover) while the inverter is
+            # off: the first value is probably yesterday's, so the first lower one is a reset.
+            self._carried = True
+        else:
+            self._carried = (
+                published is not None
+                if changed
+                else self._carried and published == self._energy_last
+            )
         self._period_key = period_key
         if changed or published is not None:
             self._energy_last = published
         return published
+
+    def _inverter_is_dark(self, now: datetime) -> bool:
+        inverter = self._inverter() if self._serial else None
+        return inverter is not None and inverter.condition(now) in {"offline", "stale"}
 
     def _period_start(self, now: datetime) -> datetime:
         zone = resolve_zone(
@@ -662,6 +678,8 @@ def _entities(
     entities: list[SolisSensor] = []
     names = {station.station_id: station.name for station in data.stations}
     for station in data.stations:
+        if station.station_id == LOCAL_STATION:
+            continue
         device = station_device(station)
         for description in _STATION:
             entities.append(

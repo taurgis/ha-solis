@@ -10,8 +10,8 @@ from __future__ import annotations
 import logging
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
+from homeassistant.core import Event, HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import device_registry as dr, issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -90,6 +90,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolisConfigEntry) -> boo
     entry.runtime_data = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_reload))
+
+    async def _save_on_stop(_event: Event) -> None:
+        await coordinator.async_save_now()
+
+    entry.async_on_unload(hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _save_on_stop))
     closer = getattr(transport, "close", None)
     if closer is not None:
         entry.async_on_unload(closer)
@@ -266,6 +271,8 @@ async def async_remove_config_entry_device(
     keys = {item[1] for item in device_entry.identifiers if item[0] == DOMAIN}
     if not keys:
         return False
+    if getattr(entry, "runtime_data", None) is None:
+        return True  # not loaded, so there is no live snapshot to protect
     return keys.isdisjoint(_known_device_keys(entry))
 
 

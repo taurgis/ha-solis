@@ -1,0 +1,5 @@
+---
+"ha-solis-release-tools": patch
+---
+
+Second quality audit. A discovery reply must come from the address it announces and be on the local network, and DHCP never moves a web-page stick (which holds a password) or accepts a public address. A peer that streams junk can no longer hold a logger read open. Plain http to a public or numeric host is upgraded to https, and redirects from SolisCloud are not followed. Repairs left by a failed setup clear after recovery, and the last snapshot is saved when Home Assistant stops. A night snapshot also stops the battery current, a grid frequency of 0 is no reading, a local entry no longer creates placeholder plant sensors, and the alarm sensor also reports an alarm state. The Connection field is a translated dropdown, a missing key id and a missing logger address have their own error messages, and troubleshooting, configuration and data-update docs now cover the web stick, the logger repairs and the retry rules. Diagnostics also redact the entry title.

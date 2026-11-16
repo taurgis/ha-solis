@@ -253,6 +253,14 @@ def format_mac(value: str) -> str:
     return ":".join(hexed[i : i + 2] for i in range(0, 12, 2))
 
 
+def _is_lan_address(host: str) -> bool:
+    """A discovery reply may name a private or loopback address, never a public one."""
+    address = ipaddress.ip_address(host)
+    return (address.is_private or address.is_loopback) and not (
+        address.is_multicast or address.is_unspecified
+    )
+
+
 def parse_discovery(payload: bytes) -> Stick | None:
     """Parse ``ip,mac,serial`` from a discovery reply."""
     text = payload.decode("utf-8", errors="ignore").strip().strip("\x00")
@@ -507,12 +515,19 @@ class SolarmanClient(_PacedClient):
         )
 
     async def _read_one(self, reader: asyncio.StreamReader) -> bytes:
+        # A peer that keeps sending junk would reset a per-chunk timeout for ever.
+        deadline = asyncio.get_running_loop().time() + 2 * self._timeout
         while True:
             frame, self._buffer = take_frame(self._buffer)
             if frame is not None:
                 return frame
+            remaining = deadline - asyncio.get_running_loop().time()
             try:
-                chunk = await asyncio.wait_for(reader.read(512), timeout=self._timeout)
+                if remaining <= 0:
+                    raise TimeoutError
+                chunk = await asyncio.wait_for(
+                    reader.read(512), timeout=min(self._timeout, remaining)
+                )
             except (TimeoutError, ConnectionError, OSError) as err:
                 raise classify_io(err, connected=True) from err
             if not chunk:
@@ -654,7 +669,9 @@ async def discover_sticks(
     class _Collector(asyncio.DatagramProtocol):
         def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
             stick = parse_discovery(data)
-            if stick is not None:
+            # A stick names its own address. A reply that names another host is
+            # someone else steering the entry there.
+            if stick is not None and stick.host == addr[0] and _is_lan_address(stick.host):
                 found[stick.serial] = stick
 
         def error_received(self, exc: Exception) -> None:

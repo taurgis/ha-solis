@@ -42,8 +42,10 @@ documentation for users is `docs/configuration.md`.
   a web-page stick can be attached without a stick serial.
 - **URL normalisation.** Public `http://` is stored as `https://`; loopback,
   private addresses and single-label hosts may stay `http`.
-- **Uniqueness.** The API key id is the unique id of a cloud entry; a
-  logger's identity (see `local-transport`) is the unique id of a local one.
+- **Uniqueness.** The API key id is the unique id of a cloud-only entry; a
+  logger's identity (see `local-transport`) is the unique id of an entry
+  with a logger, and Reconfigure refuses an id another entry holds. The same
+  key on a second entry is not blocked when either entry has a logger.
   The same key or stick cannot be added twice; a duplicate updates the host.
 - **Reauth** replaces the key id and secret and refuses a key from another
   account. The account is told by the key id stored on the entry, because the
@@ -58,7 +60,9 @@ documentation for users is `docs/configuration.md`.
   timezone only; they never ask for the logger address.
 - **DHCP** (`manifest.json`: OUI `BC54F9*` and known gateway hostnames)
   never creates an entry: it updates the host of an entry whose stored MAC
-  matches, and records a MAC for a gateway entry already at that IP.
+  matches, and records a MAC for a gateway entry already at that IP. It
+  acts only on private addresses and never moves a web-page stick entry,
+  because that entry sends a password to its host.
 - `config_flow.py` is held to 100 % test coverage.
 
 ## Repairs and diagnostics
