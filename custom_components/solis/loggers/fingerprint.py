@@ -131,7 +131,7 @@ def rtu_default_port(preset: str) -> int:
 _PROBE_HOST = re.compile(r"\A[A-Za-z0-9.-]{1,253}\Z")
 
 
-def _probe_host_ok(host: str) -> bool:
+def probe_host_ok(host: str) -> bool:
     """Accept a hostname or IP. Reject header injection and URLs."""
     return _PROBE_HOST.fullmatch(host) is not None and ".." not in host
 
@@ -143,7 +143,7 @@ async def read_http_banner(host: str, *, timeout: float = 1.2, port: int = 80) -
     Location header cannot send the probe to another machine. Connect, write
     and read share one timeout.
     """
-    if not _probe_host_ok(host):
+    if not probe_host_ok(host):
         return ""
     try:
         return await asyncio.wait_for(_read_banner(host, port), timeout=timeout)

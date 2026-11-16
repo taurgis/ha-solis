@@ -34,6 +34,7 @@ from .const import (
     CONF_LOGGER_HOST,
     CONF_LOGGER_KIND,
     CONF_LOGGER_MAC,
+    CONF_LOGGER_PASSWORD,
     CONF_LOGGER_PORT,
     CONF_LOGGER_PRESET,
     CONF_LOGGER_SERIAL,
@@ -53,6 +54,7 @@ from .const import (
     LOGGER_MBTCP,
     LOGGER_S2,
     LOGGER_SOLARMAN,
+    LOGGER_WEB,
     MIN_CLOUD_SCAN_INTERVAL,
     MIN_LOCAL_SCAN_INTERVAL,
     SOLARMAN_OUI,
@@ -311,7 +313,8 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
                 unique_id: str | None = None
                 host = str(user_input.get(CONF_LOGGER_HOST) or "").strip()
                 serial_text = str(user_input.get(CONF_LOGGER_SERIAL) or "").strip()
-                if host and serial_text:
+                kind_text = str(user_input.get(CONF_LOGGER_KIND) or "")
+                if host and (serial_text or kind_text == LOGGER_WEB):
                     fields, unique, failure = await self._logger_updates(
                         user_input, source=SOURCE_BOTH
                     )
@@ -395,6 +398,7 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
                     required=False,
                 ),
                 vol.Optional(CONF_SLAVE_ID, default=str(entry.data.get(CONF_SLAVE_ID) or "")): str,
+                **_password_field(),
                 **_preset_field(str(entry.data.get(CONF_LOGGER_PRESET) or "default")),
             }
         )
@@ -464,6 +468,7 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
                 vol.Optional(CONF_LOGGER_SERIAL, default=defaults["serial"]): str,
                 vol.Optional(CONF_SLAVE_ID, default=defaults["slave"]): str,
                 vol.Optional(CONF_INVERTER_SERIAL, default=defaults["inverter"]): str,
+                **_password_field(),
                 **_preset_field(defaults["preset"]),
             }
         )
@@ -522,6 +527,9 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
         request, error = parse_logger_form(user_input)
         if error or request is None:
             return {}, "", error or "invalid_logger"
+        if self.source == "reconfigure" and not request.password:
+            saved = self._get_reconfigure_entry().data.get(CONF_LOGGER_PASSWORD)
+            request = replace(request, password=str(saved or ""))
         try:
             probe = await identify_logger(request)
         except (SolisLoggerBusy, SolisLoggerOffline, ValueError, TimeoutError) as err:
@@ -531,7 +539,7 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
         if probe.needs_choice:
             self._choice = (request, probe, source)
             return {}, "", "logger_choice"
-        mac = _mac_for(self._sticks, request.logger_serial, probe.kind)
+        mac = probe.mac or _mac_for(self._sticks, request.logger_serial, probe.kind)
         fields, unique = logger_setup(request, probe, mac=mac, source=source)
         return fields, unique, ""
 
@@ -704,6 +712,15 @@ def _choice_field(default: str) -> dict[Any, Any]:
                 translation_key="logger_choice",
                 mode=selector.SelectSelectorMode.DROPDOWN,
             )
+        )
+    }
+
+
+def _password_field() -> dict[Any, Any]:
+    """Web password of a Solis web page stick. Empty means the factory password."""
+    return {
+        vol.Optional(CONF_LOGGER_PASSWORD, default=""): selector.TextSelector(
+            selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
         )
     }
 

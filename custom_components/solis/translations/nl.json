@@ -27,7 +27,8 @@
           "logger_serial": "Loggerserienummer",
           "slave_id": "Modbus-slave",
           "inverter_serial": "Omvormerserienummer",
-          "logger_preset": "RTU-gatewaymodel"
+          "logger_preset": "RTU-gatewaymodel",
+          "logger_password": "Webwachtwoord van de stick"
         },
         "data_description": {
           "logger_kind": "Automatisch detecteren probeert poort 502, daarna 8899. Poort 502 is alleen een S2-WL-ST als de webpagina van het apparaat dat zegt. S5-WiFi-ST is experimenteel: Solis ondersteunt lokale toegang niet officieel, en een firmware-update sluit poort 502 vaak. Modbus RTU over TCP is experimenteel en gebruikt het gatewaymodel voor de fabriekspoort.",
@@ -36,7 +37,8 @@
           "logger_serial": "Solarman: het numerieke serienummer van het label of van de zoekactie. S2 en S5: het serienummer in de wifi-naam D_ of Solis_, niet het omvormerserienummer. Gateway en RTU: een label naar keuze, of leeg laten om het omvormerserienummer te gebruiken.",
           "slave_id": "Laat leeg om slave 1 te proberen, daarna 2 en 3. De Solis-standaard is 1.",
           "inverter_serial": "Optioneel. Het SolisCloud-omvormerserienummer, bijvoorbeeld 110E40182280017. Laat leeg om het van de stick te lezen als dat bereik antwoordt, of van SolisCloud in de modus lokaal-en-cloud. Dit is de entiteit-id. Op een S2-WL-ST is het ook de unieke config-id als het stickserienummer leeg is.",
-          "logger_preset": "Alleen voor Modbus RTU over TCP, en alleen als Poort leeg is. Elfin EW11/EE11 staat af fabriek op 8899. Waveshare RS485 TO ETH luistert op 4196 tot je dat wijzigt. USR-TCP232 gebruikt 26 op de RS485-socket en 23 op de RS232-socket. De stream server van ESPHome gebruikt vaak 6638."
+          "logger_preset": "Alleen voor Modbus RTU over TCP, en alleen als Poort leeg is. Elfin EW11/EE11 staat af fabriek op 8899. Waveshare RS485 TO ETH luistert op 4196 tot je dat wijzigt. USR-TCP232 gebruikt 26 op de RS485-socket en 23 op de RS232-socket. De stream server van ESPHome gebruikt vaak 6638.",
+          "logger_password": "Alleen voor Solis webpagina. Leeg laten voor het fabrieks wachtwoord 123456789. Sommige firmware vervangt het door het wifi-wachtwoord."
         }
       },
       "logger_choice": {
@@ -88,7 +90,8 @@
           "scan_interval": "Uitleesinterval (seconden)",
           "request_timeout": "Time-out van een verzoek (seconden)",
           "endpoint_interval": "Minimale pauze per endpoint (seconden)",
-          "time_zone": "Tijdzone van de installatie"
+          "time_zone": "Tijdzone van de installatie",
+          "logger_password": "Webwachtwoord van de stick"
         },
         "data_description": {
           "time_zone": "Laat leeg om Home Assistant te volgen als die binnen een uur van de offset van de installatie zit. Gebruik een IANA-naam zoals Europe/Amsterdam om er een af te dwingen, of plant om de numerieke offset van Solis te houden.",
@@ -104,7 +107,8 @@
           "slave_id": "Laat leeg om slave 1 te proberen, daarna 2 en 3.",
           "inverter_serial": "Optioneel SolisCloud-omvormerserienummer. Zet het zodat lokale en cloud-entiteiten hetzelfde apparaat blijven.",
           "api_url": "Gebruik de host die de sleutel uitgaf, inclusief de poort. De internationale dienst luistert op poort 13333.",
-          "station_ids": "Alleen de gekozen installaties worden uitgelezen. Wijzig de set later via herconfigureren."
+          "station_ids": "Alleen de gekozen installaties worden uitgelezen. Wijzig de set later via herconfigureren.",
+          "logger_password": "Alleen voor Solis webpagina. Leeg laten voor het fabrieks wachtwoord 123456789. Sommige firmware vervangt het door het wifi-wachtwoord."
         }
       },
       "init": {
@@ -143,7 +147,9 @@
       "logger_unsupported_map": "Modbus antwoordde, en noch de Solis 3000-stringmap noch de 33000-hybride map is aanwezig. Dit is geen Solis-omvormer op die slave, of de gateway wijst naar de verkeerde seriële poort.",
       "logger_timeout": "TCP verbond en er kwam geen Solis-frame. De omvormer kan uit zijn, de baud kan niet 9600 8N1 zijn, of een transparante gateway kreeg de optie Modbus TCP. Probeer opnieuw terwijl de omvormer produceert.",
       "logger_choice": "Poort 502 gaf een Solis-map en de webpagina noemde het apparaat niet. Zet Logger in dit formulier op Solis S2-WL-ST of Modbus TCP-gateway, niet op Automatisch detecteren.",
-      "invalid_logger": "De poort moet 1 tot 65535 zijn, de slave 1 tot 247, en een Solarman-serienummer moet het nummer op de stick zijn."
+      "invalid_logger": "De poort moet 1 tot 65535 zijn, de slave 1 tot 247, en een Solarman-serienummer moet het nummer op de stick zijn.",
+      "logger_web_password": "De stick weigerde het webwachtwoord. De gebruiker is admin en het fabrieks wachtwoord is 123456789. Sommige firmware vervangt het door je wifi-wachtwoord. Vul het wachtwoordveld in en probeer opnieuw.",
+      "logger_web_page": "De stick antwoordde op poort 80 en de pagina was niet de Solis-omvormerpagina, of er kwam geen pagina terug. Open het adres van de stick in een browser en controleer of de omvormerstatus verschijnt."
     },
     "abort": {
       "already_configured": "Deze API-sleutel is al geconfigureerd.",
@@ -203,6 +209,10 @@
     "logger_s5_closed": {
       "title": "S5-WiFi-ST dient geen Modbus TCP meer",
       "description": "Poort 502 is dicht. Solis ondersteunt lokale toegang op de S5-WiFi-ST niet officieel, en nieuwere firmware sluit poort 502 en de webpagina terwijl SolisCloud blijft werken. Home Assistant kan de poort niet heropenen. Gebruik Herconfigureren om dit item om te zetten naar een Modbus TCP-gateway op de RS485-poort van de omvormer, of gebruik alleen SolisCloud. Deze melding verdwijnt als de poort weer antwoordt."
+    },
+    "logger_web": {
+      "title": "Solis-webpaginastick geeft geen omvormerdata",
+      "description": "De webpagina van de stick weigerde het wachtwoord of gaf de Solis-omvormerpagina niet terug. Gebruik Herconfigureren op de Solis-invoer en controleer het webwachtwoord (gebruiker admin, fabrieks wachtwoord 123456789; sommige firmware gebruikt je wifi-wachtwoord). Een stick die 's nachts met de omvormer uitgaat is niet deze fout. Deze melding verdwijnt als een uitlezing slaagt."
     }
   },
   "entity": {
@@ -371,6 +381,9 @@
     },
     "update_logger_s5_closed": {
       "message": "De S5-WiFi-ST heeft poort 502 gesloten. Solis ondersteunt lokale toegang op deze stick niet officieel, en nieuwere firmware haalt die weg. SolisCloud wordt gebruikt als er een vers sample is."
+    },
+    "update_logger_web": {
+      "message": "De webpagina van de stick weigerde het wachtwoord of gaf geen omvormerdata. SolisCloud wordt gebruikt als er een vers sample is."
     }
   },
   "selector": {
@@ -381,7 +394,8 @@
         "s2_wl_st": "Solis S2-WL-ST (Modbus TCP 502)",
         "modbus_tcp": "Modbus TCP-gateway (Waveshare, Elfin, USR)",
         "s5_wifi_st": "Solis S5-WiFi-ST (experimenteel, firmware kan poort 502 sluiten)",
-        "rtu_tcp": "Modbus RTU over TCP (experimenteel)"
+        "rtu_tcp": "Modbus RTU over TCP (experimenteel)",
+        "solis_web": "Solis webpagina (stick uit de S3-reeks, data ongeveer elke 5 minuten)"
       }
     },
     "logger_choice": {

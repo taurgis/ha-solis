@@ -24,6 +24,7 @@ from .const import (
     CONF_LOGGER_HOST,
     CONF_LOGGER_KIND,
     CONF_LOGGER_MAC,
+    CONF_LOGGER_PASSWORD,
     CONF_LOGGER_PORT,
     CONF_LOGGER_PRESET,
     CONF_LOGGER_PROTOCOL,
@@ -40,6 +41,7 @@ from .const import (
     LOGGER_S2,
     LOGGER_S5,
     LOGGER_SOLARMAN,
+    LOGGER_WEB,
     MBTCP_ALT_PORT,
     PROTOCOL_MBTCP,
     PROTOCOL_MBTCP_ALT,
@@ -55,6 +57,8 @@ from .const import (
     REASON_TCP_DISABLED,
     REASON_TIMEOUT,
     REASON_UNSUPPORTED,
+    REASON_WEB_AUTH,
+    REASON_WEB_PAGE,
     REASON_WRONG_PROTOCOL,
     REASON_WRONG_SLAVE,
     REGISTER_HYBRID,
@@ -125,6 +129,39 @@ class SnapshotReader(Protocol):
         """Read one snapshot."""
 
 
+class LocalSource(Protocol):
+    """What ``SolisPriorityTransport`` needs from a local reader.
+
+    ``SolisLocalTransport`` (Modbus and Solarman) and ``SolisWebTransport``
+    (the stick's status page) both fit.
+    """
+
+    identity_checked: bool
+    degraded_reason: str
+
+    async def async_read(self) -> SolisSnapshot: ...
+
+    async def close(self) -> None: ...
+
+    def adopt_serial(self, serial: str) -> None: ...
+
+    def note_identity(self, donor: InverterSnapshot) -> None: ...
+
+    def session_info(self) -> dict[str, str]: ...
+
+    @property
+    def inverter_serial(self) -> str: ...
+
+    @property
+    def logger_serial(self) -> int: ...
+
+    @property
+    def last_snapshot(self) -> SolisSnapshot | None: ...
+
+    @property
+    def needs_cloud_identity(self) -> bool: ...
+
+
 @dataclass(frozen=True, slots=True)
 class LoggerProbe:
     """What a connection test learned about one stick."""
@@ -142,6 +179,8 @@ class LoggerProbe:
     identify_note: str = ""
     confidence: str = ""
     detection: str = ""
+    stick_serial: str = ""
+    mac: str = ""
 
 
 def backoff_seconds(step: int) -> float:
@@ -250,7 +289,7 @@ class SolisLocalTransport:
         self._next_attempt = 0.0
         self._backoff_step = 0
         self._has_series = False
-        self._identity_checked = False
+        self.identity_checked = False
 
     async def async_read(self) -> SolisSnapshot:
         """Return a snapshot. A locked logger raises ``SolisLoggerBusy``."""
@@ -385,7 +424,7 @@ class SolisLocalTransport:
             inverter = decode_hybrid(words, serial=serial, logger_serial=logger)
         else:
             inverter = decode_string(words, serial=serial, logger_serial=logger)
-        return _local_snapshot(inverter, logger, datetime.now(UTC), self._spec.label)
+        return local_snapshot(inverter, logger, datetime.now(UTC), self._spec.label)
 
     async def _read_words(self) -> dict[int, int]:
         last_offline: SolisLoggerOffline | None = None
@@ -542,7 +581,7 @@ class SolisPriorityTransport:
     def __init__(
         self,
         mode: str,
-        local: SolisLocalTransport | None,
+        local: LocalSource | None,
         cloud: SnapshotReader | None,
     ) -> None:
         """``cloud`` is anything with ``async_read``, usually the SolisCloud transport."""
@@ -591,11 +630,11 @@ class SolisPriorityTransport:
         if (
             transport is None
             or self._mode != SOURCE_BOTH
-            or transport._identity_checked
+            or transport.identity_checked
             or not transport.needs_cloud_identity
         ):
             return local
-        transport._identity_checked = True
+        transport.identity_checked = True
         cloud = await self._optional_cloud()
         if cloud is None or not cloud.inverters or not local.inverters:
             return local
@@ -666,7 +705,7 @@ def _prefer(previous: float | None, incoming: float | None) -> float | None:
     return incoming
 
 
-def _degraded_cloud(local: SolisLocalTransport, cloud: SolisSnapshot) -> SolisSnapshot:
+def _degraded_cloud(local: LocalSource, cloud: SolisSnapshot) -> SolisSnapshot:
     """Publish the cloud sample on the local inverter serial."""
     donor = cloud.inverters[0]
     previous = (
@@ -716,7 +755,7 @@ def _degraded_cloud(local: SolisLocalTransport, cloud: SolisSnapshot) -> SolisSn
     )
 
 
-def _local_snapshot(
+def local_snapshot(
     inverter: InverterSnapshot, logger: str, now: datetime, model: str = "Solarman"
 ) -> SolisSnapshot:
     return SolisSnapshot(
@@ -985,6 +1024,7 @@ class LoggerRequest:
     timeout: float = 5.0
     gap: float = LOCAL_REQUEST_GAP
     preset: str = ""
+    password: str = ""
 
 
 def parse_logger_form(user_input: Mapping[str, Any]) -> tuple[LoggerRequest | None, str]:
@@ -1006,9 +1046,13 @@ def parse_logger_form(user_input: Mapping[str, Any]) -> tuple[LoggerRequest | No
     serial = str(user_input.get(CONF_LOGGER_SERIAL) or "").strip()
     inverter = str(user_input.get(CONF_INVERTER_SERIAL) or "").strip()
     preset = str(user_input.get(CONF_LOGGER_PRESET) or "").strip()
+    password = str(user_input.get(CONF_LOGGER_PASSWORD) or "").strip()
     if kind == LOGGER_SOLARMAN and not serial.isdigit():
         return None, "invalid_logger"
-    return LoggerRequest(host, kind, port, slave, serial, inverter, preset=preset), ""
+    request = LoggerRequest(
+        host, kind, port, slave, serial, inverter, preset=preset, password=password
+    )
+    return request, ""
 
 
 def _optional_port(text: str) -> tuple[int | None, str]:
@@ -1029,23 +1073,24 @@ def _optional_slave(text: str) -> tuple[int | None, str]:
     return int(cleaned), ""
 
 
+_FORM_ERRORS = {
+    REASON_TCP_DISABLED: "logger_tcp_disabled",
+    REASON_SILENT: "logger_modbus_silent",
+    REASON_GATEWAY: "logger_gateway",
+    REASON_WRONG_PROTOCOL: "logger_wrong_protocol",
+    REASON_WRONG_SLAVE: "logger_wrong_slave",
+    REASON_UNSUPPORTED: "logger_unsupported_map",
+    REASON_TIMEOUT: "logger_timeout",
+    REASON_WEB_AUTH: "logger_web_password",
+    REASON_WEB_PAGE: "logger_web_page",
+}
+
+
 def logger_form_error(err: BaseException) -> str:
     """Map a probe failure onto a config-flow error key."""
     reason = str(getattr(err, "reason", "") or "")
-    if reason == REASON_TCP_DISABLED:
-        return "logger_tcp_disabled"
-    if reason == REASON_SILENT:
-        return "logger_modbus_silent"
-    if reason == REASON_GATEWAY:
-        return "logger_gateway"
-    if reason == REASON_WRONG_PROTOCOL:
-        return "logger_wrong_protocol"
-    if reason == REASON_WRONG_SLAVE:
-        return "logger_wrong_slave"
-    if reason == REASON_UNSUPPORTED:
-        return "logger_unsupported_map"
-    if reason == REASON_TIMEOUT:
-        return "logger_timeout"
+    if reason in _FORM_ERRORS:
+        return _FORM_ERRORS[reason]
     if isinstance(err, SolisLoggerBusy):
         return "logger_busy"
     return "logger_asleep"
@@ -1060,6 +1105,8 @@ def needs_stable_id(probe: LoggerProbe, stick_serial: str, inverter_serial: str)
     """Solarman uses the numeric logger serial. Every other kind needs another token."""
     if not spec_for(probe.kind or LOGGER_SOLARMAN).unique_prefix:
         return False
+    if probe.kind == LOGGER_WEB:
+        return placeholder_serial(inverter_serial.strip() or probe.inverter_serial.strip(), 0)
     token = stick_serial.strip() or inverter_serial.strip() or probe.inverter_serial.strip()
     numeric = int(stick_serial) if stick_serial.isdigit() else 0
     return placeholder_serial(token, numeric)
@@ -1072,7 +1119,11 @@ def logger_setup(
     kind = probe.kind or LOGGER_SOLARMAN
     spec = spec_for(kind)
     inverter = request.inverter_serial.strip() or probe.inverter_serial
-    if spec.unique_prefix:
+    if kind == LOGGER_WEB:
+        unique = f"{spec.unique_prefix}:{inverter}"
+        serial_field = probe.stick_serial
+        port = probe.port or spec.default_port
+    elif spec.unique_prefix:
         stick = request.logger_serial.strip()
         token = stick or inverter
         unique = f"{spec.unique_prefix}:{token}"
@@ -1098,6 +1149,8 @@ def logger_setup(
         CONF_LOGGER_PRESET: request.preset,
         CONF_SOURCE: source,
     }
+    if kind == LOGGER_WEB:
+        data[CONF_LOGGER_PASSWORD] = request.password
     return data, unique
 
 
@@ -1174,6 +1227,10 @@ async def identify_logger(
         return await probe_bridge(request, serial_unsupported=serial_unsupported)
     if kind == LOGGER_S2:
         return await _probe_s2(request, serial_unsupported=serial_unsupported)
+    if kind == LOGGER_WEB:
+        from .web_transport import probe_web
+
+        return await probe_web(request, auto=False)
     if kind == LOGGER_AUTO and request.port == S2_PORT:
         return await _auto_s2(request, serial_unsupported=serial_unsupported)
     if kind == LOGGER_SOLARMAN or (kind == LOGGER_AUTO and request.port not in (None, 0)):
@@ -1192,7 +1249,20 @@ async def identify_logger(
     except SolisLoggerBusy:
         raise
     except SolisLoggerOffline as err:
-        raise _prefer_auto_error(s2_error, err) from err
+        failure = _prefer_auto_error(s2_error, err)
+    return await _auto_web(request, failure)
+
+
+async def _auto_web(request: LoggerRequest, failure: SolisLoggerOffline) -> LoggerProbe:
+    """Neither Modbus nor Solarman answered. Port 80 may be a Solis stick with only a web page."""
+    from .web_transport import probe_web
+
+    if failure.reason == REASON_SILENT:
+        raise failure
+    try:
+        return await probe_web(request, auto=True)
+    except SolisLoggerOffline:
+        raise failure from None
 
 
 async def _auto_s2(request: LoggerRequest, *, serial_unsupported: bool) -> LoggerProbe:

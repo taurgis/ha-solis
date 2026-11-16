@@ -28,6 +28,7 @@ from .const import (
     CONF_LOGGER_HOST,
     CONF_LOGGER_KIND,
     CONF_LOGGER_MAC,
+    CONF_LOGGER_PASSWORD,
     CONF_LOGGER_PORT,
     CONF_LOGGER_PROTOCOL,
     CONF_LOGGER_SERIAL,
@@ -45,6 +46,7 @@ from .const import (
     LOCAL_REQUEST_GAP,
     LOCAL_TIMEOUT_CAP,
     LOGGER_SOLARMAN,
+    LOGGER_WEB,
     POLL_REPAIRS,
     REGISTER_STRING,
     SOURCE_BOTH,
@@ -55,6 +57,7 @@ from .local_transport import SolisLocalTransport, SolisPriorityTransport
 from .loggers import kind_label
 from .migration import async_adopt_inverter_serial, async_migrate_devices
 from .transport import SolisCloudTransport
+from .web_transport import SolisWebTransport
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -136,6 +139,22 @@ def _build_transport(
     port = int(port_text) if port_text.isdigit() and int(port_text) > 0 else None
     function_text = str(entry.data.get(CONF_LOGGER_FUNCTION, 4))
     function = int(function_text) if function_text.isdigit() else 4
+    timeout = min(
+        LOCAL_TIMEOUT_CAP,
+        float(entry.options.get(CONF_REQUEST_TIMEOUT, DEFAULT_REQUEST_TIMEOUT)),
+    )
+    local: SolisLocalTransport | SolisWebTransport
+    if kind == LOGGER_WEB:
+        local = SolisWebTransport(
+            str(entry.data[CONF_LOGGER_HOST]),
+            str(entry.data.get(CONF_LOGGER_PASSWORD) or ""),
+            inverter_serial=str(entry.data.get(CONF_INVERTER_SERIAL) or ""),
+            stick_serial=serial_text if serial_text != "0" else "",
+            port=port,
+            timeout=timeout,
+            on_serial=lambda serial: _store_inverter_serial(hass, entry, serial),
+        )
+        return SolisPriorityTransport(source, local, cloud)
     local = SolisLocalTransport(
         str(entry.data[CONF_LOGGER_HOST]),
         logger_serial,
@@ -145,10 +164,7 @@ def _build_transport(
         mac=str(entry.data.get(CONF_LOGGER_MAC) or ""),
         protocol=str(entry.data.get(CONF_LOGGER_PROTOCOL) or ""),
         serial_unsupported=bool(entry.data.get(CONF_SERIAL_UNSUPPORTED)),
-        timeout=min(
-            LOCAL_TIMEOUT_CAP,
-            float(entry.options.get(CONF_REQUEST_TIMEOUT, DEFAULT_REQUEST_TIMEOUT)),
-        ),
+        timeout=timeout,
         gap=LOCAL_REQUEST_GAP,
         port=port,
         kind=kind,

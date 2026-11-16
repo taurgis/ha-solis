@@ -16,12 +16,15 @@ from ..const import (
     LOGGER_S2,
     LOGGER_S5,
     LOGGER_SOLARMAN,
+    LOGGER_WEB,
+    PROTOCOL_HTTP,
     PROTOCOL_MBTCP,
     PROTOCOL_RTU,
     PROTOCOL_V5,
     RTU_PORT,
     S2_PORT,
     SOLARMAN_PORT,
+    WEB_PORT,
 )
 
 
@@ -90,6 +93,16 @@ SPECS: dict[str, DongleSpec] = {
         unique_prefix="rtu",
         bridge=True,
     ),
+    LOGGER_WEB: DongleSpec(
+        kind=LOGGER_WEB,
+        label="Solis web page",
+        default_port=WEB_PORT,
+        protocol=PROTOCOL_HTTP,
+        experimental=False,
+        powered_by_inverter=True,
+        unique_prefix="web",
+        bridge=False,
+    ),
 }
 
 SELECTABLE_KINDS: tuple[str, ...] = (
@@ -99,6 +112,7 @@ SELECTABLE_KINDS: tuple[str, ...] = (
     LOGGER_MBTCP,
     LOGGER_S5,
     LOGGER_RTU,
+    LOGGER_WEB,
 )
 
 _DETECT_WHY = {
@@ -139,6 +153,15 @@ _DETECT_WHY = {
         "The form selected Modbus RTU over TCP (experimental) and the probe "
         "confirmed a raw RTU frame and a Solis map."
     ),
+    "auto_solis_web": (
+        "Auto-detect stored this as a Solis web page stick. Ports 502 and 8899 "
+        "gave no Solis map, port 80 answered 401 for the Solis realm and the "
+        "status page returned inverter data."
+    ),
+    "manual_solis_web": (
+        "The form selected Solis web page and the stick returned inverter data "
+        "from its status page. The stick refreshes that data about every five minutes."
+    ),
     "": (
         "This entry was saved before dongle detection was recorded. "
         "Kind and protocol are what the entry is using now."
@@ -163,6 +186,8 @@ def detection_code(request_kind: str, probe_kind: str) -> str:
     if request_kind in {"", LOGGER_AUTO}:
         if probe_kind in {LOGGER_S2, LOGGER_S5}:
             return "auto_s2"
+        if probe_kind == LOGGER_WEB:
+            return "auto_solis_web"
         return "auto_solarman"
     return f"manual_{probe_kind}"
 

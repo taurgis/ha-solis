@@ -34,6 +34,7 @@ from .const import (
     ISSUE_LOGGER_S5,
     ISSUE_LOGGER_SILENT,
     ISSUE_LOGGER_TCP,
+    ISSUE_LOGGER_WEB,
     ISSUE_NO_INVERTERS,
     ISSUE_OUTAGE,
     MIN_CLOUD_SCAN_INTERVAL,
@@ -46,6 +47,8 @@ from .const import (
     REASON_SILENT,
     REASON_TCP_DISABLED,
     REASON_UNSUPPORTED,
+    REASON_WEB_AUTH,
+    REASON_WEB_PAGE,
     REASON_WRONG_PROTOCOL,
     REASON_WRONG_SLAVE,
     SOURCE_CLOUD,
@@ -79,6 +82,7 @@ _LOGGER_ISSUES = (
     ISSUE_LOGGER_GATEWAY,
     ISSUE_LOGGER_PROTOCOL,
     ISSUE_LOGGER_S5,
+    ISSUE_LOGGER_WEB,
 )
 _LOGGER_ISSUE = {
     REASON_TCP_DISABLED: ISSUE_LOGGER_TCP,
@@ -88,6 +92,8 @@ _LOGGER_ISSUE = {
     REASON_WRONG_SLAVE: ISSUE_LOGGER_PROTOCOL,
     REASON_UNSUPPORTED: ISSUE_LOGGER_PROTOCOL,
     REASON_S5_CLOSED: ISSUE_LOGGER_S5,
+    REASON_WEB_AUTH: ISSUE_LOGGER_WEB,
+    REASON_WEB_PAGE: ISSUE_LOGGER_WEB,
 }
 _BUSY_UPDATE = {
     REASON_TCP_DISABLED: "update_logger_tcp_disabled",
@@ -97,6 +103,8 @@ _BUSY_UPDATE = {
     REASON_WRONG_SLAVE: "update_logger_wrong_protocol",
     REASON_UNSUPPORTED: "update_logger_wrong_protocol",
     REASON_S5_CLOSED: "update_logger_s5_closed",
+    REASON_WEB_AUTH: "update_logger_web",
+    REASON_WEB_PAGE: "update_logger_web",
 }
 _DEGRADED_INFO = {
     REASON_TCP_DISABLED: (
@@ -129,6 +137,14 @@ _DEGRADED_INFO = {
     REASON_S5_CLOSED: (
         "S5-WiFi-ST port 502 is closed. Solis does not officially offer local "
         "Modbus on this stick, and newer firmware closes the port."
+    ),
+    REASON_WEB_AUTH: (
+        "The stick web page rejected the password. The last local sample is held, "
+        "or a fresh SolisCloud sample is used. Check the web password in Reconfigure."
+    ),
+    REASON_WEB_PAGE: (
+        "The stick web page did not return the Solis inverter page. The last local "
+        "sample is held, or a fresh SolisCloud sample is used."
     ),
 }
 _DEGRADED_WARN = {
@@ -165,6 +181,14 @@ _DEGRADED_WARN = {
         "S5-WiFi-ST is still not serving port 502. Solis does not officially "
         "support local Modbus on this stick. A firmware update often closes it."
     ),
+    REASON_WEB_AUTH: (
+        "The stick web page is still rejecting the password. Check it in Reconfigure "
+        "(user admin, factory password 123456789)."
+    ),
+    REASON_WEB_PAGE: (
+        "The stick web page is still not returning the Solis inverter page. "
+        "Open the stick address in a browser and check the inverter status."
+    ),
 }
 _DEGRADED_DETAIL = {
     REASON_TCP_DISABLED: "Port 502 is closed. Modbus TCP is disabled on this firmware.",
@@ -184,6 +208,8 @@ _DEGRADED_DETAIL = {
         "Port 502 is closed on an S5-WiFi-ST. Local access is experimental "
         "and newer firmware removes it. Use Reconfigure to switch to a gateway."
     ),
+    REASON_WEB_AUTH: "The stick web page rejected the password.",
+    REASON_WEB_PAGE: "The stick web page did not return the Solis inverter page.",
 }
 
 

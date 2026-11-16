@@ -9,12 +9,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceEntry
 
 from . import SolisConfigEntry
-from .const import CONF_KEY_ID, CONF_KEY_SECRET
+from .const import CONF_KEY_ID, CONF_KEY_SECRET, CONF_LOGGER_PASSWORD
 from .coordinator import SolisCoordinator
 
 TO_REDACT = {
     CONF_KEY_ID,
     CONF_KEY_SECRET,
+    CONF_LOGGER_PASSWORD,
     "portal_key_id",
     "portal_secret",
     "portal_password",

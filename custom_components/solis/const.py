@@ -29,6 +29,7 @@ CONF_LOGGER_PORT = "logger_port"
 CONF_LOGGER_FUNCTION = "logger_function"
 CONF_LOGGER_DETECT = "logger_detect"
 CONF_LOGGER_PRESET = "logger_preset"
+CONF_LOGGER_PASSWORD = "logger_password"
 
 SOURCE_CLOUD = "cloud"
 SOURCE_LOCAL = "local"
@@ -40,9 +41,14 @@ PROTOCOL_V5 = "v5"
 PROTOCOL_MBTCP = "mbtcp"
 PROTOCOL_MBTCP_ALT = "mbtcp30003"
 PROTOCOL_RTU = "rtu"
+PROTOCOL_HTTP = "http"
 MBTCP_ALT_PORT = 30003
 SOLARMAN_PORT = 8899
 S2_PORT = 502
+WEB_PORT = 80
+WEB_USER = "admin"
+# Factory password of the stick web page. Some firmware replaces it with the Wi-Fi password.
+WEB_DEFAULT_PASSWORD = "123456789"
 RTU_PORT = 8899
 LOGGER_AUTO = "auto"
 LOGGER_SOLARMAN = "solarman"
@@ -50,6 +56,7 @@ LOGGER_S2 = "s2_wl_st"
 LOGGER_S5 = "s5_wifi_st"
 LOGGER_MBTCP = "modbus_tcp"
 LOGGER_RTU = "rtu_tcp"
+LOGGER_WEB = "solis_web"
 REASON_LOCKED = "locked"
 REASON_TCP_DISABLED = "tcp_disabled"
 REASON_SILENT = "silent"
@@ -62,6 +69,8 @@ REASON_WRONG_PROTOCOL = "wrong_protocol"
 REASON_WRONG_SLAVE = "wrong_slave"
 REASON_UNSUPPORTED = "unsupported_map"
 REASON_S5_CLOSED = "s5_port_closed"
+REASON_WEB_AUTH = "web_auth"
+REASON_WEB_PAGE = "web_page"
 # The 4G string map that answered on this stick stops before 3050.
 # 3050 and the 33000 hybrid block are what lock the local port.
 REGISTER_SAFE_CEILING = 3050
@@ -100,6 +109,7 @@ ISSUE_LOGGER_SILENT = "logger_modbus_silent"
 ISSUE_LOGGER_GATEWAY = "logger_gateway"
 ISSUE_LOGGER_PROTOCOL = "logger_wrong_protocol"
 ISSUE_LOGGER_S5 = "logger_s5_closed"
+ISSUE_LOGGER_WEB = "logger_web"
 
 # Polls that fail this many times in a row, or a snapshot older than
 # STALE_AFTER, are a sustained outage rather than a blip.
@@ -119,4 +129,5 @@ POLL_REPAIRS = (
     ISSUE_LOGGER_GATEWAY,
     ISSUE_LOGGER_PROTOCOL,
     ISSUE_LOGGER_S5,
+    ISSUE_LOGGER_WEB,
 )
