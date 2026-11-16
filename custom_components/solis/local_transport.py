@@ -17,6 +17,7 @@ import random
 import time
 from typing import Any, Protocol
 
+from .cloud_fill import fill_from_cloud, match_inverter
 from .const import (
     CONF_INVERTER_SERIAL,
     CONF_LOGGER_DETECT,
@@ -69,6 +70,7 @@ from .const import (
     SOURCE_BOTH,
     SOURCE_CLOUD,
     SOURCE_LOCAL,
+    WEB_DEFAULT_PASSWORD,
 )
 from .errors import SolisCloudError, SolisLoggerBusy, SolisLoggerOffline
 from .loggers import detection_code, spec_for
@@ -100,6 +102,10 @@ _LOGGER = logging.getLogger(__name__)
 _BACKOFF_BASE = 10.0
 _BACKOFF_CAP = 600.0
 _FRESH = timedelta(minutes=15)
+# A web-page stick and SolisCloud share one five-minute data cycle. The cloud
+# fill is read at that pace, and again sooner after a failed read.
+_FILL_EVERY = 300.0
+_FILL_RETRY = 60.0
 _PROTOCOLS = (PROTOCOL_V5, PROTOCOL_MBTCP, PROTOCOL_MBTCP_ALT)
 _KNOWN_PROTOCOLS = (*_PROTOCOLS, PROTOCOL_RTU)
 _FC3_KINDS = {LOGGER_S2, LOGGER_S5, LOGGER_MBTCP, LOGGER_RTU}
@@ -138,6 +144,8 @@ class LocalSource(Protocol):
 
     identity_checked: bool
     degraded_reason: str
+    # True when the reader covers few fields and SolisCloud should fill the rest.
+    cloud_fill: bool
 
     async def async_read(self) -> SolisSnapshot: ...
 
@@ -290,6 +298,7 @@ class SolisLocalTransport:
         self._backoff_step = 0
         self._has_series = False
         self.identity_checked = False
+        self.cloud_fill = False
 
     async def async_read(self) -> SolisSnapshot:
         """Return a snapshot. A locked logger raises ``SolisLoggerBusy``."""
@@ -588,6 +597,8 @@ class SolisPriorityTransport:
         self._mode = mode
         self._local = local
         self._cloud = cloud
+        self._fill: SolisSnapshot | None = None
+        self._fill_due = 0.0
 
     async def async_read(self) -> SolisSnapshot:
         """Read local first. Night keeps totals. A reset uses the cloud when it is fresh."""
@@ -600,6 +611,8 @@ class SolisPriorityTransport:
         except SolisLoggerOffline:
             local = None
         if local is not None and local.source == "local":
+            if self._mode == SOURCE_BOTH and self._local.cloud_fill:
+                return await self._with_cloud_fill(local)
             return await self._with_identity(local)
         if local is not None:
             return _fill_missing_energy(local, await self._optional_cloud())
@@ -623,6 +636,30 @@ class SolisPriorityTransport:
             f"{local.inverter_serial} local session is paused",
             reason=local.degraded_reason or REASON_LOCKED,
         )
+
+    async def _with_cloud_fill(self, local: SolisSnapshot) -> SolisSnapshot:
+        """Fill fields the reader lacks from a cached cloud sample, refreshed every 5 minutes."""
+        transport = self._local
+        assert transport is not None
+        if self._cloud is not None and time.monotonic() >= self._fill_due:
+            sample = await self._optional_cloud()
+            if sample is None:
+                self._fill_due = time.monotonic() + _FILL_RETRY
+            else:
+                self._fill = sample
+                self._fill_due = time.monotonic() + _FILL_EVERY
+        if self._fill is None:
+            return local
+        serial = transport.inverter_serial
+        donor = match_inverter(self._fill, serial)
+        if donor is None:
+            return local
+        if placeholder_serial(serial, transport.logger_serial) and donor.serial:
+            transport.adopt_serial(donor.serial)
+            serial = donor.serial
+        transport.note_identity(donor)
+        fresh = datetime.now(UTC) - self._fill.fetched_at <= _FRESH
+        return fill_from_cloud(local, self._fill, serial=serial, fresh=fresh)
 
     async def _with_identity(self, local: SolisSnapshot) -> SolisSnapshot:
         """One cloud read can supply the inverter serial, series and model code."""
@@ -1150,7 +1187,7 @@ def logger_setup(
         CONF_SOURCE: source,
     }
     if kind == LOGGER_WEB:
-        data[CONF_LOGGER_PASSWORD] = request.password
+        data[CONF_LOGGER_PASSWORD] = request.password or WEB_DEFAULT_PASSWORD
     return data, unique
 
 

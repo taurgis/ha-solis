@@ -27,6 +27,9 @@ last good snapshot.
   - clock / abnormal data / no inverters → fail the update with a repair;
   - transient cloud errors → hold the last snapshot;
   - logger busy → hold as degraded; a lock lasting 10 min opens a repair;
+  - logger busy with reason `web_auth` or `web_page` (web-page stick: password
+    rejected, or no usable page) → the same hold, and the `logger_web` repair
+    after 10 minutes;
   - logger offline → asleep snapshot (live power 0, totals kept, no repair),
     or the gateway / closed-port / S5 repairs for faults a person can fix.
 - **Blip vs outage.** Fewer than three failed polls with a last good snapshot

@@ -72,7 +72,19 @@ Modbus conversion mode is the Modbus TCP gateway. A value off by 256 is the
 same mistake. The repair also covers a reply from the wrong slave and a
 device that is not serving the Solis register map.
 
-**S3, S4, S6 and 4G sticks.** There is no local port to type. Use
+**Web page stick says the password was rejected.** The repair
+`logger_web` and the form error mean port 80 answered 401. The user is
+`admin`. The factory password is `123456789`; some firmware replaces it with
+your Wi-Fi password. Fix it with Reconfigure on the Solis entry. A page that
+loads but is not the Solis inverter page gives the same repair: open the
+stick address in a browser and check it shows the inverter status.
+
+**Web page values move every five minutes.** That is the stick, not the
+integration. It polls the inverter on a five-minute cycle and serves the last
+sample until the next one. For live data use a gateway on the inverter RS485
+port.
+
+**S4, S6 and 4G sticks.** There is no local port to type. Use
 SolisCloud, or wire a gateway to the inverter RS485 port and pick Modbus
 TCP gateway. Details and sources are in
 [docs/research/dongles.md](research/dongles.md).

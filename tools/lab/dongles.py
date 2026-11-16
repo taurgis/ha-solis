@@ -8,6 +8,7 @@ One process serves every stick the audit drives from Home Assistant:
 - An unnamed port-502 device, so auto-detect asks which device it is
 - Modbus RTU over TCP on the Waveshare transparent port 4196
 - An S5-WiFi-ST whose port 502 can be closed after setup
+- A web-page-only stick: port 80, basic auth, inverter.cgi and moniter.cgi
 
 Each device has its own address on the loopback interface. POST
 http://127.0.0.1:8871/__control changes one device. The body is JSON.
@@ -26,6 +27,7 @@ import sys
 import types
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "tools"))
 
 
 def _load_solarman() -> types.ModuleType:
@@ -48,6 +50,8 @@ crc16 = _SOLARMAN.crc16
 logger_serial_of = _SOLARMAN.logger_serial_of
 modbus_from_request = _SOLARMAN.modbus_from_request
 sequence_of = _SOLARMAN.sequence_of
+
+from mock_soliscloud.web_stick import WebStickEmulator, WebStickState  # noqa: E402
 
 CONTROL_PORT = 8871
 LAB_NET = "192.168.250."
@@ -166,11 +170,13 @@ class Lab:
 
     def __init__(self) -> None:
         self.devices = _devices()
+        self.web = WebStickEmulator(WebStickState(host=f"{LAB_NET}17", port=80))
         self._udp: asyncio.DatagramTransport | None = None
 
     async def start(self) -> None:
         for device in self.devices.values():
             await self.listen(device)
+        await self.web.start()
         await self._listen_udp()
 
     async def listen(self, device: Device) -> None:
@@ -217,8 +223,26 @@ class Lab:
         )
         self._udp = transport
 
+    async def _apply_web(self, payload: dict[str, object]) -> dict[str, object]:
+        """The web stick: ``night``, ``mode`` (ok, garbage, error, silent, hang), ``power``."""
+        state = self.web.state
+        if "mode" in payload:
+            state.mode = str(payload["mode"])
+        if "password" in payload:
+            state.password = str(payload["password"])
+        if "power" in payload:
+            self.web.refresh(power=int(str(payload["power"])), temperature=state.temperature)
+        if "night" in payload:
+            if payload["night"]:
+                await self.web.close()
+            elif self.web._server is None:
+                await self.web.start()
+        return {"ok": True, "device": "web", "host": state.host, "mode": state.mode}
+
     async def apply(self, payload: dict[str, object]) -> dict[str, object]:
         name = str(payload.get("device") or "")
+        if name == "web":
+            return await self._apply_web(payload)
         device = self.devices.get(name)
         if device is None:
             return {"ok": False, "error": f"unknown device {name}"}
@@ -420,7 +444,7 @@ async def _control(lab: Lab, reader: asyncio.StreamReader, writer: asyncio.Strea
         head, _, body = raw.partition(b"\r\n\r\n")
         status = b"200 OK"
         if head.startswith(b"GET /__health"):
-            payload = {"ok": True, "devices": sorted(lab.devices)}
+            payload = {"ok": True, "devices": sorted([*lab.devices, "web"])}
         elif head.startswith(b"POST /__control"):
             parsed = json.loads(body.decode() or "{}")
             payload = await lab.apply(parsed if isinstance(parsed, dict) else {})

@@ -12,14 +12,17 @@ references: [solis-api-research]
 Read the inverter through a data logger on the LAN and return the same
 `SolisSnapshot` as the cloud. Files: `local_transport.py`
 (`SolisLocalTransport`, the local-first `SolisPriorityTransport`, probing
-and form parsing), `solarman.py` (Solarman V5 codec, Modbus TCP client,
-UDP discovery, per-host connection gate), `registers.py` (string and hybrid
-register maps), and `loggers/` (the logger-kind registry, port-80
-fingerprinting, the RTU-over-TCP client, bridge probes).
+and form parsing), `web_transport.py` (`SolisWebTransport` and its probe, for
+sticks that only serve a web page), `cloud_fill.py` (merging a cloud sample
+into a web-page snapshot), `solarman.py` (Solarman V5 codec, Modbus TCP
+client, UDP discovery, per-host connection gate), `registers.py` (string and
+hybrid register maps), and `loggers/` (the logger-kind registry, port-80
+fingerprinting, the RTU-over-TCP client, bridge probes, the web-page HTTP
+client and parsers in `loggers/web.py`).
 
 Device research lives in `docs/research/solarman-local.md`,
-`docs/research/s2-wl-st.md` and `docs/research/dongles.md` (input notes, not
-spec nodes).
+`docs/research/s2-wl-st.md`, `docs/research/web-page-stick.md` and
+`docs/research/dongles.md` (input notes, not spec nodes).
 
 ## Logger kinds
 
@@ -34,6 +37,7 @@ config form reads `SELECTABLE_KINDS`, so the list is not copied.
 | `modbus_tcp` | Modbus TCP | 502 or typed | Waveshare / Elfin / USR gateway; mains-powered, so a refused port is a fault, not night. |
 | `s5_wifi_st` (experimental) | Modbus TCP | 502 | Only while firmware keeps 502 open. |
 | `rtu_tcp` (experimental) | Raw Modbus RTU on TCP | Vendor factory port | Transparent bridges; never auto-detected. |
+| `solis_web` | HTTP GET of `inverter.cgi`, basic auth `admin` | 80 | S3-class sticks with no Modbus or Solarman port. Auto-detected last, see below. |
 
 ## Decisions
 
@@ -43,7 +47,30 @@ config form reads `SELECTABLE_KINDS`, so the list is not copied.
   no requirements.
 - **Auto-detect probes 502 then 8899 and stops at the first Solis map.** It
   never tries RTU, other ports or mDNS: extra framings are how Solarman
-  sticks lock up.
+  sticks lock up. Only when both fail without a connected-but-silent 502 does
+  it look at port 80: a `401` with `realm="solis"` plus a readable
+  `inverter.cgi` offers `solis_web`. The realm check keeps a router or another
+  stick from being claimed.
+- **Web page stick.** The stick polls the inverter about every five minutes
+  and serves the cached values (measured: two changes 5 min 02 s apart over
+  12 minutes), the same delay as SolisCloud, so the page is local but not
+  faster. It is read at the normal local poll (60 s) so a new sample shows
+  within a minute. Password is the web password, blank meaning the factory
+  `123456789`, stored in entry data and redacted. Identity is the inverter
+  serial from the page, unique id `web:<serial>`. A 401 (`web_auth`) or a
+  page that is not the Solis format, a bad status, or a TCP session that gives
+  no page (`web_page`) is a paused session with the usual backoff, not night;
+  no route is asleep. Both reasons share one repair. Evidence and field
+  layout: `docs/research/web-page-stick.md`.
+- **Cloud fills a web-page stick.** The page lacks month and year energy,
+  frequency, phases, strings, the series name, the plant and alarms. In `both`
+  mode the page wins for the fields it has and `fill_from_cloud` takes the
+  rest from a cached cloud sample, read at most every 5 minutes (60 s after a
+  failure) because both sources share the five-minute cycle. A failed read
+  keeps the cache; a sample older than 15 minutes supplies totals and names
+  only, never live readings. The cloud inverter is matched by serial. Other
+  local kinds keep the older rule: cloud identity once, energy fill only when
+  the local sample is asleep or degraded (`LocalSource.cloud_fill`).
 - **Port 502 is named from port 80, not Modbus.** An S2 and a gateway return
   the same registers, and a second Modbus session (or FC43) can wedge S2
   firmware `1001318c` for minutes. The device's web page decides; an
@@ -66,7 +93,7 @@ config form reads `SELECTABLE_KINDS`, so the list is not copied.
   a good local read; a stale cloud sample never replaces an asleep local one.
 - **Identity.** Config unique ids: Solarman uses the numeric logger serial;
   S2/S5 `s2:` + stick or inverter serial; gateway `tcp:` + token; RTU `rtu:` +
-  token. A new address or MAC reported by the transport is written back to
+  token; web page `web:` + inverter serial. A new address or MAC reported by the transport is written back to
   the entry via callbacks (`on_host`, `on_protocol`, `on_serial`).
 
 ## Boundary
@@ -74,6 +101,7 @@ config form reads `SELECTABLE_KINDS`, so the list is not copied.
 - Home Assistant–free; depends on the shared kernel only. Raises
   `SolisLoggerOffline` / `SolisLoggerBusy` and leaves repairs and poll
   backoff to `coordinator`.
-- Read-only: issues Modbus functions 3 and 4 only.
+- Read-only: issues Modbus functions 3 and 4 only, and HTTP GET of the two
+  status pages.
 - `loggers/probe.py` currently reaches private helpers in
   `local_transport` and `solarman` (structural debt, see architecture).

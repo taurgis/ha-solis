@@ -32,6 +32,8 @@ _MAX_BODY = 16384
 _INVERTER_FIELDS = 8
 _COLLECTOR_FIELDS = 13
 _NO_ALARM = "NO"
+# The stick pads its replies. A real stick pads the front with NUL bytes.
+_PAD = " \t\r\n\x00"
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,7 +75,7 @@ def parse_inverter(body: str) -> WebInverter:
     The fields are serial, firmware, model code, temperature in degrees,
     power in watts, energy today and total in kWh, and an alarm word.
     """
-    fields = [item.strip() for item in body.split(";")]
+    fields = [item.strip(_PAD) for item in body.split(";")]
     if len(fields) < _INVERTER_FIELDS:
         raise ValueError("inverter.cgi has too few fields")
     return WebInverter(
@@ -90,7 +92,7 @@ def parse_inverter(body: str) -> WebInverter:
 
 def parse_collector(body: str) -> WebCollector | None:
     """Return the stick serial, firmware and MAC, or ``None`` if the page differs."""
-    fields = [item.strip() for item in body.split(";")]
+    fields = [item.strip(_PAD) for item in body.split(";")]
     if len(fields) < _COLLECTOR_FIELDS or not fields[2]:
         return None
     mac = fields[11] if fields[11].lower() != "null" else ""

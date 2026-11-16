@@ -17,7 +17,8 @@ S2-WL-ST speaks Modbus TCP on port 502. A Waveshare, Elfin or USR gateway in
 Modbus TCP mode uses that same framing and is selected by hand, because
 auto-detect cannot tell it from an S2. Experimental options cover an
 S5-WiFi-ST whose port 502 is still open, and a transparent Modbus RTU tunnel.
-Inverter control writes are not sent. The cloud publishes
+A stick with no Modbus or Solarman port but a status web page (some S3-class
+firmware) is read from that page with the Solis web page option. Inverter control writes are not sent. The cloud publishes
 samples about every five minutes, and the client stays under the platform
 rate limit. A Solarman logger is identified by its serial and MAC, so a new
 DHCP lease updates the existing entry. An S2-WL-ST, an S5 and a gateway do
@@ -104,7 +105,8 @@ choice. The research note is [docs/research/dongles.md](docs/research/dongles.md
 | Waveshare, Elfin EW11, USR-TCP232 in Modbus TCP mode | Auto-detect when port 80 names the gateway, or Modbus TCP gateway | 502, or the port you set | Yes. A refused port is a down gateway. Reserve the address in the router. |
 | Solis S5-WiFi-ST | Solis S5-WiFi-ST (experimental). Solis does not officially support local access, and newer firmware closes port 502. | 502 | Only while that firmware still listens. A repair opens if the port later closes. |
 | Elfin, USR or Waveshare in transparent mode, ESP TCP-serial bridge | Modbus RTU over TCP (experimental). The model fills the factory port: Elfin 8899, Waveshare 4196, USR RS485 26, ESPHome 6638. | That port, unless you type one | Yes, at 9600 8N1. Not tried by auto-detect. |
-| S3-WIFI-ST, S4-WIFI-ST, S6 USB, S1-W4G-ST, 4G/GPRS sticks | Not a local option | — | No published local listener. Use SolisCloud, or a gateway on the inverter RS485 port. |
+| Solis stick with only a status web page (S3-class firmware) | Auto-detect when ports 502 and 8899 are closed and port 80 asks for the `solis` login, or pick Solis web page | 80 | Yes, but only what the page shows, and the stick refreshes it about every 5 minutes, the same as SolisCloud. Power, temperature, energy today and total, firmware and alarm. With `both`, SolisCloud fills the rest. |
+| S4-WIFI-ST, S6 USB, S1-W4G-ST, 4G/GPRS sticks, other S3 firmware | Not a local option | — | No published local listener. Use SolisCloud, or a gateway on the inverter RS485 port. |
 
 ## Migrating from hultenvp/solis-sensor
 

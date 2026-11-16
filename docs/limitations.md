@@ -36,7 +36,10 @@
 - Local reads are Solarman V5 on TCP 8899, Modbus TCP on port 502 for a
   Solis S2-WL-ST or an S5-WiFi-ST whose firmware still listens, Modbus TCP
   to an RS485 gateway, or experimental Modbus RTU over TCP for a
-  transparent tunnel. S3-WIFI-ST, S4-WIFI-ST, S6 USB sticks and 4G/GPRS
+  transparent tunnel. A stick that only has a status web page is read from
+  that page (power, temperature, energy today and total, firmware, alarm,
+  refreshed by the stick about every five minutes); SolisCloud fills the rest.
+  S4-WIFI-ST, S6 USB sticks, other S3 firmware and 4G/GPRS
   sticks have no local listener; use cloud, or a gateway on the inverter
   RS485 port. See [dongles](research/dongles.md),
   [the Solarman note](research/solarman-local.md) and

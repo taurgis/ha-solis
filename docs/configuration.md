@@ -59,6 +59,33 @@ treated as night. In `both` mode a fresh cloud sample is published and,
 after 10 minutes, a repair explains the firmware. See
 [S2-WL-ST](research/s2-wl-st.md).
 
+### Solis web page
+
+Some Wi-Fi sticks (S3-class firmware, a web page that asks for the user
+`admin`) have no Modbus and no Solarman port, but their status page shows the
+inverter. Auto-detect offers this when ports 502 and 8899 do not answer and
+port 80 asks for the `solis` login. You can also pick Solis web page. The
+password is the stick's web password: leave the field empty for the factory
+`123456789`. Some firmware replaces it with your Wi-Fi password. The password
+is stored in the config entry and kept out of diagnostics. Reconfigure keeps
+it when the field is left empty.
+
+The page gives the inverter serial, firmware, model code, temperature, AC
+power, energy today (0.1 kWh), energy total (whole kWh) and an alarm word.
+The stick reads the inverter about every five minutes and serves that sample
+until the next one, the same cycle SolisCloud has, so the values step instead
+of moving smoothly. The integration reads the page every poll (60 s by
+default) so a new sample shows up within about a minute.
+
+In `both` mode the page wins for the values it has. SolisCloud fills the
+rest (month and year energy, frequency, phases, PV strings, the series name,
+the plant and its alarms). That cloud sample is read at most every five
+minutes, not on every poll, and a failed read keeps the last one. A cloud
+sample older than 15 minutes only supplies totals and names, not live
+readings. Without a cloud account the missing sensors stay unknown. A wrong
+password or a page in another format is not night: a fresh cloud sample is
+published as `degraded`, and a repair opens after 10 minutes.
+
 `both` uses the stick for live readings. Cloud numbers are used only for
 energy totals the stick left empty, and for the series name and model code
 when the stick does not carry them. A stick that is off for the night stays

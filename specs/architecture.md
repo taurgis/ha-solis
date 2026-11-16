@@ -39,7 +39,7 @@ flowchart LR
 | `integration-setup` | Entry lifecycle, transport assembly, config/options/reconfigure/reauth/DHCP flows, repair fix-flows, diagnostics. |
 | `coordinator` | Poll loop, outage/sleep/lock handling, poll-interval backoff, repairs raised by polling, snapshot persistence. |
 | `cloud-transport` | SolisCloud Platform API v2: signing, pacing, retries, parsing, unit conversion. |
-| `local-transport` | Logger framings, register maps, logger-kind registry and detection, the local-first router. |
+| `local-transport` | Logger framings, register maps, the web-page transport and its cloud fill, logger-kind registry and detection, the local-first router. |
 | `entities` | Devices and entities built from a snapshot; monotonic energy. |
 | `legacy-migration` | Rewriting hultenvp/solis-sensor entity and device ids. |
 | `dev-tooling` | Mock SolisCloud, logger emulators, Home Assistant labs, release and check scripts. |
@@ -70,7 +70,9 @@ locked session that must back off.
 `SolisPriorityTransport` wrapping a `SolisLocalTransport` (and the cloud
 transport when present) for `local` / `both`. In `both`, local is preferred;
 cloud fills missing energy counters and supplies a fresh sample while the
-local session is locked. Cloud being down does not drop a good local read,
+local session is locked. A web-page stick reports few fields, so there the
+cloud also fills the rest from a sample read every five minutes. Cloud being
+down does not drop a good local read,
 and an asleep logger is not replaced by a stale cloud sample.
 
 ## Invariants
@@ -78,8 +80,8 @@ and an asleep logger is not replaced by a stale cloud sample.
 - **Entity platforms never do I/O.** They read the coordinator's snapshot
   only; no HTTP, socket, or transport call outside the coordinator.
 - **Transports and codecs are Home Assistant–free.** `api`, `signing`,
-  `parser`, `units`, `transport`, `local_transport`, `solarman`, `registers`,
-  `loggers/*`, `models`, `errors`, `energy` and `const` import nothing from
+  `parser`, `units`, `transport`, `local_transport`, `web_transport`,
+  `cloud_fill`, `solarman`, `registers`, `loggers/*`, `models`, `errors`, `energy` and `const` import nothing from
   `homeassistant`, so the mock server and emulators in `tools/` reuse them.
 - **No control path.** Nothing in the package writes to the inverter, calls
   the SolisCloud control endpoints, or issues a Modbus write function.

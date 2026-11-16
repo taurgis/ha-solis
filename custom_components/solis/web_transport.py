@@ -107,6 +107,7 @@ class SolisWebTransport:
         )
         self.degraded_reason = ""
         self.identity_checked = False
+        self.cloud_fill = True
         self._has_series = False
         self._last: SolisSnapshot | None = None
         self._asleep_logged = False
@@ -139,8 +140,6 @@ class SolisWebTransport:
         return snapshot
 
     def _pause(self, err: SolisLoggerBusy) -> None:
-        if err.waiting:
-            return
         self.degraded_reason = err.reason or REASON_WEB_PAGE
         delay = backoff_seconds(self._backoff_step)
         self._backoff_step += 1
@@ -174,9 +173,10 @@ class SolisWebTransport:
         async with host_gate(self._host, self._port):
             page = await self._client.read_inverter()
         serial = self._inverter_serial or page.serial
-        if serial and serial != self._inverter_serial and self._on_serial is not None:
+        if serial and serial != self._inverter_serial:
             self._inverter_serial = serial
-            self._on_serial(serial)
+            if self._on_serial is not None:
+                self._on_serial(serial)
         logger = self._label()
         now = datetime.now(UTC)
         inverter = web_inverter(page, serial=serial or logger, logger=logger, now=now)

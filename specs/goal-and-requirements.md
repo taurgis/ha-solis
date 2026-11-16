@@ -41,10 +41,13 @@ hultenvp/solis-sensor. Installed through HACS or by copying
 - **Local reads.** Read the inverter through a logger on the LAN: Solarman /
   IGEN V5 sticks, the Solis S2-WL-ST, Modbus TCP gateways (Waveshare, Elfin,
   USR), and, experimentally, an S5-WiFi-ST with port 502 open and transparent
-  Modbus RTU over TCP. Auto-detect covers the kinds that can be told apart
+  Modbus RTU over TCP. A stick with no Modbus port but a status web page is
+  read from that page. Auto-detect covers the kinds that can be told apart
   safely; the rest are chosen by hand.
 - **Cloud, local, or both.** In `both` mode the local logger is preferred and
-  the cloud fills energy totals and covers a paused local session.
+  the cloud fills energy totals and covers a paused local session. A web-page
+  stick reports few fields, so the cloud also fills month and year energy,
+  frequency, phases and strings.
 - **Devices and entities.** Plant, inverter, logger and EPM devices with power,
   energy, phase, PV-string, battery, alarm and diagnostic entities
   (catalogue: `docs/entities.md`).
@@ -78,6 +81,10 @@ hultenvp/solis-sensor. Installed through HACS or by copying
 
 ## Known limitations
 
+- A web-page stick shows one sample about every five minutes, the same cycle
+  as SolisCloud, and only power, temperature, energy today and total,
+  firmware and an alarm word. It is the one local kind verified on a real
+  stick beyond the Solarman string map (`docs/research/web-page-stick.md`).
 - Most logger kinds were never on a bench. S5-WiFi-ST, Modbus gateways, RTU
   bridges and LSW-3 / LSE-3 sticks are built from vendor docs, protocol
   implementations and user reports, and verified only against the emulators

@@ -37,7 +37,9 @@ documentation for users is `docs/configuration.md`.
   API URL, key id and secret, then the plants to poll. Local asks for the
   logger kind (Auto-detect by default), address, optional port, slave,
   serials, then probes the logger and stores what the probe found plus a
-  detection code.
+  detection code. A password field serves the Solis web page kind (blank means
+  the factory password); on Reconfigure a blank field keeps the saved one, and
+  a web-page stick can be attached without a stick serial.
 - **URL normalisation.** Public `http://` is stored as `https://`; loopback,
   private addresses and single-label hosts may stay `http`.
 - **Uniqueness.** The API key id is the unique id of a cloud entry; a
@@ -62,8 +64,8 @@ documentation for users is `docs/configuration.md`.
   *opened* by `coordinator`.
 - Diagnostics include the snapshot and the local session (kind, protocol,
   port, slave, register map, experimental flag, detection code with its
-  sentence). Key id, secret, portal credentials, location, host, MAC and
-  serials are redacted.
+  sentence). Key id, secret, portal credentials, the logger web password, location,
+  host, MAC and serials are redacted.
 
 ## Boundary
 

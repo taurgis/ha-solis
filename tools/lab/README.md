@@ -12,6 +12,7 @@ every local logger the integration can talk to. The emulators use the old
 | Unnamed | 192.168.250.16 | Modbus TCP 502, port 80 does not name a device |
 | RTU bridge | 192.168.250.13 | Raw Modbus RTU on TCP 4196 |
 | S5-WiFi-ST | 192.168.250.14 | Modbus TCP 502, then the port can be closed |
+| Web-page stick | 192.168.250.17 | Port 80 with basic auth (`admin` / `123456789`): `inverter.cgi` and `moniter.cgi`. Control modes `ok`, `garbage`, `error`, `silent`, `hang`; `password`, `power` and `night` also work. |
 
 Addresses are added to the loopback interface. Home Assistant uses host
 networking so it shares those addresses and UDP discovery. `POST http://127.0.0.1:8871/__control`
