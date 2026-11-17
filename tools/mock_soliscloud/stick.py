@@ -142,7 +142,15 @@ class StickEmulator:
                     return
                 state = self._emulator.state
                 payload = f"{state.host},{state.mac},{state.serial}".encode()
-                self.transport.sendto(payload, addr)
+                # Discovery keeps a reply only when the packet source is the host
+                # named in the payload. Send from that address, not from whichever
+                # interface accepted the broadcast.
+                try:
+                    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as reply:
+                        reply.bind((state.host, 0))
+                        reply.sendto(payload, addr)
+                except OSError:
+                    self.transport.sendto(payload, addr)
 
         transport, _protocol = await loop.create_datagram_endpoint(
             lambda: _Udp(self),

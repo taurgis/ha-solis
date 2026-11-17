@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+import pytest_socket
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
@@ -150,6 +151,11 @@ async def test_discovery_and_ip_change(socket_enabled: None) -> None:
         woken = await transport.async_read()
         assert woken.source == "local"
         assert seen == []
+        pytest_socket.socket_allow_hosts(["127.0.0.1", "127.0.0.2"], allow_unix_socket=True)
+        await emulator.apply({"host": "127.0.0.2"})
+        moved = await transport.async_read()
+        assert moved.source == "local"
+        assert seen == ["127.0.0.2"]
     finally:
         await emulator.close()
 

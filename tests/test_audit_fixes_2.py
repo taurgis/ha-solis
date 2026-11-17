@@ -34,7 +34,7 @@ from custom_components.solis.solarman import (
     _is_lan_address,
     discover_sticks,
 )
-from mock_soliscloud.stick import captured_registers
+from mock_soliscloud.stick import SERIAL, StickEmulator, StickState, captured_registers
 from mock_soliscloud.web_stick import WebStickEmulator
 
 
@@ -170,6 +170,53 @@ async def test_dhcp_follows_private_addresses_and_never_moves_a_web_stick(
     )
     assert public["reason"] == "not_solis_logger"
     assert web.data["logger_host"] == "192.168.0.112"
+    named = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_DHCP},
+        data={"ip": "stick", "macaddress": "b8:d6:1a:58:a7:0b", "hostname": "x"},
+    )
+    assert named["reason"] == "not_solis_logger"
+
+
+async def test_reconfigure_aborts_when_another_entry_owns_the_logger(
+    hass: HomeAssistant, socket_enabled: None
+) -> None:
+    """A local reconfigure cannot take a logger serial that another entry already uses."""
+    owner = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "source": SOURCE_LOCAL,
+            "logger_host": "127.0.0.1",
+            "logger_serial": str(SERIAL),
+        },
+        options=entry_options(),
+        version=3,
+        unique_id=str(SERIAL),
+    )
+    other = MockConfigEntry(
+        domain=DOMAIN,
+        data={"source": SOURCE_LOCAL, "logger_host": "127.0.0.1", "logger_serial": "1"},
+        options=entry_options(),
+        version=3,
+        unique_id="1",
+    )
+    owner.add_to_hass(hass)
+    other.add_to_hass(hass)
+    emulator = StickEmulator(StickState(tcp_port=8899, udp_port=0))
+    await emulator.start()
+    try:
+        started = await other.start_reconfigure_flow(hass)
+        assert started["step_id"] == "logger"
+        result = await hass.config_entries.flow.async_configure(
+            started["flow_id"],
+            {"logger_host": "127.0.0.1", "logger_serial": str(SERIAL)},
+        )
+    finally:
+        await emulator.close()
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+    assert other.unique_id == "1"
+    assert other.data["logger_serial"] == "1"
 
 
 async def test_a_repair_from_a_failed_setup_is_cleared_after_recovery(
