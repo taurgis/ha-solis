@@ -45,6 +45,9 @@ STICK_CONTROL = "http://127.0.0.1:8877"
 LOGGER_SERIAL = "1902137671"
 LOCAL_TOTAL = 21970.0
 MORNING_HOST = "127.0.0.2"
+# The stick emulator keeps the inverter serial hex-nibble encoded, like real
+# firmware. It must match INVERTER_SERIAL in tools/mock_soliscloud/stick.py.
+LOCAL_SERIAL = "1031230000000AB1"
 
 
 class CheckError(Exception):
@@ -794,24 +797,38 @@ def _exercise_local(base: str, token: str, config: Path) -> None:
     _stick_control({"registers": {"3005": 500}})
     entry_id = _add_logger(base, token, "local", "127.0.0.1")
     _wait_loaded(base, token, entry_id)
-    _require_unique(base, token, "SOLIS001_energy_total", lambda item: _number(item) == LOCAL_TOTAL)
-    _require_unique(base, token, "SOLIS001_data_source", lambda item: item.get("state") == "local")
-    _require_unique(base, token, "SOLIS001_ac_power", lambda item: _number(item) == 500)
-    _require_unique(base, token, "SOLIS001_phase_1_voltage", lambda item: _number(item) == 234.9)
+    _require_unique(
+        base, token, f"{LOCAL_SERIAL}_energy_total", lambda item: _number(item) == LOCAL_TOTAL
+    )
+    _require_unique(
+        base, token, f"{LOCAL_SERIAL}_data_source", lambda item: item.get("state") == "local"
+    )
+    _require_unique(base, token, f"{LOCAL_SERIAL}_ac_power", lambda item: _number(item) == 500)
+    _require_unique(
+        base, token, f"{LOCAL_SERIAL}_phase_1_voltage", lambda item: _number(item) == 234.9
+    )
     _log("Local logger published 21970 kWh, 500 W and 234.9 V")
-    energy_id = _entity_id(base, token, "SOLIS001_energy_total")
+    energy_id = _entity_id(base, token, f"{LOCAL_SERIAL}_energy_total")
     _stick_control({"night": True})
     _refresh_until(base, token, energy_id)
-    _require_unique(base, token, "SOLIS001_ac_power", lambda item: _number(item) == 0)
-    _require_unique(base, token, "SOLIS001_energy_total", lambda item: _number(item) == LOCAL_TOTAL)
-    _require_unique(base, token, "SOLIS001_data_source", lambda item: item.get("state") == "asleep")
+    _require_unique(base, token, f"{LOCAL_SERIAL}_ac_power", lambda item: _number(item) == 0)
+    _require_unique(
+        base, token, f"{LOCAL_SERIAL}_energy_total", lambda item: _number(item) == LOCAL_TOTAL
+    )
+    _require_unique(
+        base, token, f"{LOCAL_SERIAL}_data_source", lambda item: item.get("state") == "asleep"
+    )
     _require_no_cloud_outage(base, token)
     _log("Night closed the stick: power 0, lifetime energy held, source asleep")
     _stick_control({"night": False, "host": MORNING_HOST, "registers": {"3005": 500}})
     _refresh_until(base, token, energy_id)
-    _require_unique(base, token, "SOLIS001_data_source", lambda item: item.get("state") == "local")
-    _require_unique(base, token, "SOLIS001_energy_total", lambda item: _number(item) == LOCAL_TOTAL)
-    _require_unique(base, token, "SOLIS001_ac_power", lambda item: _number(item) == 500)
+    _require_unique(
+        base, token, f"{LOCAL_SERIAL}_data_source", lambda item: item.get("state") == "local"
+    )
+    _require_unique(
+        base, token, f"{LOCAL_SERIAL}_energy_total", lambda item: _number(item) == LOCAL_TOTAL
+    )
+    _require_unique(base, token, f"{LOCAL_SERIAL}_ac_power", lambda item: _number(item) == 500)
     _wait_stored_host(config, entry_id, MORNING_HOST)
     _wait_loaded(base, token, entry_id)
     status, body = _http(
@@ -824,8 +841,10 @@ def _exercise_local(base: str, token: str, config: Path) -> None:
         raise CheckError(f"reload failed: {status} {body}")
     _wait_loaded(base, token, entry_id)
     _refresh_until(base, token, energy_id)
-    _require_unique(base, token, "SOLIS001_data_source", lambda item: item.get("state") == "local")
-    _require_unique(base, token, "SOLIS001_ac_power", lambda item: _number(item) == 500)
+    _require_unique(
+        base, token, f"{LOCAL_SERIAL}_data_source", lambda item: item.get("state") == "local"
+    )
+    _require_unique(base, token, f"{LOCAL_SERIAL}_ac_power", lambda item: _number(item) == 500)
     logs = _run([*DOCKER, "logs", CORE_NAME], check=False)
     combined = f"{logs.stdout}\n{logs.stderr}"
     moved = combined.count(f"Solarman logger {LOGGER_SERIAL} is now at {MORNING_HOST}")
@@ -835,15 +854,23 @@ def _exercise_local(base: str, token: str, config: Path) -> None:
     _delete_entry(base, token, entry_id)
     both_id = _add_logger(base, token, "both", MORNING_HOST)
     _wait_loaded(base, token, both_id)
-    _require_unique(base, token, "SOLIS001_energy_total", lambda item: _number(item) == LOCAL_TOTAL)
-    _require_unique(base, token, "SOLIS001_data_source", lambda item: item.get("state") == "local")
+    _require_unique(
+        base, token, f"{LOCAL_SERIAL}_energy_total", lambda item: _number(item) == LOCAL_TOTAL
+    )
+    _require_unique(
+        base, token, f"{LOCAL_SERIAL}_data_source", lambda item: item.get("state") == "local"
+    )
     _log("Local plus cloud kept the stick total of 21970 kWh")
-    energy_id = _entity_id(base, token, "SOLIS001_energy_total")
+    energy_id = _entity_id(base, token, f"{LOCAL_SERIAL}_energy_total")
     _stick_control({"night": True})
     _refresh_until(base, token, energy_id)
-    _require_unique(base, token, "SOLIS001_ac_power", lambda item: _number(item) == 0)
-    _require_unique(base, token, "SOLIS001_energy_total", lambda item: _number(item) == LOCAL_TOTAL)
-    _require_unique(base, token, "SOLIS001_data_source", lambda item: item.get("state") == "asleep")
+    _require_unique(base, token, f"{LOCAL_SERIAL}_ac_power", lambda item: _number(item) == 0)
+    _require_unique(
+        base, token, f"{LOCAL_SERIAL}_energy_total", lambda item: _number(item) == LOCAL_TOTAL
+    )
+    _require_unique(
+        base, token, f"{LOCAL_SERIAL}_data_source", lambda item: item.get("state") == "asleep"
+    )
     _require_no_cloud_outage(base, token)
     expected = _expected()
     north = next(row for row in expected["inverters"] if row["serial"].endswith("0001"))
