@@ -1,5 +1,0 @@
----
-"ha-solis-release-tools": patch
----
-
-Quality audit fixes. A paused or offline local logger no longer triggers a full SolisCloud read on every poll, and the cloud read behind a local stick has a 20 second budget. A rejected API key or wrong clock is now reported (repair and reauth) for local-plus-cloud entries, and a rejected key stops polling through Home Assistant's reauth. Today, month and year energy no longer stay pinned to yesterday's number after a day or month rollover. Local entries use Home Assistant's timezone for the day boundary, and a night snapshot clears voltages and temperature. Web stick pages with NaN, infinite or out-of-range values are rejected, and a refused port is a fault, not night. Modbus TCP replies that are not a valid response, and discovery replies without an IP address, are handled. Register values are rounded. The snapshot file is written at most every five minutes and removed with the entry. The options dialog, reconfigure and reauth for entries with a stick, and several translations are corrected. The API secret field is masked.
