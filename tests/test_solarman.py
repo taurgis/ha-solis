@@ -15,7 +15,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
 from .conftest import entry_data, entry_options
-from .flow_helpers import logger_form, start_user
+from .flow_helpers import logger_form, pick, start_user
 from custom_components.solis.const import DOMAIN, SOURCE_BOTH, SOURCE_LOCAL
 from custom_components.solis.errors import SolisCloudError, SolisLoggerBusy, SolisLoggerOffline
 from custom_components.solis.local_transport import (
@@ -534,7 +534,8 @@ async def test_dhcp_updates_the_logger_address(hass: HomeAssistant, socket_enabl
         context={"source": SOURCE_DHCP},
         data={"ip": "10.0.0.10", "macaddress": "bc:54:f9:00:00:01", "hostname": "new"},
     )
-    assert missing["reason"] == "logger_not_setup"
+    # A new stick that does not answer discovery is dropped quietly.
+    assert missing["reason"] == "not_solis_logger"
 
     class _Dhcp:
         ip = "127.0.0.1"
@@ -646,6 +647,7 @@ async def test_reconfigure_local_and_attach(
     )
     local.add_to_hass(hass)
     opened = await local.start_reconfigure_flow(hass)
+    opened = await pick(hass, opened["flow_id"], "logger")
     assert opened["step_id"] == "logger"
     failed = await hass.config_entries.flow.async_configure(
         opened["flow_id"],
@@ -663,17 +665,10 @@ async def test_reconfigure_local_and_attach(
     assert await hass.config_entries.async_setup(cloud.entry_id)
     await hass.async_block_till_done()
     started = await cloud.start_reconfigure_flow(hass)
+    started = await pick(hass, started["flow_id"], "logger")
     refused = await hass.config_entries.flow.async_configure(
         started["flow_id"],
-        logger_form(
-            api_url=url,
-            station_ids=["1900000000000001001", "1900000000000001002"],
-            scan_interval=120,
-            request_timeout=30,
-            endpoint_interval=0.5,
-            logger_host="127.0.0.1",
-            logger_serial="1",
-        ),
+        logger_form(logger_host="127.0.0.1", logger_serial="1"),
     )
     assert refused["errors"]["base"] == "logger_asleep"
     stick = StickState(tcp_port=8899, udp_port=0)
@@ -688,29 +683,15 @@ async def test_reconfigure_local_and_attach(
         # The first stick now owns this logger id, so a second entry cannot take it.
         taken = await hass.config_entries.flow.async_configure(
             started["flow_id"],
-            logger_form(
-                api_url=url,
-                station_ids=["1900000000000001001", "1900000000000001002"],
-                scan_interval=120,
-                request_timeout=30,
-                endpoint_interval=0.5,
-                logger_host="127.0.0.1",
-                logger_serial=str(SERIAL),
-            ),
+            logger_form(logger_host="127.0.0.1", logger_serial=str(SERIAL)),
         )
-        assert taken["errors"]["base"] == "already_configured"
+        assert taken["reason"] == "already_configured"
         await hass.config_entries.async_remove(local.entry_id)
+        again = await cloud.start_reconfigure_flow(hass)
+        again = await pick(hass, again["flow_id"], "logger")
         updated = await hass.config_entries.flow.async_configure(
-            started["flow_id"],
-            logger_form(
-                api_url=url,
-                station_ids=["1900000000000001001", "1900000000000001002"],
-                scan_interval=120,
-                request_timeout=30,
-                endpoint_interval=0.5,
-                logger_host="127.0.0.1",
-                logger_serial=str(SERIAL),
-            ),
+            again["flow_id"],
+            logger_form(logger_host="127.0.0.1", logger_serial=str(SERIAL)),
         )
     finally:
         await emulator.close()
