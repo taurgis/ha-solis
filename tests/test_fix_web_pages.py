@@ -129,13 +129,14 @@ async def test_status_page_fallback_is_remembered(stick: WebStickEmulator) -> No
     assert page.power_w == 382.0
     assert page.energy_total_kwh == 21986.0
     assert page.serial == "1031000000000001"
-    assert stick.state.requests == ["/inverter.cgi", "/status.html"]
+    # The IGEN stick wants admin: 123456789 gets a 401, admin then finds no inverter.cgi.
+    assert stick.state.requests == ["/inverter.cgi", "/inverter.cgi", "/status.html"]
     collector = await client.read_collector()
     assert collector is not None
     assert collector.serial == stick.state.mid
     await client.read_inverter()
     assert stick.state.requests[-1] == "/status.html"
-    assert stick.state.requests.count("/inverter.cgi") == 1
+    assert stick.state.requests.count("/inverter.cgi") == 2
     # The layout stops answering: the next read looks for both again.
     stick.state.mode = "garbage"
     with pytest.raises(SolisLoggerBusy) as garbled:
@@ -239,3 +240,42 @@ async def test_auto_probe_accepts_any_realm_but_confirms_the_page(stick: WebStic
     stick.state.realm = "solis"
     with pytest.raises(SolisLoggerAuthError):
         await probe_web(wrong, auto=True)
+
+
+async def test_an_empty_password_finds_the_igen_factory_admin(stick: WebStickEmulator) -> None:
+    """IGEN sticks ship with admin/admin: an empty field tries it after 123456789 and keeps it."""
+    stick.state.realm = "USER LOGIN"
+    stick.state.layout = LAYOUT_STATUS
+    request = LoggerRequest("127.0.0.1", port=stick.port, password="", timeout=2)
+    probe = await probe_web(request, auto=True)
+    assert probe.kind == LOGGER_WEB
+    assert probe.inverter_serial == "1031000000000001"
+    # A factory password saved by an older version tries admin too.
+    client = _client(stick, PASSWORD)
+    assert (await client.read_inverter()).power_w == 382.0
+    stick.state.requests.clear()
+    assert (await client.read_inverter()).power_w == 382.0
+    # admin was kept: no second 401 round.
+    assert stick.state.requests == ["/status.html"]
+
+
+async def test_factory_passwords_start_over_after_both_fail(stick: WebStickEmulator) -> None:
+    """Both factory passwords rejected: the next read tries 123456789 first again."""
+    stick.state.password = "wifi-secret"
+    client = _client(stick, "")
+    with pytest.raises(SolisLoggerAuthError):
+        await client.read_inverter()
+    assert stick.state.requests == ["/inverter.cgi", "/inverter.cgi"]
+    stick.state.password = PASSWORD
+    stick.state.requests.clear()
+    assert (await client.read_inverter()).power_w == 382.0
+    assert stick.state.requests == ["/inverter.cgi"]
+
+
+async def test_a_chosen_password_is_not_swapped_for_a_factory_one(stick: WebStickEmulator) -> None:
+    """A password the user typed is the only one sent."""
+    stick.state.password = "admin"
+    client = _client(stick, "hunter2")
+    with pytest.raises(SolisLoggerAuthError):
+        await client.read_inverter()
+    assert stick.state.requests == ["/inverter.cgi"]

@@ -51,6 +51,9 @@ WEB_PORT = 80
 WEB_USER = "admin"
 # Factory password of the stick web page. Some firmware replaces it with the Wi-Fi password.
 WEB_DEFAULT_PASSWORD = "123456789"
+# Sticks made by IGEN/Solarman ship with admin/admin. An empty (or factory)
+# password tries these in order and keeps the one the stick accepts.
+WEB_FACTORY_PASSWORDS = (WEB_DEFAULT_PASSWORD, "admin")
 RTU_PORT = 8899
 LOGGER_AUTO = "auto"
 LOGGER_SOLARMAN = "solarman"

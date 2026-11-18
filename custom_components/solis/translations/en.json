@@ -74,7 +74,7 @@
           "logger_password": "Web password"
         },
         "data_description": {
-          "logger_password": "Leave empty for the factory password 123456789. Some firmware uses your Wi-Fi password instead."
+          "logger_password": "Leave empty to try the factory passwords 123456789 and admin (sticks made by IGEN/Solarman). Some firmware uses your Wi-Fi password instead."
         }
       },
       "logger_choice": {
@@ -122,7 +122,7 @@
           "logger_password": "Web password"
         },
         "data_description": {
-          "logger_password": "Leave empty for the factory password 123456789. Some firmware uses your Wi-Fi password instead."
+          "logger_password": "Leave empty to try the factory passwords 123456789 and admin (sticks made by IGEN/Solarman). Some firmware uses your Wi-Fi password instead."
         }
       },
       "reconfigure": {

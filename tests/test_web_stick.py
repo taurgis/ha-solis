@@ -629,7 +629,7 @@ async def test_entry_publishes_the_stick_and_hides_the_password(
 
 
 async def test_wrong_password_repair_waits_ten_minutes(hass: HomeAssistant) -> None:
-    """A rejected stick password asks for reauthentication at once and opens no repair."""
+    """With nothing to hold, a rejected stick password asks at once and opens no repair."""
 
     class _Rejected:
         degraded_reason = REASON_WEB_AUTH

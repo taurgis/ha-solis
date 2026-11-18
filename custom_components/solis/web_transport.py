@@ -21,7 +21,6 @@ from .const import (
     PROTOCOL_HTTP,
     REASON_WEB_AUTH,
     REASON_WEB_PAGE,
-    WEB_DEFAULT_PASSWORD,
     WEB_PORT,
 )
 from .errors import SolisLoggerAuthError, SolisLoggerBusy, SolisLoggerOffline
@@ -116,9 +115,7 @@ class SolisWebTransport:
         self._inverter_serial = inverter_serial
         self._stick_serial = stick_serial.strip()
         self._on_serial = on_serial
-        self._client = WebStickClient(
-            host, password or WEB_DEFAULT_PASSWORD, port=self._port, timeout=timeout
-        )
+        self._client = WebStickClient(host, password, port=self._port, timeout=timeout)
         self.degraded_reason = ""
         self.identity_checked = False
         self.cloud_fill = True
@@ -286,7 +283,7 @@ async def probe_web(request: LoggerRequest, *, auto: bool) -> LoggerProbe:
 async def _probe_page(request: LoggerRequest, port: int) -> LoggerProbe:
     client = WebStickClient(
         request.host,
-        request.password or WEB_DEFAULT_PASSWORD,
+        request.password,
         port=port,
         timeout=request.timeout,
     )

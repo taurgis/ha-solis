@@ -194,13 +194,15 @@ SolisCloud only under Reconfigure → Connection.
 
 ### Web page stick asks for its password again
 
-The stick's status page answered `401`, so it rejected the saved password.
-Home Assistant shows a **Reauthenticate** card on the Solis entry; enter the
-web password there. The user is always `admin`. Leave the field empty for the
-factory password `123456789`. Some firmware replaces it with your Wi-Fi
-password, and sticks made by IGEN/Solarman for Solis (the `status.html` page)
-often use `admin`. With SolisCloud as backup, SolisCloud keeps the sensors
-going until you enter the new password.
+The stick's status page answered `401` three times in a row, or for 10
+minutes, so it rejects the saved password. A single `401` (a stick that is
+rebooting) only holds the last values. Home Assistant then shows a
+**Reauthenticate** card on the Solis entry; enter the web password there. The
+user is always `admin`. Leave the field empty to try the factory passwords
+`123456789` and `admin` (sticks made by IGEN/Solarman for Solis, with the
+`status.html` page, ship with `admin`). Some firmware replaces it with your
+Wi-Fi password. With SolisCloud as backup, SolisCloud keeps the sensors going
+until you enter the new password.
 
 ### Web page stick is not returning inverter data
 

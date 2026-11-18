@@ -16,6 +16,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import (
     device_registry as dr,
     entity_registry as er,
@@ -40,6 +41,7 @@ from custom_components.solis.diagnostics import async_get_config_entry_diagnosti
 from custom_components.solis.entity import collector_device, epm_device
 from custom_components.solis.errors import (
     SolisAuthError,
+    SolisLoggerAuthError,
     SolisLoggerBusy,
     SolisLoggerOffline,
 )
@@ -325,16 +327,94 @@ async def test_a_rejected_stick_password_under_cloud_cover_asks_once(
     coordinator = SolisCoordinator(hass, entry, transport)  # type: ignore[arg-type]
     with patch.object(entry, "async_start_reauth") as reauth:
         await coordinator._async_update_data()
+        # SolisCloud covers the stick, so one rejection does not ask yet.
+        reauth.assert_not_called()
         coordinator._degraded_since = time.monotonic() - 601
+        coordinator._stick_rejected_since = time.monotonic() - 601
+        await coordinator._async_update_data()
+        reauth.assert_called_once_with(hass)
         await coordinator._async_update_data()
         reauth.assert_called_once_with(hass)
         assert not _issues(hass)
-        # The password was fixed elsewhere and later rejected again: ask again.
+        # The password was fixed elsewhere and later rejected again: ask again, after a while.
         transport.degraded_reason = ""
         await coordinator._async_update_data()
         transport.degraded_reason = REASON_WEB_AUTH
         await coordinator._async_update_data()
+        assert reauth.call_count == 1
+        coordinator._stick_rejected_since = time.monotonic() - 601
+        await coordinator._async_update_data()
         assert reauth.call_count == 2
+
+
+async def test_a_local_stick_password_waits_for_three_rejections(hass: HomeAssistant) -> None:
+    """One 401 holds the last values; three in a row ask for the new password."""
+    entry = _local_entry(hass, logger_kind="solis_web")
+    rejected = SolisLoggerAuthError("web password rejected")
+    waiting = SolisLoggerAuthError("in backoff", waiting=True)
+    transport = _Transport(_local(), rejected, waiting, rejected, _local(), rejected, rejected)
+    coordinator = SolisCoordinator(hass, entry, transport)  # type: ignore[arg-type]
+    await coordinator._async_update_data()
+    for _ in range(3):
+        held = await coordinator._async_update_data()
+        assert held.source == DATA_DEGRADED
+    assert coordinator.auth_failed is False
+    # A good read starts the count again.
+    await coordinator._async_update_data()
+    assert (await coordinator._async_update_data()).source == DATA_DEGRADED
+    assert (await coordinator._async_update_data()).source == DATA_DEGRADED
+    with pytest.raises(ConfigEntryAuthFailed) as failure:
+        await coordinator._async_update_data()
+    assert failure.value.translation_key == "update_logger_web_auth"
+    assert coordinator.auth_failed is True
+    assert not _issues(hass)
+
+
+async def test_a_local_stick_password_asks_after_ten_minutes(hass: HomeAssistant) -> None:
+    """Reads skipped by the backoff do not count, but ten minutes of rejection does."""
+    entry = _local_entry(hass, logger_kind="solis_web")
+    waiting = SolisLoggerAuthError("in backoff", waiting=True)
+    transport = _Transport(_local(), SolisLoggerAuthError("rejected"), waiting)
+    coordinator = SolisCoordinator(hass, entry, transport)  # type: ignore[arg-type]
+    await coordinator._async_update_data()
+    await coordinator._async_update_data()
+    await coordinator._async_update_data()
+    coordinator._stick_rejected_since = time.monotonic() - 601
+    with pytest.raises(ConfigEntryAuthFailed):
+        await coordinator._async_update_data()
+
+
+@pytest.mark.parametrize("night", ["asleep", "offline"])
+async def test_night_ends_a_rejection_run(hass: HomeAssistant, night: str) -> None:
+    """A 401 at dusk and one the next morning do not add up to a reauth."""
+    entry = _local_entry(hass, logger_kind="solis_web")
+    rejected = SolisLoggerAuthError("rejected")
+    dark: SolisSnapshot | Exception = (
+        asleep_snapshot(_local()) if night == "asleep" else SolisLoggerOffline("night")
+    )
+    transport = _Transport(_local(), rejected, dark, rejected)
+    coordinator = SolisCoordinator(hass, entry, transport)  # type: ignore[arg-type]
+    await coordinator._async_update_data()
+    await coordinator._async_update_data()
+    coordinator._stick_rejected_since = time.monotonic() - 601
+    await coordinator._async_update_data()
+    assert coordinator._stick_rejected_since is None
+    assert (await coordinator._async_update_data()).source == DATA_DEGRADED
+    assert coordinator._stick_rejections == 1
+    assert coordinator.auth_failed is False
+
+
+async def test_another_stick_fault_breaks_the_rejection_run(hass: HomeAssistant) -> None:
+    """Rejections only count in a row."""
+    entry = _local_entry(hass, logger_kind="solis_web")
+    rejected = SolisLoggerAuthError("rejected")
+    transport = _Transport(
+        _local(), rejected, rejected, SolisLoggerBusy("odd page", reason="web_page"), rejected
+    )
+    coordinator = SolisCoordinator(hass, entry, transport)  # type: ignore[arg-type]
+    for _ in range(5):
+        await coordinator._async_update_data()
+    assert coordinator._stick_rejections == 1
 
 
 # Pace ----------------------------------------------------------------------------

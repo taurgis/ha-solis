@@ -74,7 +74,7 @@
           "logger_password": "Webwachtwoord"
         },
         "data_description": {
-          "logger_password": "Laat leeg voor het fabriekswachtwoord 123456789. Sommige firmware gebruikt in plaats daarvan je wifiwachtwoord."
+          "logger_password": "Laat leeg om de fabriekswachtwoorden 123456789 en admin (sticks van IGEN/Solarman) te proberen. Sommige firmware gebruikt in plaats daarvan je wifiwachtwoord."
         }
       },
       "logger_choice": {
@@ -122,7 +122,7 @@
           "logger_password": "Webwachtwoord"
         },
         "data_description": {
-          "logger_password": "Laat leeg voor het fabriekswachtwoord 123456789. Sommige firmware gebruikt in plaats daarvan je wifiwachtwoord."
+          "logger_password": "Laat leeg om de fabriekswachtwoorden 123456789 en admin (sticks van IGEN/Solarman) te proberen. Sommige firmware gebruikt in plaats daarvan je wifiwachtwoord."
         }
       },
       "reconfigure": {

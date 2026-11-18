@@ -5,7 +5,9 @@ Two page layouts are known. S3-class sticks made by Solis serve
 semicolon string each. Sticks made by IGEN/Solarman for Solis serve
 ``status.html`` instead, with the readings as JavaScript variables
 (``var webdata_now_p = "472";``). Both sit behind HTTP Basic auth with the
-user ``admin``. ``inverter.cgi`` is tried first; a 404 or a reply in another
+user ``admin``. An empty or factory password tries ``123456789`` and then
+``admin`` (the IGEN factory password) and keeps the one that answers.
+``inverter.cgi`` is tried first; a 404 or a reply in another
 format falls back to ``status.html``, and the layout that answered is kept.
 
 The stick polls the inverter about every five minutes and serves the cached
@@ -36,6 +38,8 @@ from ..const import (
     REASON_REFUSED,
     REASON_WEB_AUTH,
     REASON_WEB_PAGE,
+    WEB_DEFAULT_PASSWORD,
+    WEB_FACTORY_PASSWORDS,
     WEB_PORT,
     WEB_USER,
 )
@@ -301,10 +305,16 @@ class WebStickClient:
     def __init__(
         self, host: str, password: str, *, port: int = WEB_PORT, timeout: float = 8.0
     ) -> None:
-        """Remember where the stick is. Nothing connects until a read."""
+        """Remember where the stick is. Nothing connects until a read.
+
+        An empty password, or the factory one, means "whichever factory
+        password the stick accepts": see ``WEB_FACTORY_PASSWORDS``.
+        """
         self.host = host
         self._port = port
-        self._password = password
+        factory = password in ("", WEB_DEFAULT_PASSWORD)
+        self._passwords = WEB_FACTORY_PASSWORDS if factory else (password,)
+        self._password = self._passwords[0]
         self._timeout = timeout
         self._connected = False
         # The data page that answered last: "" until known.
@@ -385,6 +395,12 @@ class WebStickClient:
                 f"{self.host} did not answer with a web page", reason=REASON_WEB_PAGE
             ) from err
         if status == 401:
+            following = self._passwords.index(self._password) + 1
+            if following < len(self._passwords):
+                self._password = self._passwords[following]
+                return await self._fetch(path)
+            # Every candidate failed: start from the first one on the next read.
+            self._password = self._passwords[0]
             raise SolisLoggerAuthError(
                 f"{self.host} rejected the web password", reason=REASON_WEB_AUTH
             )
