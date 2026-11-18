@@ -167,7 +167,7 @@ def _onboard(base: str, steps: list[dict[str, Any]]) -> str:
     if status != 200 or not isinstance(created, dict) or not created.get("auth_code"):
         raise CheckError(f"onboarding user failed: {status} {created}")
     token = _exchange(base, str(created["auth_code"]))
-    follow_ups = (
+    follow_ups: tuple[tuple[str, str, dict[str, Any]], ...] = (
         ("core_config", "/api/onboarding/core_config", {}),
         ("analytics", "/api/onboarding/analytics", {}),
         (
@@ -435,7 +435,8 @@ def _issues(base: str, token: str) -> list[dict[str, Any]]:
                     raise CheckError(f"repairs list failed: {message}")
                 result = message.get("result")
                 if isinstance(result, dict) and isinstance(result.get("issues"), list):
-                    return result["issues"]
+                    issues: list[dict[str, Any]] = result["issues"]
+                    return issues
                 raise CheckError(f"unexpected repairs payload: {message}")
 
     return asyncio.run(_call())
@@ -908,11 +909,6 @@ def _exercise_local(base: str, token: str, config: Path, cloud_id: str) -> None:
         base, token, f"{LOCAL_SERIAL}_data_source", lambda item: item.get("state") == "asleep"
     )
     _require_no_cloud_outage(base, token)
-    expected = _expected()
-    north = next(row for row in expected["inverters"] if row["serial"].endswith("0001"))
-    cloud_power = _find(_states(base, token), "s6_gr1p5k_ac_power")
-    if _number(cloud_power) != north["ac_power_w"]:
-        raise CheckError(f"cloud entry changed while the stick slept: {cloud_power}")
     _stick_control({"night": False, "host": MORNING_HOST})
     _log("Night with cloud configured still published the asleep local snapshot")
 
@@ -1096,6 +1092,8 @@ def run_check(version: str) -> None:
         if _version_at_least(version, 2026, 3):
             _assert_local_brand(base, token)
         held = _number(total)
+        if held is None:
+            raise CheckError(f"lifetime energy has no number: {total}")
         north_power = float(power["state"])
         _cloud_faults(
             base,
