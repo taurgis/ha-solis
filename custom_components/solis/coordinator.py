@@ -26,9 +26,8 @@ from .const import (
     DEFAULT_LOCAL_SCAN_INTERVAL,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
-    ISSUE_ABNORMAL,
-    ISSUE_AUTH,
     ISSUE_CLOCK,
+    ISSUE_LEGACY_CONTROL,
     ISSUE_LOGGER_GATEWAY,
     ISSUE_LOGGER_LOCKED,
     ISSUE_LOGGER_PROTOCOL,
@@ -37,7 +36,6 @@ from .const import (
     ISSUE_LOGGER_TCP,
     ISSUE_LOGGER_WEB,
     ISSUE_NO_INVERTERS,
-    ISSUE_OUTAGE,
     MIN_CLOUD_SCAN_INTERVAL,
     MIN_LOCAL_SCAN_INTERVAL,
     OUTAGE_POLLS,
@@ -60,6 +58,7 @@ from .errors import (
     SolisClockError,
     SolisCloudError,
     SolisDataError,
+    SolisLoggerAuthError,
     SolisLoggerBusy,
     SolisLoggerOffline,
     SolisRateLimitError,
@@ -76,7 +75,15 @@ _LOGGER = logging.getLogger(__name__)
 _BACKOFF_CAP = 900.0
 _LOCK_REPAIR_AFTER = 600.0
 _SAVE_EVERY = 300.0
-_FIXABLE_LOGGER_ISSUES = {ISSUE_LOGGER_GATEWAY, ISSUE_LOGGER_PROTOCOL, ISSUE_LOGGER_S5}
+DOCS_TROUBLESHOOTING = "https://github.com/taurgis/ha-solis/blob/main/docs/troubleshooting.md"
+# Repairs whose fix is a step the user takes outside Home Assistant. The page
+# explains it; nothing in Home Assistant can confirm the fix, so none is fixable.
+LEARN_MORE = {
+    ISSUE_LOGGER_GATEWAY: f"{DOCS_TROUBLESHOOTING}#logger-gateway",
+    ISSUE_LOGGER_PROTOCOL: f"{DOCS_TROUBLESHOOTING}#wrong-protocol",
+    ISSUE_LOGGER_S5: f"{DOCS_TROUBLESHOOTING}#s5-port-closed",
+    ISSUE_LEGACY_CONTROL: f"{DOCS_TROUBLESHOOTING}#legacy-control",
+}
 _LOGGER_ISSUES = (
     ISSUE_LOGGER_LOCKED,
     ISSUE_LOGGER_TCP,
@@ -142,7 +149,7 @@ _DEGRADED_INFO = {
     ),
     REASON_WEB_AUTH: (
         "The stick web page rejected the password. The last local sample is held, "
-        "or a fresh SolisCloud sample is used. Check the web password in Reconfigure."
+        "or a fresh SolisCloud sample is used. Home Assistant asks for the new password."
     ),
     REASON_WEB_PAGE: (
         "The stick web page did not return the Solis inverter page. The last local "
@@ -184,8 +191,8 @@ _DEGRADED_WARN = {
         "support local Modbus on this stick. A firmware update often closes it."
     ),
     REASON_WEB_AUTH: (
-        "The stick web page is still rejecting the password. Check it in Reconfigure "
-        "(user admin, factory password 123456789)."
+        "The stick web page is still rejecting the password. Enter the current one "
+        "when Home Assistant asks to reauthenticate (user admin, factory password 123456789)."
     ),
     REASON_WEB_PAGE: (
         "The stick web page is still not returning the Solis inverter page. "
@@ -244,6 +251,11 @@ def _failed(key: str, retry_after: float | None = None) -> UpdateFailed:
     return UpdateFailed(translation_domain=DOMAIN, translation_key=key)
 
 
+def _is_web_auth(err: SolisLoggerBusy) -> bool:
+    """Return whether the stick web page rejected the stored password."""
+    return isinstance(err, SolisLoggerAuthError) or err.reason == REASON_WEB_AUTH
+
+
 def _is_degraded(snapshot: SolisSnapshot) -> bool:
     if snapshot.source == DATA_DEGRADED:
         return True
@@ -300,6 +312,9 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
         )
         self.transport = transport
         self.auth_failed = False
+        self._reauth_started = False
+        self._stick_reauth_started = False
+        self._outage_logged = False
         self._open_issues: set[str] = set()
         self._transient_failures = 0
         self._asleep_polls = 0
@@ -325,27 +340,35 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
             snapshot = await self.transport.async_read()
         except SolisAuthError as err:
             self.auth_failed = True
-            self._open(ISSUE_AUTH, ir.IssueSeverity.ERROR, fixable=True)
             # Home Assistant starts reauth and stops polling with the rejected key.
+            # The reauth card is the notice, so no repair is opened as well.
             raise ConfigEntryAuthFailed(
                 translation_domain=DOMAIN, translation_key="update_auth"
             ) from err
         except SolisClockError as err:
-            self._open(ISSUE_CLOCK, ir.IssueSeverity.ERROR, fixable=False)
+            self._open(ISSUE_CLOCK, ir.IssueSeverity.ERROR)
             raise _failed("update_clock") from err
         except SolisDataError as err:
-            self._open(ISSUE_ABNORMAL, ir.IssueSeverity.WARNING, fixable=False)
+            # An account-side fault with no step in Home Assistant: the coordinator
+            # logs the failed update once and entities go unavailable.
             raise _failed("update_abnormal") from err
         except _TRANSIENT as err:
             return await self._hold(err)
         except SolisLoggerBusy as err:
+            if _is_web_auth(err):
+                # A stick password does not fix itself. Holding the last sample
+                # would only hide that, so ask for the new one.
+                self.auth_failed = True
+                raise ConfigEntryAuthFailed(
+                    translation_domain=DOMAIN, translation_key="update_logger_web_auth"
+                ) from err
             return await self._hold_degraded(err)
         except SolisLoggerOffline as err:
             return await self._hold_offline(err)
         except SolisCloudError as err:
             self._recover_pace()
             if "no inverters" in str(err) or "no stations" in str(err):
-                self._open(ISSUE_NO_INVERTERS, ir.IssueSeverity.WARNING, fixable=False)
+                self._open(ISSUE_NO_INVERTERS, ir.IssueSeverity.WARNING)
                 raise _failed("update_no_inverters") from err
             raise _failed("update_failed") from err
         if not _has_live_inverter(snapshot):
@@ -357,19 +380,25 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
     def _cloud_side_keys(self) -> set[str]:
         """Repairs the cloud half of a local-plus-cloud entry still needs open."""
         error = getattr(self.transport, "cloud_error", None)
-        if isinstance(error, SolisAuthError):
-            return {ISSUE_AUTH}
         if isinstance(error, SolisClockError):
             return {ISSUE_CLOCK}
         return set()
 
     def _flag_cloud_side(self) -> None:
-        """A local read worked while SolisCloud rejected the key or the clock."""
-        for key in self._cloud_side_keys():
-            already = self._issue_id(key) in self._open_issues
-            self._open(key, ir.IssueSeverity.ERROR, fixable=key == ISSUE_AUTH)
-            if key == ISSUE_AUTH and not already:
+        """A local read worked while SolisCloud rejected the key or the clock.
+
+        A rejected key starts reauth once and keeps local polling. The reauth
+        card is the notice; a repair for the same key would only duplicate it.
+        """
+        error = getattr(self.transport, "cloud_error", None)
+        if isinstance(error, SolisAuthError):
+            if not self._reauth_started:
+                self._reauth_started = True
                 self.config_entry.async_start_reauth(self.hass)
+        else:
+            self._reauth_started = False
+        for key in self._cloud_side_keys():
+            self._open(key, ir.IssueSeverity.ERROR)
 
     async def _accept(self, snapshot: SolisSnapshot) -> SolisSnapshot:
         if snapshot.source == "asleep":
@@ -379,7 +408,11 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
             await self._persist(snapshot)
             return snapshot
         if _is_degraded(snapshot):
+            # A degraded read still answered, so drop any night-time slowdown.
+            self._asleep_polls = 0
+            self._recover_pace()
             self._note_degraded()
+            self._flag_stick_password()
             self._last_good = snapshot
             await self._persist(snapshot)
             return snapshot
@@ -388,11 +421,21 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
         self._recover_pace()
         self._last_good = snapshot
         self.auth_failed = False
-        if self._issue_id(ISSUE_OUTAGE) in self._open_issues:
+        if self._outage_logged:
             _LOGGER.info("SolisCloud is reachable again")
+            self._outage_logged = False
         self._clear_recovered()
         await self._persist(snapshot)
         return snapshot
+
+    def _flag_stick_password(self) -> None:
+        """SolisCloud covers a stick that rejected its password: ask for it once."""
+        if str(getattr(self.transport, "degraded_reason", "") or "") != REASON_WEB_AUTH:
+            self._stick_reauth_started = False
+            return
+        if not self._stick_reauth_started:
+            self._stick_reauth_started = True
+            self.config_entry.async_start_reauth(self.hass)
 
     def _slow_for_sleep(self) -> None:
         """Back off while the logger is powered down. Do not open a repair."""
@@ -415,6 +458,11 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
             self._degraded_logged = True
         if now - self._degraded_since < _LOCK_REPAIR_AFTER:
             return
+        if reason == REASON_WEB_AUTH:
+            # Reauthentication asks for the password; a repair would repeat it.
+            for key in _LOGGER_ISSUES:
+                self._drop_issue(key)
+            return
         issue_key = _LOGGER_ISSUE.get(reason, ISSUE_LOGGER_LOCKED)
         for key in _LOGGER_ISSUES:
             if key != issue_key:
@@ -422,11 +470,7 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
         issue_id = self._issue_id(issue_key)
         if issue_id not in self._open_issues:
             _LOGGER.warning("%s", _DEGRADED_WARN.get(reason, _DEGRADED_WARN[REASON_LOCKED]))
-        self._open(
-            issue_key,
-            ir.IssueSeverity.WARNING,
-            fixable=issue_key in _FIXABLE_LOGGER_ISSUES,
-        )
+        self._open(issue_key, ir.IssueSeverity.WARNING)
 
     def _clear_logger_lock(self) -> None:
         self._degraded_since = None
@@ -444,6 +488,10 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
 
     async def _hold_degraded(self, err: SolisLoggerBusy) -> SolisSnapshot:
         """Keep the last sample without calling the inverter asleep."""
+        # The logger answered (with a reset or a refusal), so it is not asleep:
+        # leave the slow night pace that ``_slow_for_sleep`` may have set.
+        self._asleep_polls = 0
+        self._recover_pace()
         self._reason = err.reason or REASON_LOCKED
         self._note_degraded()
         held = self._last_good
@@ -493,12 +541,14 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
             raise _failed(key, retry_after=self._backoff_seconds()) from err
         if self._transient_failures < OUTAGE_POLLS and _fresh(held, dt_util.utcnow()):
             return replace(held, partial=True)
-        if self._issue_id(ISSUE_OUTAGE) not in self._open_issues:
+        if not self._outage_logged:
+            # Nothing in Home Assistant fixes an outage, so this is a log line and
+            # unavailable live sensors, not a repair.
             _LOGGER.warning(
                 "SolisCloud has been unreachable; live readings are hidden "
                 "and energy totals are held"
             )
-        self._open(ISSUE_OUTAGE, ir.IssueSeverity.WARNING, fixable=False)
+            self._outage_logged = True
         return _degrade(held)
 
     def _apply_backoff(self) -> None:
@@ -570,16 +620,16 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
     def _issue_id(self, key: str) -> str:
         return f"{key}_{self.config_entry.entry_id}"
 
-    def _open(self, key: str, severity: ir.IssueSeverity, *, fixable: bool) -> None:
+    def _open(self, key: str, severity: ir.IssueSeverity) -> None:
         issue_id = self._issue_id(key)
         ir.async_create_issue(
             self.hass,
             DOMAIN,
             issue_id,
-            is_fixable=fixable,
+            is_fixable=False,
+            learn_more_url=LEARN_MORE.get(key),
             severity=severity,
             translation_key=key,
-            data={"entry_id": self.config_entry.entry_id},
         )
         self._open_issues.add(issue_id)
 
@@ -592,8 +642,9 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
                 continue
             issue_id = self._issue_id(key)
             if first:
-                # A repair opened by a setup that failed was never unloaded, so this
-                # coordinator does not know about it. Deleting is harmless when absent.
+                # A repair opened before this setup (a failed setup, a reload, or an
+                # older release) is unknown to this coordinator. Deleting is harmless
+                # when absent.
                 ir.async_delete_issue(self.hass, DOMAIN, issue_id)
             if issue_id in self._open_issues:
                 ir.async_delete_issue(self.hass, DOMAIN, issue_id)

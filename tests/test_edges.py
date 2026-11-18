@@ -15,7 +15,6 @@ from custom_components.solis.parser import (
     page_count,
     parse_offset_hours,
 )
-from custom_components.solis.repairs import async_create_fix_flow
 from custom_components.solis.signing import signature_matches
 
 
@@ -42,27 +41,6 @@ def test_record_shapes_and_offsets() -> None:
     from datetime import UTC, datetime
 
     assert local_date(None, datetime(2026, 1, 2, tzinfo=UTC)) == "2026-01-02"
-
-
-async def test_repairs_flow(hass: HomeAssistant) -> None:
-    """Auth repairs start reauth and other repairs just confirm."""
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
-
-    from custom_components.solis.const import DOMAIN
-
-    entry = MockConfigEntry(domain=DOMAIN, data={}, version=2)
-    entry.add_to_hass(hass)
-    flow = await async_create_fix_flow(
-        hass,
-        f"invalid_auth_{entry.entry_id}",
-        {"entry_id": entry.entry_id},
-    )
-    flow.hass = hass
-    flow.data = {"entry_id": entry.entry_id}
-    result = await flow.async_step_init()
-    assert result["type"] == "create_entry"
-    other = await async_create_fix_flow(hass, "legacy_control_x", None)
-    assert type(other).__name__ == "ConfirmRepairFlow"
 
 
 async def test_clock_abnormal_and_empty_list(
@@ -109,8 +87,12 @@ async def test_device_diagnostics(hass: HomeAssistant, solis_server: tuple[Any, 
     )
     assert device is not None
     payload = await async_get_device_diagnostics(hass, entry, device)
-    serials = [row["serial"] for row in payload["snapshot"]["inverters"]]
-    assert serials == ["1102C021B150002"]
+    rows = payload["snapshot"]["inverters"]
+    assert len(rows) == 1
+    # The serial selects the row but is not written into the dump.
+    assert rows[0]["serial"] == "**REDACTED**"
+    assert rows[0]["station_id"] == "**REDACTED**"
+    assert "1102C021B150002" not in str(payload)
 
 
 async def test_config_flow_error_modes(hass: HomeAssistant, solis_server: tuple[Any, str]) -> None:

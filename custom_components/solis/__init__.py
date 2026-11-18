@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import logging
 
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import Event, HomeAssistant
-from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import device_registry as dr, issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
@@ -44,6 +44,7 @@ from .const import (
     DOMAIN,
     ISSUE_LEGACY_CONTROL,
     LOCAL_REQUEST_GAP,
+    LOCAL_STATION,
     LOCAL_TIMEOUT_CAP,
     LOGGER_SOLARMAN,
     LOGGER_WEB,
@@ -52,10 +53,16 @@ from .const import (
     SOURCE_BOTH,
     SOURCE_CLOUD,
 )
-from .coordinator import SolisCoordinator, snapshot_store
+from .coordinator import LEARN_MORE, SolisCoordinator, snapshot_store
 from .local_transport import SolisLocalTransport, SolisPriorityTransport
 from .loggers import kind_label
-from .migration import async_adopt_inverter_serial, async_migrate_devices
+from .migration import (
+    async_adopt_inverter_serial,
+    async_migrate_devices,
+    async_migrate_entity_ids,
+    device_for_identifier,
+    legacy_name_from_entry,
+)
 from .transport import SolisCloudTransport
 from .web_transport import SolisWebTransport
 
@@ -72,48 +79,68 @@ async def async_setup_entry(hass: HomeAssistant, entry: SolisConfigEntry) -> boo
     coordinator = SolisCoordinator(hass, entry, transport)
     try:
         await coordinator.async_config_entry_first_refresh()
-    except ConfigEntryNotReady as err:
-        closer = getattr(transport, "close", None)
-        if closer is not None:
-            await closer()
-        if coordinator.auth_failed:
-            raise ConfigEntryAuthFailed(
-                translation_domain=DOMAIN,
-                translation_key="update_auth",
-            ) from err
+    except Exception:
+        # Not ready, a rejected key or password (ConfigEntryAuthFailed passes
+        # through the first refresh as is), or anything unexpected: no socket
+        # may outlive a setup that did not finish.
+        await _close(transport)
         raise
-    async_migrate_devices(
+    serials = {inverter.serial for inverter in coordinator.data.inverters}
+    async_migrate_devices(hass, entry.entry_id, serials)
+    async_migrate_entity_ids(
         hass,
         entry.entry_id,
-        {inverter.serial for inverter in coordinator.data.inverters},
+        legacy_name_from_entry(entry.data),
+        serials,
+        {inverter.serial: inverter.station_id for inverter in coordinator.data.inverters},
     )
+    _drop_local_plant(hass, entry.entry_id)
     entry.runtime_data = coordinator
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    entry.async_on_unload(entry.add_update_listener(_reload))
+    # Options use OptionsFlowWithReload, and reconfigure and reauth reload through
+    # async_update_reload_and_abort, so there is no update listener: the poll's own
+    # writes to entry.data (address, framing, serial) must not reload the entry.
+    closer = getattr(transport, "close", None)
+    if closer is not None:
+        entry.async_on_unload(closer)
 
     async def _save_on_stop(_event: Event) -> None:
         await coordinator.async_save_now()
 
     entry.async_on_unload(hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _save_on_stop))
-    closer = getattr(transport, "close", None)
-    if closer is not None:
-        entry.async_on_unload(closer)
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
 
+async def _close(transport: object) -> None:
+    """Close a transport that has a socket. Cloud-only transports have none."""
+    closer = getattr(transport, "close", None)
+    if closer is not None:
+        await closer()
+
+
+def _drop_local_plant(hass: HomeAssistant, entry_id: str) -> None:
+    """Detach the shared ``station:local`` placeholder plant older releases registered."""
+    registry = dr.async_get(hass)
+    device = device_for_identifier(registry, (DOMAIN, f"station:{LOCAL_STATION}"), entry_id)
+    if device is None:
+        return
+    # Other local entries may still share it, so unlink this entry's devices first.
+    for child in dr.async_entries_for_config_entry(registry, entry_id):
+        if child.via_device_id == device.id:
+            registry.async_update_device(child.id, via_device_id=None)
+    registry.async_update_device(device.id, remove_config_entry_id=entry_id)
+
+
 async def async_remove_entry(hass: HomeAssistant, entry: SolisConfigEntry) -> None:
-    """Delete what the entry left behind: the stored snapshot and the migration repair."""
+    """Delete what the entry left behind: the stored snapshot and its repairs."""
     await snapshot_store(hass, entry.entry_id).async_remove()
-    ir.async_delete_issue(hass, DOMAIN, f"{ISSUE_LEGACY_CONTROL}_{entry.entry_id}")
+    for key in (*POLL_REPAIRS, ISSUE_LEGACY_CONTROL):
+        ir.async_delete_issue(hass, DOMAIN, f"{key}_{entry.entry_id}")
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: SolisConfigEntry) -> bool:
-    """Unload a config entry and drop poll-failure repairs."""
-    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    if unloaded:
-        for key in POLL_REPAIRS:
-            ir.async_delete_issue(hass, DOMAIN, f"{key}_{entry.entry_id}")
-    return unloaded
+    """Unload a config entry. Open repairs stay until their condition clears."""
+    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
 
 def _build_transport(
@@ -189,20 +216,28 @@ def _build_transport(
 
 
 def _store_text(hass: HomeAssistant, entry: SolisConfigEntry, key: str, value: str) -> None:
-    """Persist one string field when it changes. The update listener reloads later."""
+    """Persist one string field when it changes. The transport already uses it."""
     if entry.data.get(key) == value:
         return
     hass.config_entries.async_update_entry(entry, data={**entry.data, key: value})
 
 
 def _store_inverter_serial(hass: HomeAssistant, entry: SolisConfigEntry, serial: str) -> None:
-    """Point existing entities at the inverter serial shared with SolisCloud."""
+    """Point existing entities at the inverter serial shared with SolisCloud.
+
+    The registry rows move to ``{serial}_{key}`` here. Entities already running
+    still carry the placeholder id, so a loaded entry is reloaded once to build
+    them again under the new serial. During setup nothing is running yet.
+    """
     old = str(entry.data.get(CONF_INVERTER_SERIAL) or "")
     if not serial or old == serial:
         return
-    if old:
-        async_adopt_inverter_serial(hass, entry.entry_id, old, serial)
     hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_INVERTER_SERIAL: serial})
+    if not old:
+        return
+    async_adopt_inverter_serial(hass, entry.entry_id, old, serial)
+    if entry.state is ConfigEntryState.LOADED:
+        hass.config_entries.async_schedule_reload(entry.entry_id)
 
 
 def _store_logger_host(hass: HomeAssistant, entry: SolisConfigEntry, host: str, mac: str) -> None:
@@ -241,10 +276,12 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass,
             DOMAIN,
             f"{ISSUE_LEGACY_CONTROL}_{entry.entry_id}",
-            is_fixable=True,
+            is_fixable=False,
+            # Created once, during migration, so it must survive a restart.
+            is_persistent=True,
+            learn_more_url=LEARN_MORE[ISSUE_LEGACY_CONTROL],
             severity=ir.IssueSeverity.WARNING,
             translation_key=ISSUE_LEGACY_CONTROL,
-            data={"entry_id": entry.entry_id},
         )
     return True
 
@@ -274,8 +311,3 @@ async def async_remove_config_entry_device(
     if getattr(entry, "runtime_data", None) is None:
         return True  # not loaded, so there is no live snapshot to protect
     return keys.isdisjoint(_known_device_keys(entry))
-
-
-async def _reload(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Reload when options change."""
-    await hass.config_entries.async_reload(entry.entry_id)

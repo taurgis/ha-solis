@@ -13,6 +13,7 @@ from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import entity_registry as er
 
 from .conftest import mock_entry
+from .flow_helpers import pick, start_user
 from custom_components.solis.const import DOMAIN
 from custom_components.solis.entity import _product_model
 from custom_components.solis.errors import SolisTimeoutError
@@ -64,8 +65,7 @@ async def test_options_reload_the_entry(hass: HomeAssistant, solis_server: tuple
         result["flow_id"],
         {
             "scan_interval": 240,
-            "request_timeout": 20,
-            "endpoint_interval": 1,
+            "advanced": {"request_timeout": 20, "endpoint_interval": 1},
             "time_zone": "Europe/London",
         },
     )
@@ -122,38 +122,18 @@ async def test_restored_total_survives_a_zero_on_startup(
     assert float(restored.state) == 12500
 
 
-async def test_reconfigure_timezone_and_empty_selection(
+async def test_reconfigure_rejects_an_empty_plant_selection(
     hass: HomeAssistant, solis_server: tuple[Any, str]
 ) -> None:
-    """Reconfigure rejects a bad timezone and an empty plant selection."""
+    """Reconfigure keeps the plant form open until a plant is selected."""
     _state, url = solis_server
     entry = mock_entry(url)
     entry.add_to_hass(hass)
     result = await entry.start_reconfigure_flow(hass)
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {
-            "api_url": url,
-            "station_ids": ["1900000000000001001"],
-            "scan_interval": 120,
-            "request_timeout": 30,
-            "endpoint_interval": 2,
-            "time_zone": "Not/AZone",
-        },
-    )
-    assert result["errors"]["time_zone"] == "invalid_timezone"
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {
-            "api_url": url,
-            "station_ids": [],
-            "scan_interval": 120,
-            "request_timeout": 30,
-            "endpoint_interval": 2,
-            "time_zone": "plant",
-        },
-    )
-    assert result["errors"]["base"] == "no_stations"
+    result = await pick(hass, result["flow_id"], "stations")
+    assert result["step_id"] == "stations"
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"station_ids": []})
+    assert result["errors"]["base"] == "select_station"
 
 
 async def test_two_plants_use_the_solis_title(
@@ -161,7 +141,7 @@ async def test_two_plants_use_the_solis_title(
 ) -> None:
     """More than one plant is titled Solis."""
     _state, url = solis_server
-    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
+    result = await start_user(hass, "cloud")
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {"api_url": url, "key_id": KEY_ID, "key_secret": SECRET},
@@ -175,7 +155,7 @@ async def test_two_plants_use_the_solis_title(
 
 async def test_discovery_timeout_and_nameless_plant(hass: HomeAssistant) -> None:
     """A timeout, a plant with no id, and an empty list are form errors."""
-    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
+    result = await start_user(hass, "cloud")
 
     with patch(
         "custom_components.solis.config_flow.SolisCloudClient.user_station_list",

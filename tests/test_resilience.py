@@ -13,6 +13,7 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er, issue_registry as ir
 
+from .flow_helpers import pick
 from .test_runtime import _number, _refresh, _setup, _state
 from custom_components.solis.api import SolisCloudClient
 from custom_components.solis.const import DOMAIN
@@ -287,7 +288,8 @@ async def test_restart_during_outage_restores_energy(
         await _refresh(hass, entry)
     assert _state(hass, POWER) == "unavailable"
     assert _number(hass, TOTAL) == 12500
-    assert any(
+    # An outage has no user action: unavailable live sensors and a log line, no repair.
+    assert not any(
         issue_id.startswith("cloud_outage") for (_domain, issue_id) in ir.async_get(hass).issues
     )
 
@@ -331,15 +333,10 @@ async def test_reconfigure_switches_host(
     other_url = f"http://127.0.0.1:{sockets[0].getsockname()[1]}"
     try:
         result = await entry.start_reconfigure_flow(hass)
+        result = await pick(hass, result["flow_id"], "reconfigure_cloud")
+        # The saved key id and an empty secret keep the saved credentials.
         result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            {
-                "api_url": other_url,
-                "station_ids": ["1900000000000001001", "1900000000000001002"],
-                "scan_interval": 120,
-                "request_timeout": 30,
-                "endpoint_interval": 0.5,
-            },
+            result["flow_id"], {"api_url": other_url, "key_id": entry.data["key_id"]}
         )
         assert result["reason"] == "reconfigure_successful"
         await hass.async_block_till_done()

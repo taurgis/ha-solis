@@ -5,11 +5,15 @@ from __future__ import annotations
 from typing import Any, cast
 
 from homeassistant.const import MAJOR_VERSION, MINOR_VERSION
-from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.device_registry import (
+    CONNECTION_NETWORK_MAC,
+    DeviceInfo,
+    format_mac,
+)
 from homeassistant.helpers.entity import EntityDescription
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, MANUFACTURER
+from .const import DOMAIN, LOCAL_STATION, MANUFACTURER
 from .coordinator import SolisCoordinator
 from .models import CollectorSnapshot, EpmSnapshot, InverterSnapshot, StationSnapshot
 from .registers import device_model_name
@@ -68,15 +72,25 @@ def inverter_device(
     return info
 
 
-def collector_device(collector: CollectorSnapshot, via_device_id: str | None = None) -> DeviceInfo:
-    """Return the device registry entry for a data logger."""
+def collector_device(
+    collector: CollectorSnapshot,
+    via_device_id: str | None = None,
+    mac: str | None = None,
+) -> DeviceInfo:
+    """Return the device registry entry for a data logger.
+
+    ``mac`` is the stick address stored on a local entry. It lets Home Assistant
+    match the logger with the same device seen by a router or DHCP integration.
+    """
     info = DeviceInfo(
         identifiers={(DOMAIN, f"collector:{collector.serial}")},
         manufacturer=MANUFACTURER,
         model=collector.model or "Data logger",
-        name=f"Logger {collector.serial}",
         serial_number=collector.serial,
     )
+    _name(info, "logger", "Logger", collector.serial)
+    if mac:
+        info["connections"] = {(CONNECTION_NETWORK_MAC, format_mac(mac))}
     _attach_via(info, collector.station_id, via_device_id)
     return info
 
@@ -87,11 +101,20 @@ def epm_device(epm: EpmSnapshot, via_device_id: str | None = None) -> DeviceInfo
         identifiers={(DOMAIN, f"epm:{epm.serial}")},
         manufacturer=MANUFACTURER,
         model="EPM",
-        name=f"EPM {epm.serial}",
         serial_number=epm.serial,
     )
+    _name(info, "epm", "EPM", epm.serial)
     _attach_via(info, epm.station_id, via_device_id)
     return info
+
+
+def _name(info: DeviceInfo, translation_key: str, prefix: str, serial: str) -> None:
+    """Name a subdevice ``{prefix} {serial}`` unless the serial already starts with it."""
+    if serial.casefold().startswith(prefix.casefold()):
+        info["name"] = serial
+        return
+    info["translation_key"] = translation_key
+    info["translation_placeholders"] = {"serial": serial}
 
 
 def _attach_via(info: DeviceInfo, station_id: str | None, device_id: str | None) -> None:
@@ -104,7 +127,8 @@ def _attach_via(info: DeviceInfo, station_id: str | None, device_id: str | None)
         if device_id:
             info["via_device_id"] = device_id
         return
-    if station_id:
+    # The local placeholder plant has no device, so a local inverter has no parent.
+    if station_id and station_id != LOCAL_STATION:
         cast("dict[str, Any]", info)["via_device"] = (DOMAIN, f"station:{station_id}")
 
 

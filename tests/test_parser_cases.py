@@ -68,7 +68,7 @@ def test_battery_discharge_without_current_uses_fu() -> None:
             productModel="2",
             batteryPower=0,
             batteryPowerStr="kW",
-            batteryPowerFu=0.8,
+            batteryPowerFu=800.0,
             storageBatteryCurrent=0,
             storageBatteryCurrentStr="A",
         )
@@ -83,7 +83,7 @@ def test_battery_direction_fields_outrank_current() -> None:
         _detail(
             batteryPower=1.2,
             batteryPowerStr="kW",
-            batteryPowerZheng=1.2,
+            batteryPowerZheng=1200.0,
             batteryPowerFu=0,
             storageBatteryCurrent=-4,
             storageBatteryCurrentStr="A",
@@ -94,7 +94,7 @@ def test_battery_direction_fields_outrank_current() -> None:
             batteryPower=1.2,
             batteryPowerStr="kW",
             batteryPowerZheng=0,
-            batteryPowerFu=1.2,
+            batteryPowerFu=1200.0,
             storageBatteryCurrent=4,
             storageBatteryCurrentStr="A",
         )

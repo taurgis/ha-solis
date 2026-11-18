@@ -15,6 +15,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
 from .conftest import entry_data, entry_options
+from .flow_helpers import logger_form, start_user
 from custom_components.solis.const import DOMAIN, SOURCE_BOTH, SOURCE_LOCAL
 from custom_components.solis.errors import SolisCloudError, SolisLoggerBusy, SolisLoggerOffline
 from custom_components.solis.local_transport import (
@@ -63,7 +64,9 @@ def test_string_map_matches_the_captured_registers() -> None:
     assert parsed.phases[0].voltage_v == pytest.approx(234.9)
     assert parsed.temperature_c == pytest.approx(27.2)
     assert parsed.frequency_hz == pytest.approx(49.99)
-    assert parsed.state is None
+    assert parsed.state == 1  # 3043 = 3 is generating
+    # 3003 = 1 on this one-input mini: PV2 reads 0 V and 0 A and is not a string.
+    assert len(parsed.strings) == 1
     assert parsed.serial == "SOLIS001"
 
 
@@ -480,20 +483,11 @@ async def test_flow_and_dhcp_follow_the_logger_serial(
     emulator = StickEmulator(state)
     await emulator.start()
     try:
-        result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            {
-                "source": SOURCE_LOCAL,
-                "api_url": "http://127.0.0.1:9",
-                "key_id": "",
-                "key_secret": "",
-            },
-        )
+        result = await start_user(hass, "local")
         assert result["step_id"] == "logger"
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            {"logger_host": "127.0.0.1", "logger_serial": str(SERIAL)},
+            logger_form(logger_host="127.0.0.1", logger_serial=str(SERIAL)),
         )
         assert result["type"] is FlowResultType.CREATE_ENTRY
         assert result["result"].unique_id == str(SERIAL)
@@ -608,18 +602,14 @@ async def test_logger_reset_is_not_reported_as_night(
 
     monkeypatch.setattr(flow, "identify_logger", _busy)
     monkeypatch.setattr(flow, "discover_sticks", _no_discovery)
-    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {"source": "local", "api_url": "http://127.0.0.1:9", "key_id": "", "key_secret": ""},
-    )
+    result = await start_user(hass, "local")
     failed = await hass.config_entries.flow.async_configure(
         result["flow_id"],
-        {
-            "logger_host": "127.0.0.1",
-            "logger_serial": "1902137671",
-            "inverter_serial": "110E40182280017",
-        },
+        logger_form(
+            logger_host="127.0.0.1",
+            logger_serial="1902137671",
+            inverter_serial="1031000000000001",
+        ),
     )
     assert failed["errors"]["base"] == "logger_busy"
 
@@ -631,10 +621,10 @@ async def test_empty_cloud_key_is_rejected(
     del solis_server
     from homeassistant.data_entry_flow import FlowResultType
 
-    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
+    result = await start_user(hass, "cloud")
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
-        {"source": "cloud", "api_url": "http://127.0.0.1:9", "key_id": "", "key_secret": ""},
+        {"api_url": "http://127.0.0.1:9", "key_id": "", "key_secret": ""},
     )
     assert result["type"] is FlowResultType.FORM
     assert result["errors"]["base"] == "key_required"
@@ -659,7 +649,7 @@ async def test_reconfigure_local_and_attach(
     assert opened["step_id"] == "logger"
     failed = await hass.config_entries.flow.async_configure(
         opened["flow_id"],
-        {"logger_host": "127.0.0.1", "logger_serial": "1"},
+        logger_form(logger_host="127.0.0.1", logger_serial="1"),
     )
     assert failed["errors"]["base"] == "logger_asleep"
     cloud = MockConfigEntry(
@@ -675,15 +665,15 @@ async def test_reconfigure_local_and_attach(
     started = await cloud.start_reconfigure_flow(hass)
     refused = await hass.config_entries.flow.async_configure(
         started["flow_id"],
-        {
-            "api_url": url,
-            "station_ids": ["1900000000000001001", "1900000000000001002"],
-            "scan_interval": 120,
-            "request_timeout": 30,
-            "endpoint_interval": 0.5,
-            "logger_host": "127.0.0.1",
-            "logger_serial": "1",
-        },
+        logger_form(
+            api_url=url,
+            station_ids=["1900000000000001001", "1900000000000001002"],
+            scan_interval=120,
+            request_timeout=30,
+            endpoint_interval=0.5,
+            logger_host="127.0.0.1",
+            logger_serial="1",
+        ),
     )
     assert refused["errors"]["base"] == "logger_asleep"
     stick = StickState(tcp_port=8899, udp_port=0)
@@ -692,35 +682,35 @@ async def test_reconfigure_local_and_attach(
     try:
         retried = await hass.config_entries.flow.async_configure(
             failed["flow_id"],
-            {"logger_host": "127.0.0.1", "logger_serial": str(SERIAL)},
+            logger_form(logger_host="127.0.0.1", logger_serial=str(SERIAL)),
         )
         assert retried["reason"] == "reconfigure_successful"
         # The first stick now owns this logger id, so a second entry cannot take it.
         taken = await hass.config_entries.flow.async_configure(
             started["flow_id"],
-            {
-                "api_url": url,
-                "station_ids": ["1900000000000001001", "1900000000000001002"],
-                "scan_interval": 120,
-                "request_timeout": 30,
-                "endpoint_interval": 0.5,
-                "logger_host": "127.0.0.1",
-                "logger_serial": str(SERIAL),
-            },
+            logger_form(
+                api_url=url,
+                station_ids=["1900000000000001001", "1900000000000001002"],
+                scan_interval=120,
+                request_timeout=30,
+                endpoint_interval=0.5,
+                logger_host="127.0.0.1",
+                logger_serial=str(SERIAL),
+            ),
         )
         assert taken["errors"]["base"] == "already_configured"
         await hass.config_entries.async_remove(local.entry_id)
         updated = await hass.config_entries.flow.async_configure(
             started["flow_id"],
-            {
-                "api_url": url,
-                "station_ids": ["1900000000000001001", "1900000000000001002"],
-                "scan_interval": 120,
-                "request_timeout": 30,
-                "endpoint_interval": 0.5,
-                "logger_host": "127.0.0.1",
-                "logger_serial": str(SERIAL),
-            },
+            logger_form(
+                api_url=url,
+                station_ids=["1900000000000001001", "1900000000000001002"],
+                scan_interval=120,
+                request_timeout=30,
+                endpoint_interval=0.5,
+                logger_host="127.0.0.1",
+                logger_serial=str(SERIAL),
+            ),
         )
     finally:
         await emulator.close()
@@ -742,10 +732,10 @@ async def test_both_creates_one_entry(
     emulator = StickEmulator(StickState(tcp_port=8899, udp_port=0))
     await emulator.start()
     try:
-        result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
+        result = await start_user(hass, "both")
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            {"source": "both", "api_url": url, "key_id": KEY_ID, "key_secret": SECRET},
+            {"api_url": url, "key_id": KEY_ID, "key_secret": SECRET},
         )
         assert result["step_id"] == "stations"
         result = await hass.config_entries.flow.async_configure(
@@ -755,7 +745,7 @@ async def test_both_creates_one_entry(
         assert result["step_id"] == "logger"
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            {"logger_host": "127.0.0.1", "logger_serial": str(SERIAL)},
+            logger_form(logger_host="127.0.0.1", logger_serial=str(SERIAL)),
         )
     finally:
         await emulator.close()
@@ -778,10 +768,11 @@ async def test_routing_and_migration(hass: HomeAssistant, socket_enabled: None) 
             stations=(),
             inverters=(
                 InverterSnapshot(
-                    serial="L",
-                    device_id="L",
+                    # A placeholder serial matches the account's only inverter.
+                    serial="L0",
+                    device_id="L0",
                     station_id="local",
-                    name="L",
+                    name="L0",
                     model=None,
                     product_model="1",
                     hmi_version=None,
@@ -922,6 +913,11 @@ async def test_offline_rediscover_keeps_the_last_total(socket_enabled: None) -> 
         return "127.0.0.1"
 
     transport._find_stick = _gone  # type: ignore[method-assign]
+    # A hybrid runs on its battery at night: a dark stick is a pause, not sleep.
+    with pytest.raises(SolisLoggerBusy) as paused:
+        await transport._after_offline()
+    assert paused.value.reason == "timeout"
+    transport._map = "string"
     asleep = await transport._after_offline()
     assert asleep.source == "asleep"
     assert asleep.inverters[0].energy_total_kwh == hybrid.inverters[0].energy_total_kwh
@@ -993,7 +989,7 @@ def test_cloud_names_the_series_and_the_model_code() -> None:
 
     parsed = parse_inverter(
         {
-            "sn": "110E40182280017",
+            "sn": "1031000000000001",
             "machine": "Solis-mini-2500-4G",
             "model": "E4",
             "version": "0F000F",
@@ -1017,12 +1013,12 @@ def test_morning_power_is_not_asleep_and_version_matches_the_cloud() -> None:
 
     words = captured_registers()
     words[3005] = 60
-    parsed = decode_string(words, serial="110E40182280017", logger_serial=str(SERIAL))
+    parsed = decode_string(words, serial="1031000000000001", logger_serial=str(SERIAL))
     assert parsed.ac_power_w == 60
     assert parsed.model == "Solis 4G"
     assert parsed.hmi_version == "0F000F"
     assert parsed.data_source == "local"
-    assert parsed.state is None
+    assert parsed.state == 1
     assert device_model_name("Solis-mini-2500-4G", "E4") == "Solis-mini-2500-4G (E4)"
 
 
@@ -1125,7 +1121,7 @@ async def test_degraded_cloud_keeps_the_local_total_and_serial(socket_enabled: N
         SERIAL,
         slave=1,
         register_map="string",
-        inverter_serial="110E40182280017",
+        inverter_serial="1031000000000001",
         timeout=0.5,
         gap=0,
         port=port,
@@ -1138,7 +1134,7 @@ async def test_degraded_cloud_keeps_the_local_total_and_serial(socket_enabled: N
             base = await _tiny_cloud()._cloud.async_read()  # type: ignore[attr-defined]
             inverter = replace(
                 base.inverters[0],
-                serial="110E40182280017",
+                serial="1031000000000001",
                 model="Solis-mini-2500-4G",
                 model_code="E4",
                 ac_power_w=59.0,
@@ -1153,7 +1149,7 @@ async def test_degraded_cloud_keeps_the_local_total_and_serial(socket_enabled: N
         await router.close()
         await emulator.close()
     assert degraded.source == "degraded"
-    assert degraded.inverters[0].serial == "110E40182280017"
+    assert degraded.inverters[0].serial == "1031000000000001"
     assert degraded.inverters[0].ac_power_w == 59
     assert degraded.inverters[0].model == "Solis-mini-2500-4G"
     assert degraded.inverters[0].model_code == "E4"

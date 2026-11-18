@@ -6,25 +6,13 @@
   "config_flow": true,
   "dhcp": [
     {
+      "macaddress": "E8FDF8*"
+    },
+    {
       "macaddress": "BC54F9*"
     },
     {
-      "hostname": "ew11*"
-    },
-    {
-      "hostname": "ee11*"
-    },
-    {
-      "hostname": "elfin*"
-    },
-    {
-      "hostname": "usr-tcp*"
-    },
-    {
-      "hostname": "usr-w610*"
-    },
-    {
-      "hostname": "usr-dr*"
+      "registered_devices": true
     }
   ],
   "documentation": "https://github.com/taurgis/ha-solis",

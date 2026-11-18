@@ -9,7 +9,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceEntry
 
 from . import SolisConfigEntry
-from .const import CONF_KEY_ID, CONF_KEY_SECRET, CONF_LOGGER_PASSWORD
+from .const import (
+    CONF_INVERTER_SERIAL,
+    CONF_KEY_ID,
+    CONF_KEY_SECRET,
+    CONF_LOGGER_PASSWORD,
+    CONF_STATION_IDS,
+)
 from .coordinator import SolisCoordinator
 
 TO_REDACT = {
@@ -31,6 +37,17 @@ TO_REDACT = {
     "logger_serial",
     "title",
     "name",
+    # Serials and plant ids identify the owner's hardware and SolisCloud account.
+    CONF_INVERTER_SERIAL,
+    CONF_STATION_IDS,
+    "serial",
+    "station_id",
+    "collector_serial",
+    "identifiers",
+    "connections",
+    "mac",
+    # A DHCP discovery key is the logger MAC.
+    "discovery_keys",
 }
 
 
@@ -59,10 +76,13 @@ async def async_get_device_diagnostics(
     """Return the snapshot rows that belong to one device."""
     coordinator: SolisCoordinator = entry.runtime_data
     identifiers = {item[1] for item in device.identifiers}
-    return {
-        "identifiers": sorted(identifiers),
-        "snapshot": _snapshot(coordinator, identifiers),
-    }
+    return async_redact_data(
+        {
+            "identifiers": sorted(identifiers),
+            "snapshot": _snapshot(coordinator, identifiers),
+        },
+        TO_REDACT,
+    )
 
 
 def _snapshot(coordinator: SolisCoordinator, identifiers: set[str] | None = None) -> dict[str, Any]:
@@ -93,21 +113,24 @@ def _snapshot(coordinator: SolisCoordinator, identifiers: set[str] | None = None
         if identifiers is not None and f"inverter:{inverter.serial}" not in identifiers:
             continue
         inverters.append(
-            {
-                "serial": inverter.serial,
-                "station_id": inverter.station_id,
-                "model": inverter.model,
-                "state": inverter.state,
-                "condition": inverter.condition(data.fetched_at),
-                "ac_power_w": inverter.ac_power_w,
-                "energy_today_kwh": inverter.energy_today_kwh,
-                "energy_total_kwh": inverter.energy_total_kwh,
-                "battery_soc": inverter.battery_soc,
-                "battery_power_w": inverter.battery_power_w,
-                "data_timestamp": inverter.data_timestamp.isoformat()
-                if inverter.data_timestamp
-                else None,
-            }
+            async_redact_data(
+                {
+                    "serial": inverter.serial,
+                    "station_id": inverter.station_id,
+                    "model": inverter.model,
+                    "state": inverter.state,
+                    "condition": inverter.condition(data.fetched_at),
+                    "ac_power_w": inverter.ac_power_w,
+                    "energy_today_kwh": inverter.energy_today_kwh,
+                    "energy_total_kwh": inverter.energy_total_kwh,
+                    "battery_soc": inverter.battery_soc,
+                    "battery_power_w": inverter.battery_power_w,
+                    "data_timestamp": inverter.data_timestamp.isoformat()
+                    if inverter.data_timestamp
+                    else None,
+                },
+                TO_REDACT,
+            )
         )
     return {
         "fetched_at": data.fetched_at.isoformat(),

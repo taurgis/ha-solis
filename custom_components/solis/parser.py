@@ -65,6 +65,35 @@ def first(data: dict[str, Any], *keys: str) -> Any:
     return None
 
 
+def _reading(data: dict[str, Any], *keys: str) -> tuple[Any, Any, Any]:
+    """Return the first present value with its own ``*Str`` (or ``*Unit``) and ``*Pec``.
+
+    The unit and scale factor are read from the same key that supplied the
+    value, so an alias such as ``bstteryCurrent`` never borrows another key's
+    unit.
+    """
+    for key in keys:
+        if key in data and not is_missing(data[key]):
+            unit = first(data, f"{key}Str", f"{key}Unit")
+            return data[key], unit, first(data, f"{key}Pec")
+    return None, None, None
+
+
+def _watts(data: dict[str, Any], *keys: str, default: str = "kw") -> float | None:
+    value, unit, pec = _reading(data, *keys)
+    return to_watts(value, unit, pec, default=default)
+
+
+def _kwh(data: dict[str, Any], *keys: str, default: str = "kwh") -> float | None:
+    value, unit, pec = _reading(data, *keys)
+    return to_kilowatt_hours(value, unit, pec, default=default)
+
+
+def _ident(data: dict[str, Any], *keys: str, default: str) -> float | None:
+    value, unit, pec = _reading(data, *keys)
+    return to_identity(value, unit, pec, default=default)
+
+
 def parse_epoch(value: Any) -> datetime | None:
     """Parse a Solis timestamp in epoch seconds or milliseconds."""
     number = as_float(value)
@@ -104,32 +133,43 @@ def resolve_zone(
     preference: str | None,
     hass_time_zone: str | None,
     now: datetime,
+    plant_zone: str | None = None,
 ) -> ZoneInfo | None:
     """Choose the civil timezone used for "today", or None to keep the fixed offset.
 
-    An explicit IANA name always wins. ``plant`` keeps the numeric offset Solis
-    sent. The default follows Home Assistant's zone when that zone is within an
-    hour of the plant offset, which is the daylight-saving gap in issue 533,
-    and leaves a plant in another region on the offset Solis published.
+    An explicit IANA name always wins. ``plant`` keeps the numeric offset
+    Solis sent. The automatic default prefers the plant's own IANA zone
+    (``timeZoneStandardId``) when it loads and agrees with that offset to
+    within an hour. Without one it follows Home Assistant's zone when that
+    zone is within an hour of the plant offset, which is the daylight-saving
+    gap in issue 533, and leaves a plant in another region on the offset
+    Solis published.
+
+    Zone names are loaded with ``ZoneInfo``, which reads tzdata on a cache
+    miss. Callers in the event loop warm the cache first (the cloud transport
+    loads the plant zone in the executor and keeps a reference).
     """
     chosen = (preference or "").strip()
     if chosen == "plant":
         return None
     if chosen:
         return _zone(chosen)
-    if cloud_offset_hours is None:
-        return _zone(hass_time_zone)
-    home = _zone(hass_time_zone)
-    if home is None:
-        return None
     if now.tzinfo is None:
         now = now.replace(tzinfo=UTC)
-    home_offset = now.astimezone(home).utcoffset()
-    if home_offset is None:
-        return None
-    if abs(home_offset.total_seconds() / 3600.0 - cloud_offset_hours) <= 1.0:
+    plant = _zone(plant_zone)
+    if plant is not None and _within_hour(plant, cloud_offset_hours, now):
+        return plant
+    home = _zone(hass_time_zone)
+    if home is not None and _within_hour(home, cloud_offset_hours, now):
         return home
     return None
+
+
+def _within_hour(zone: ZoneInfo, offset_hours: float | None, now: datetime) -> bool:
+    if offset_hours is None:
+        return True
+    current = now.astimezone(zone).utcoffset() or timedelta(0)
+    return abs(current.total_seconds() / 3600.0 - offset_hours) <= 1.0
 
 
 def _zone(name: str | None) -> ZoneInfo | None:
@@ -137,7 +177,7 @@ def _zone(name: str | None) -> ZoneInfo | None:
         return None
     try:
         return ZoneInfo(name)
-    except ZoneInfoNotFoundError:
+    except (ZoneInfoNotFoundError, ValueError, OSError):
         return None
 
 
@@ -193,13 +233,9 @@ def _string_count(data: dict[str, Any]) -> int:
 def _pv_strings(data: dict[str, Any]) -> tuple[PvString, ...]:
     rows: list[PvString] = []
     for index in range(1, _string_count(data) + 1):
-        voltage = to_identity(
-            first(data, f"uPv{index}"), first(data, f"uPv{index}Str"), default="v"
-        )
-        current = to_identity(
-            first(data, f"iPv{index}"), first(data, f"iPv{index}Str"), default="a"
-        )
-        power = to_watts(first(data, f"pow{index}"), first(data, f"pow{index}Str"), default="w")
+        voltage = _ident(data, f"uPv{index}", default="v")
+        current = _ident(data, f"iPv{index}", default="a")
+        power = _watts(data, f"pow{index}", default="w")
         if voltage is None and current is None and power is None:
             continue
         rows.append(PvString(index=index, voltage_v=voltage, current_a=current, power_w=power))
@@ -213,17 +249,9 @@ def _phases(data: dict[str, Any]) -> tuple[Phase, ...]:
     for index, power_key in enumerate(("pA", "pB", "pC"), start=1):
         if index > count:
             break
-        voltage = to_identity(
-            first(data, f"uAc{index}"),
-            first(data, f"uAc{index}Str"),
-            default="v",
-        )
-        current = to_identity(
-            first(data, f"iAc{index}"),
-            first(data, f"iAc{index}Str"),
-            default="a",
-        )
-        power = to_watts(first(data, power_key), first(data, f"{power_key}Str"), default="w")
+        voltage = _ident(data, f"uAc{index}", default="v")
+        current = _ident(data, f"iAc{index}", default="a")
+        power = _watts(data, power_key, default="w")
         rows.append(Phase(index=index, voltage_v=voltage, current_a=current, power_w=power))
     return tuple(rows)
 
@@ -232,20 +260,29 @@ def _battery_power(data: dict[str, Any], current: float | None) -> float | None:
     """Return signed battery watts. Positive is charging, negative is discharging.
 
     ``batteryPowerZheng`` and ``batteryPowerFu`` are the charge and discharge
-    components. A real SolisCloud day sample has ``batteryPower`` equal to
-    Zheng minus Fu. Newer loggers also publish an unsigned ``batteryPower``;
-    ``storageBatteryCurrent`` is then positive while charging and negative
-    while discharging. An already-negative ``batteryPower`` is left as-is.
+    magnitudes. They are always watts and have no unit field of their own, so
+    ``batteryPowerStr`` (usually ``kW``) does not apply to them: a real
+    capture has ``batteryPower: -1.364`` kW with ``batteryPowerFu: 1364.0``.
+    They decide the sign; the magnitude comes from ``batteryPower`` with its
+    own ``*Str`` and ``*Pec``. Without ``batteryPower`` the reading is Zheng
+    minus Fu in watts. Without either split, an unsigned ``batteryPower`` from
+    a newer logger takes its sign from ``storageBatteryCurrent`` (positive while
+    charging). An already-negative ``batteryPower`` is left as-is.
     """
-    unit = first(data, "batteryPowerStr")
-    pec = first(data, "batteryPowerPec")
-    power = to_watts(first(data, "batteryPower"), unit, pec, default="kw")
-    charging = to_watts(first(data, "batteryPowerZheng"), unit, default="kw")
-    discharging = to_watts(first(data, "batteryPowerFu"), unit, default="kw")
-    if (charging is not None and charging > 0) or (discharging is not None and discharging > 0):
-        return (charging or 0.0) - (discharging or 0.0)
-    if power is None:
-        return None
+    power = _watts(data, "batteryPower", default="kw")
+    charging = to_watts(first(data, "batteryPowerZheng"), "w")
+    discharging = to_watts(first(data, "batteryPowerFu"), "w")
+    split = (charging or 0.0) - (discharging or 0.0)
+    if power is None or (power == 0 and split != 0):
+        if charging is None and discharging is None:
+            return power
+        return split
+    if power == 0:
+        return 0.0
+    if split > 0:
+        return abs(power)
+    if split < 0:
+        return -abs(power)
     if power > 0 and current is not None and current < 0:
         return -power
     return power
@@ -256,13 +293,15 @@ def parse_inverter(
     *,
     station_id: str | None = None,
     name: str | None = None,
+    serial: str | None = None,
 ) -> InverterSnapshot:
-    """Parse one inverter detail or, failing that, an inverter-list row."""
-    current = to_identity(
-        first(data, "storageBatteryCurrent", "bstteryCurrent", "batteryCurrent"),
-        first(data, "storageBatteryCurrentStr", "bstteryCurrentStr", "batteryCurrentStr"),
-        default="a",
-    )
+    """Parse one inverter detail or, failing that, an inverter-list row.
+
+    ``serial`` is the inverter-list serial. When given it wins over the
+    detail's ``sn``, which SolisCloud replaces with a placeholder for a serial
+    it does not know.
+    """
+    current = _ident(data, "storageBatteryCurrent", "bstteryCurrent", "batteryCurrent", default="a")
     product = _text(data, "productModel")
     series = _text(data, "machine", "series")
     code = _text(data, "model")
@@ -270,7 +309,7 @@ def parse_inverter(
         code = None
     return _plausible(
         InverterSnapshot(
-            serial=str(first(data, "sn") or ""),
+            serial=str(serial or first(data, "sn") or ""),
             device_id=str(first(data, "id") or ""),
             station_id=str(station_id or first(data, "stationId") or ""),
             name=str(name or first(data, "name", "stationName") or first(data, "sn") or "Solis"),
@@ -282,93 +321,32 @@ def parse_inverter(
             ac_output_type=_as_int(first(data, "acOutputType")),
             data_timestamp=parse_epoch(first(data, "dataTimestamp")),
             collector_serial=_text(data, "collectorSn"),
-            ac_power_w=to_watts(
-                first(data, "pac"),
-                first(data, "pacStr"),
-                first(data, "pacPec"),
-                default="kw",
-            ),
-            frequency_hz=to_identity(first(data, "fac"), first(data, "facStr"), default="hz"),
-            temperature_c=to_identity(
-                first(data, "inverterTemperature"),
-                first(data, "inverterTemperatureStr"),
-                default="c",
-            ),
-            energy_today_kwh=to_kilowatt_hours(
-                first(data, "eToday"),
-                first(data, "eTodayStr"),
-                default="kwh",
-            ),
-            energy_month_kwh=to_kilowatt_hours(
-                first(data, "eMonth"),
-                first(data, "eMonthStr"),
-                default="kwh",
-            ),
-            energy_year_kwh=to_kilowatt_hours(
-                first(data, "eYear"),
-                first(data, "eYearStr"),
-                default="kwh",
-            ),
-            energy_total_kwh=to_kilowatt_hours(
-                first(data, "eTotal"),
-                first(data, "eTotalStr"),
-                default="kwh",
-            ),
+            ac_power_w=_watts(data, "pac", default="kw"),
+            frequency_hz=_ident(data, "fac", default="hz"),
+            temperature_c=_ident(data, "inverterTemperature", default="c"),
+            energy_today_kwh=_kwh(data, "eToday"),
+            energy_month_kwh=_kwh(data, "eMonth"),
+            energy_year_kwh=_kwh(data, "eYear"),
+            energy_total_kwh=_kwh(data, "eTotal"),
             battery_power_w=_battery_power(data, current),
-            battery_soc=to_identity(
-                first(data, "batteryCapacitySoc"),
-                first(data, "batteryCapacitySocStr"),
-                default="%",
-            ),
-            battery_soh=to_identity(
-                first(data, "batteryHealthSoh"),
-                first(data, "batteryHealthSohStr"),
-                default="%",
-            ),
-            battery_voltage_v=to_identity(
-                first(data, "storageBatteryVoltage", "batteryVoltage"),
-                first(data, "storageBatteryVoltageStr", "batteryVoltageStr"),
-                default="v",
-            ),
+            battery_soc=_ident(data, "batteryCapacitySoc", default="%"),
+            battery_soh=_ident(data, "batteryHealthSoh", default="%"),
+            battery_voltage_v=_ident(data, "storageBatteryVoltage", "batteryVoltage", default="v"),
             battery_current_a=current,
-            battery_charge_today_kwh=to_kilowatt_hours(
-                first(data, "batteryTodayChargeEnergy"),
-                first(data, "batteryTodayChargeEnergyStr"),
-                default="kwh",
-            ),
-            battery_discharge_today_kwh=to_kilowatt_hours(
-                first(data, "batteryTodayDischargeEnergy"),
-                first(data, "batteryTodayDischargeEnergyStr"),
-                default="kwh",
-            ),
-            battery_charge_total_kwh=to_kilowatt_hours(
-                first(data, "batteryTotalChargeEnergy"),
-                first(data, "batteryTotalChargeEnergyStr"),
-                default="kwh",
-            ),
-            battery_discharge_total_kwh=to_kilowatt_hours(
-                first(data, "batteryTotalDischargeEnergy"),
-                first(data, "batteryTotalDischargeEnergyStr"),
-                default="kwh",
-            ),
-            grid_power_w=to_watts(first(data, "psum"), first(data, "psumStr"), default="kw"),
-            consumption_power_w=to_watts(
-                first(data, "familyLoadPower"),
-                first(data, "familyLoadPowerStr"),
-                default="kw",
-            ),
-            force_charge_soc=to_identity(
-                first(data, "socChargingSet"),
-                first(data, "socChargingSetStr"),
-                default="%",
-            ),
-            force_discharge_soc=to_identity(
-                first(data, "socDischargeSet"),
-                first(data, "socDischargeSetStr"),
-                default="%",
-            ),
+            battery_charge_today_kwh=_kwh(data, "batteryTodayChargeEnergy"),
+            battery_discharge_today_kwh=_kwh(data, "batteryTodayDischargeEnergy"),
+            battery_charge_total_kwh=_kwh(data, "batteryTotalChargeEnergy"),
+            battery_discharge_total_kwh=_kwh(data, "batteryTotalDischargeEnergy"),
+            # psum is negative while importing and positive while exporting.
+            grid_power_w=_watts(data, "psum", default="kw"),
+            consumption_power_w=_watts(data, "familyLoadPower", default="kw"),
+            force_charge_soc=_ident(data, "socChargingSet", default="%"),
+            force_discharge_soc=_ident(data, "socDischargeSet", default="%"),
             phases=_phases(data),
             strings=_pv_strings(data),
+            grid_import_total_kwh=_kwh(data, "gridPurchasedTotalEnergy"),
+            grid_export_total_kwh=_kwh(data, "gridSellTotalEnergy"),
+            load_total_kwh=_kwh(data, "homeLoadTotalEnergy"),
         )
     )
 
@@ -419,61 +397,57 @@ def parse_station(
         timezone_offset_hours=parse_offset_hours(
             first(detail, "timeZone", "timeZoneStr") or first(summary, "timeZone", "timeZoneStr")
         ),
-        day_energy_kwh=_energy_fallback(
-            detail,
-            day,
-            ("dayEnergy",),
-            ("dayEnergyStr",),
-            ("energy",),
-            ("energyStr",),
-        ),
+        day_energy_kwh=_energy_fallback(detail, day, ("dayEnergy",), ("energy",)),
         grid_import_today_kwh=_energy_fallback(
             detail,
             day,
             ("gridPurchasedDayEnergy", "gridPurchasedTodayEnergy"),
-            ("gridPurchasedDayEnergyStr", "gridPurchasedTodayEnergyStr"),
             ("gridPurchasedEnergy",),
-            ("gridPurchasedEnergyStr",),
         ),
         grid_export_today_kwh=_energy_fallback(
             detail,
             day,
             ("gridSellDayEnergy", "gridSellTodayEnergy"),
-            ("gridSellDayEnergyStr", "gridSellTodayEnergyStr"),
             ("gridSellEnergy",),
-            ("gridSellEnergyStr",),
         ),
+        # Station detail carries today's load as homeLoadEnergy too (upstream
+        # reads that one); either saves the stationDayEnergyList call.
         load_today_kwh=_energy_fallback(
             detail,
             day,
-            ("homeLoadTodayEnergy", "homeLoadDayEnergy"),
-            ("homeLoadTodayEnergyStr", "homeLoadDayEnergyStr"),
+            ("homeLoadTodayEnergy", "homeLoadDayEnergy", "homeLoadEnergy"),
             ("homeLoadEnergy",),
-            ("homeLoadEnergyStr",),
         ),
-        capacity_kw=_kilowatts(
-            to_watts(first(detail, "capacity"), first(detail, "capacityStr"), default="kw")
-        ),
+        capacity_kw=_kilowatts(_watts(detail, "capacity", default="kw")),
         address=_text(detail, "addr", "cityStr") or _text(summary, "cityStr"),
         latitude=as_float(first(detail, "latitude")),
         longitude=as_float(first(detail, "longitude")),
+        timezone_name=plant_zone_name(detail) or plant_zone_name(summary),
     )
+
+
+def plant_zone_name(data: dict[str, Any] | None) -> str | None:
+    """Return the plant's IANA zone name from ``timeZoneStandardId``, if any.
+
+    The name is not loaded here, because the parser runs in the event loop.
+    ``resolve_zone`` drops a name that does not load.
+    """
+    if not data:
+        return None
+    value = (_text(data, "timeZoneStandardId") or "").strip()
+    return value or None
 
 
 def _energy_fallback(
     detail: dict[str, Any],
     day: dict[str, Any],
     detail_keys: tuple[str, ...],
-    detail_units: tuple[str, ...],
     day_keys: tuple[str, ...],
-    day_units: tuple[str, ...],
 ) -> float | None:
-    primary = to_kilowatt_hours(
-        first(detail, *detail_keys), first(detail, *detail_units), default="kwh"
-    )
+    primary = _kwh(detail, *detail_keys)
     if primary is not None:
         return primary
-    return to_kilowatt_hours(first(day, *day_keys), first(day, *day_units), default="kwh")
+    return _kwh(day, *day_keys)
 
 
 def parse_alarm(row: dict[str, Any]) -> AlarmSnapshot:
@@ -508,7 +482,7 @@ def parse_epm(row: dict[str, Any]) -> EpmSnapshot:
         serial=str(first(row, "sn") or ""),
         station_id=_text(row, "stationId"),
         state=_as_int(first(row, "state")),
-        power_w=to_watts(first(row, "pEpmTotal"), first(row, "pEpmTotalStr"), default="kw"),
+        power_w=_watts(row, "pEpmTotal", default="kw"),
     )
 
 

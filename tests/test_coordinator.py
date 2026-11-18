@@ -88,7 +88,8 @@ async def test_auth_starts_reauth_once_then_clears(hass: HomeAssistant) -> None:
     with pytest.raises(ConfigEntryAuthFailed):
         await coordinator._async_update_data()
     assert first.value.translation_key == "update_auth"
-    assert any(key.startswith("invalid_auth") for key in _issue_keys(hass))
+    # Home Assistant's reauth flow is the notice; there is no separate repair.
+    assert not any(key.startswith("invalid_auth") for key in _issue_keys(hass))
     assert await coordinator._async_update_data()
     assert coordinator.auth_failed is False
     assert not any(key.startswith("invalid_auth") for key in _issue_keys(hass))
@@ -98,7 +99,6 @@ async def test_auth_starts_reauth_once_then_clears(hass: HomeAssistant) -> None:
     ("error", "prefix"),
     [
         (SolisClockError("skew"), "clock_skew"),
-        (SolisDataError("bad data"), "abnormal_data"),
         (SolisCloudError("no inverters returned"), "no_inverters"),
         (SolisCloudError("no stations returned for this account"), "no_inverters"),
     ],
@@ -112,6 +112,15 @@ async def test_repairs_for_clock_data_and_empty(
     with pytest.raises(UpdateFailed):
         await coordinator._async_update_data()
     assert any(key.startswith(prefix) for key in _issue_keys(hass))
+
+
+async def test_abnormal_data_fails_the_update_without_a_repair(hass: HomeAssistant) -> None:
+    """Abnormal data has no step in Home Assistant, so it is a failed update only."""
+    coordinator = SolisCoordinator(hass, _entry(hass), _Scripted([SolisDataError("bad data")]))
+    with pytest.raises(UpdateFailed) as failed:
+        await coordinator._async_update_data()
+    assert failed.value.translation_key == "update_abnormal"
+    assert not _issue_keys(hass)
 
 
 async def test_timeout_and_generic_error_do_not_open_repairs(hass: HomeAssistant) -> None:
@@ -170,7 +179,7 @@ async def test_server_error_after_success_does_not_reauth(hass: HomeAssistant) -
 async def test_sustained_outage_repair_is_logged_once(
     hass: HomeAssistant, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """The outage repair is opened once and cleared when the cloud returns."""
+    """A sustained outage is logged once, opens no repair, and recovery is logged."""
     entry = _entry(hass, scan=60)
     good = _snapshot()
     coordinator = SolisCoordinator(
@@ -192,10 +201,12 @@ async def test_sustained_outage_repair_is_logged_once(
         await coordinator._async_update_data()
         degraded = await coordinator._async_update_data()
         assert degraded.partial is True
-        assert any(key.startswith("cloud_outage") for key in _issue_keys(hass))
+        assert all(item.unreachable for item in degraded.inverters)
+        assert not any(key.startswith("cloud_outage") for key in _issue_keys(hass))
         await coordinator._async_update_data()
     warnings = [record for record in caplog.records if "unreachable" in record.message]
     assert len(warnings) == 1
+    assert any("reachable again" in record.message for record in caplog.records)
     assert coordinator.update_interval.total_seconds() == 60
     assert not any(key.startswith("cloud_outage") for key in _issue_keys(hass))
 

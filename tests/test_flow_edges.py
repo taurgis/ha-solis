@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 
 from .conftest import entry_data, entry_options
+from .flow_helpers import pick, start_user
 from custom_components.solis.config_flow import _normalize_url, migrate_entry_data
 from custom_components.solis.const import DOMAIN
 from mock_soliscloud.catalog import KEY_ID, SECRET
@@ -57,12 +58,16 @@ async def test_options_reject_an_unknown_timezone(
         result["flow_id"],
         {
             "scan_interval": 240,
-            "request_timeout": 55,
-            "endpoint_interval": 3,
+            "advanced": {"request_timeout": 55, "endpoint_interval": 3},
             "time_zone": "Not/AZone",
         },
     )
     assert result["type"] is FlowResultType.FORM
+    assert result["errors"]["time_zone"] == "invalid_timezone"
+    # A path-like value is not a zone either, and must not reach the file system.
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"scan_interval": 240, "time_zone": "../etc/passwd"}
+    )
     assert result["errors"]["time_zone"] == "invalid_timezone"
 
 
@@ -71,20 +76,20 @@ async def test_empty_station_selection_is_rejected(
 ) -> None:
     """The plant step stays open when nothing is selected."""
     _state, url = solis_server
-    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
+    result = await start_user(hass, "cloud")
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {"api_url": url, "key_id": KEY_ID, "key_secret": SECRET},
     )
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {"station_ids": []})
     assert result["type"] is FlowResultType.FORM
-    assert result["errors"]["base"] == "no_stations"
+    assert result["errors"]["base"] == "select_station"
 
 
 async def test_reconfigure_aborts_when_the_cloud_is_down(
     hass: HomeAssistant, solis_server: tuple[Any, str]
 ) -> None:
-    """Reconfigure cannot load plants when every call returns HTTP 502."""
+    """The plant list cannot load when every call returns HTTP 502."""
     state, url = solis_server
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -95,8 +100,9 @@ async def test_reconfigure_aborts_when_the_cloud_is_down(
     )
     entry.add_to_hass(hass)
     state.mode = "server_error"
+    result = await entry.start_reconfigure_flow(hass)
     with patch("custom_components.solis.api.asyncio.sleep", new=AsyncMock()):
-        result = await entry.start_reconfigure_flow(hass)
+        result = await pick(hass, result["flow_id"], "stations")
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "cannot_connect"
 
@@ -141,7 +147,7 @@ async def test_options_round_trip_keeps_every_knob(
     result = await hass.config_entries.options.async_init(entry.entry_id)
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
-        {"scan_interval": 240, "request_timeout": 55, "endpoint_interval": 3},
+        {"scan_interval": 240, "advanced": {"request_timeout": 55, "endpoint_interval": 3}},
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert entry.options == {

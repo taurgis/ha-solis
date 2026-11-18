@@ -12,10 +12,12 @@ cloud session.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 import logging
 from typing import Any, Protocol
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .api import SolisCloudClient
 from .errors import SolisAuthError, SolisClockError, SolisCloudError
@@ -36,6 +38,7 @@ from .parser import (
     parse_inverter,
     parse_offset_hours,
     parse_station,
+    plant_zone_name,
     resolve_zone,
 )
 
@@ -78,6 +81,16 @@ class SolisCloudTransport:
         self._lists: dict[str, list[dict[str, Any]]] = {}
         self._empty_lists: dict[str, int] = {}
         self._warned: set[str] = set()
+        # Strong references keep loaded zones in ZoneInfo's cache, so the
+        # parser and sensors can resolve them in the loop without disk reads.
+        self._zones: dict[str, ZoneInfo | None] = {}
+
+    async def _warm_zone(self, name: str | None) -> None:
+        """Load a plant zone in the executor once, before the loop needs it."""
+        if not name or name in self._zones:
+            return
+        loop = asyncio.get_running_loop()
+        self._zones[name] = await loop.run_in_executor(None, _load_zone, name)
 
     async def async_read(self) -> SolisSnapshot:
         """Poll stations, inverters, alarms, collectors and EPMs."""
@@ -99,18 +112,26 @@ class SolisCloudTransport:
             offset = parse_offset_hours((detail or {}).get("timeZone"))
             if offset is None:
                 offset = parse_offset_hours(summary.get("timeZone"))
-            zone = resolve_zone(offset, self._time_zone, self._hass_time_zone, now)
-            day, day_failed = await self._optional(
-                f"station {station_id} day energy",
-                lambda station_id=station_id, offset=offset, zone=zone: (
-                    self._client.station_day_energy(
-                        station_id,
-                        local_date(offset, now, zone),
-                    )
-                ),
-            )
-            partial = partial or day_failed
-            stations.append(parse_station(summary, detail, day))
+            plant_zone = plant_zone_name(detail) or plant_zone_name(summary)
+            await self._warm_zone(plant_zone)
+            zone = resolve_zone(offset, self._time_zone, self._hass_time_zone, now, plant_zone)
+            from_detail = parse_station(summary, detail, None)
+            if _day_covered(from_detail):
+                # Station detail already carries every daily counter
+                # (including homeLoadEnergy), so skip stationDayEnergyList.
+                stations.append(from_detail)
+            else:
+                day, day_failed = await self._optional(
+                    f"station {station_id} day energy",
+                    lambda station_id=station_id, offset=offset, zone=zone: (
+                        self._client.station_day_energy(
+                            station_id,
+                            local_date(offset, now, zone),
+                        )
+                    ),
+                )
+                partial = partial or day_failed
+                stations.append(parse_station(summary, detail, day))
             listed, list_failed = await self._inverters_for(station_id)
             partial = partial or list_failed
             for row in listed:
@@ -126,6 +147,7 @@ class SolisCloudTransport:
                     detail_row,
                     station_id=station_id,
                     name=str(row.get("name") or row.get("sn") or serial),
+                    serial=serial or None,
                 )
                 if unreachable:
                     parsed = replace(parsed, unreachable=True)
@@ -224,6 +246,19 @@ class SolisCloudTransport:
             if cached is not None:
                 return cached, True, True
             return list_row, True, True
+        detail_serial = str(detail.get("sn") or "")
+        if detail_serial and detail_serial != serial:
+            # An unknown serial gets a placeholder record with another sn
+            # (zeros) and dataTimestamp "0". It is not this inverter.
+            self._warn_once(
+                f"detail:{serial}",
+                "Detail for %s came back for another serial; using the last copy",
+                serial,
+            )
+            cached = self._details.get(serial)
+            if cached is not None:
+                return cached, True, True
+            return list_row, True, True
         kept, partial, unreachable = self._prefer_cached(serial, detail)
         if not partial:
             self._warned.discard(f"detail:{serial}")
@@ -269,6 +304,24 @@ class SolisCloudTransport:
             return None, True
         self._warned.discard(label)
         return result, False
+
+
+def _load_zone(name: str) -> ZoneInfo | None:
+    """Load a zone from tzdata. Runs in the executor."""
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError, OSError):
+        return None
+
+
+def _day_covered(station: StationSnapshot) -> bool:
+    """Return whether station detail filled every daily counter."""
+    return None not in (
+        station.day_energy_kwh,
+        station.grid_import_today_kwh,
+        station.grid_export_today_kwh,
+        station.load_today_kwh,
+    )
 
 
 def _alarms(rows: list[dict[str, Any]]) -> tuple[AlarmSnapshot, ...]:

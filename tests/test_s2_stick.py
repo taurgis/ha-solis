@@ -14,6 +14,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
 from .conftest import entry_options
+from .flow_helpers import logger_form, pick, start_user
 from custom_components.solis.const import (
     DOMAIN,
     LOGGER_S2,
@@ -46,7 +47,7 @@ from mock_soliscloud.stick import SERIAL, StickEmulator, StickState, captured_re
 def _cloud_snapshot() -> SolisSnapshot:
     inverter = decode_string(
         captured_registers(),
-        serial="110E40182280017",
+        serial="1031000000000001",
         logger_serial="5A120001",
         now=datetime.now(UTC),
     )
@@ -260,7 +261,7 @@ async def test_closed_port_uses_cloud_without_zeroing_power(socket_enabled: None
         0,
         slave=1,
         register_map="string",
-        inverter_serial="SOLIS001",
+        inverter_serial="1031000000000001",  # the cloud inverter
         timeout=0.4,
         gap=0,
         port=1,
@@ -284,40 +285,31 @@ async def test_closed_port_uses_cloud_without_zeroing_power(socket_enabled: None
 async def test_flow_creates_an_s2_entry_and_rejects_bad_input(
     hass: HomeAssistant, socket_enabled: None
 ) -> None:
-    """The stick serial is the unique id. A bad port and a missing id are form errors."""
+    """The stick serial is the unique id. A non-numeric Solarman serial is a form error."""
     from homeassistant.data_entry_flow import FlowResultType
 
     emulator, port = await _s2_port()
     try:
-        result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            {
-                "source": SOURCE_LOCAL,
-                "api_url": "http://127.0.0.1:9",
-                "key_id": "",
-                "key_secret": "",
-            },
-        )
+        result = await start_user(hass, "local")
         bad = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            {
-                "logger_kind": LOGGER_S2,
-                "logger_host": "127.0.0.1",
-                "logger_port": "nope",
-                "logger_serial": "5A120001",
-            },
+            logger_form(
+                logger_kind="solarman",
+                logger_host="127.0.0.1",
+                logger_port=port,
+                logger_serial="5A120001",
+            ),
         )
         assert bad["errors"]["base"] == "invalid_logger"
         created = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            {
-                "logger_kind": LOGGER_S2,
-                "logger_host": "127.0.0.1",
-                "logger_port": str(port),
-                "logger_serial": "5A120001",
-                "slave_id": "1",
-            },
+            logger_form(
+                logger_kind=LOGGER_S2,
+                logger_host="127.0.0.1",
+                logger_port=str(port),
+                logger_serial="5A120001",
+                slave_id="1",
+            ),
         )
     finally:
         await emulator.close()
@@ -334,19 +326,10 @@ async def test_flow_asks_for_an_identity_when_the_serial_block_locks(
     """Registers at 3050 are tried once. A failure still needs a typed serial."""
     emulator, port = await _s2_port(StickState(kind="s2", tcp_port=0, udp_port=0, lock_above=3050))
     try:
-        result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            {
-                "source": SOURCE_LOCAL,
-                "api_url": "http://127.0.0.1:9",
-                "key_id": "",
-                "key_secret": "",
-            },
-        )
+        result = await start_user(hass, "local")
         failed = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            {"logger_kind": LOGGER_S2, "logger_host": "127.0.0.1", "logger_port": str(port)},
+            logger_form(logger_kind=LOGGER_S2, logger_host="127.0.0.1", logger_port=str(port)),
         )
     finally:
         await emulator.close()
@@ -366,7 +349,7 @@ async def test_s2_entry_publishes_the_stick(hass: HomeAssistant, socket_enabled:
             "logger_serial": "5A120001",
             "slave_id": 1,
             "register_map": "string",
-            "inverter_serial": "110E40182280017",
+            "inverter_serial": "1031000000000001",
             "logger_protocol": "mbtcp",
             "logger_function": 4,
         },
@@ -379,7 +362,7 @@ async def test_s2_entry_publishes_the_stick(hass: HomeAssistant, socket_enabled:
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
         registry = er.async_get(hass)
-        total = registry.async_get_entity_id("sensor", DOMAIN, "110E40182280017_energy_total")
+        total = registry.async_get_entity_id("sensor", DOMAIN, "1031000000000001_energy_total")
         assert total is not None
         assert float(hass.states.get(total).state) == 21970  # type: ignore[union-attr]
     finally:
@@ -399,7 +382,7 @@ async def test_dhcp_updates_a_stored_s2_mac(hass: HomeAssistant, socket_enabled:
             "logger_host": "10.0.0.8",
             "logger_serial": "5A120001",
             "logger_mac": "aa:bb:cc:dd:ee:01",
-            "inverter_serial": "110E40182280017",
+            "inverter_serial": "1031000000000001",
         },
         version=3,
         unique_id="s2:5A120001",
@@ -596,21 +579,17 @@ async def test_reconfigure_can_attach_an_s2(
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     started = await entry.start_reconfigure_flow(hass)
+    started = await pick(hass, started["flow_id"], "logger")
     try:
         updated = await hass.config_entries.flow.async_configure(
             started["flow_id"],
-            {
-                "api_url": url,
-                "station_ids": ["1900000000000001001", "1900000000000001002"],
-                "scan_interval": 120,
-                "request_timeout": 30,
-                "endpoint_interval": 0.5,
-                "logger_kind": LOGGER_S2,
-                "logger_host": "127.0.0.1",
-                "logger_port": str(port),
-                "logger_serial": "5A120001",
-                "inverter_serial": "110E40182280017",
-            },
+            logger_form(
+                logger_kind=LOGGER_S2,
+                logger_host="127.0.0.1",
+                logger_port=str(port),
+                logger_serial="5A120001",
+                inverter_serial="1031000000000001",
+            ),
         )
     finally:
         await emulator.close()

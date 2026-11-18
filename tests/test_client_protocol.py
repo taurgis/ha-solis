@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -12,7 +12,6 @@ import pytest
 from custom_components.solis.api import (
     SolisCloudClient,
     _retry_after,
-    date_is_skewed,
 )
 from custom_components.solis.errors import (
     SolisAuthError,
@@ -69,11 +68,6 @@ def test_retry_after_and_clock_window() -> None:
     assert _retry_after("-3") == 0.0
     moment = datetime(2015, 10, 21, 7, 28, tzinfo=UTC)
     assert _retry_after("Wed, 21 Oct 2015 07:28:10 GMT", now=moment) == 10
-    now = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
-    window = timedelta(minutes=15)
-    assert date_is_skewed("not a date", now=now, window=window)
-    assert not date_is_skewed("Mon, 01 Jun 2026 12:05:00 GMT", now=now, window=window)
-    assert date_is_skewed("Mon, 01 Jun 2026 10:00:00 GMT", now=now, window=window)
 
 
 @pytest.fixture

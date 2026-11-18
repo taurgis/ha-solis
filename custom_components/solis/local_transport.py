@@ -18,6 +18,8 @@ import random
 import time
 from typing import Any, Protocol
 
+from homeassistant.util import dt as dt_util
+
 from .cloud_fill import fill_from_cloud, match_inverter
 from .const import (
     CONF_INVERTER_SERIAL,
@@ -77,6 +79,7 @@ from .errors import (
     SolisAuthError,
     SolisClockError,
     SolisCloudError,
+    SolisLoggerAuthError,
     SolisLoggerBusy,
     SolisLoggerOffline,
 )
@@ -90,10 +93,14 @@ from .models import (
 )
 from .registers import (
     HYBRID_BLOCKS,
+    HYBRID_SERIAL_BLOCK,
     SERIAL_BLOCK,
     STRING_BLOCKS,
+    TYPE_REGISTER,
     decode_hybrid,
     decode_string,
+    hybrid_serial_from_words,
+    map_from_type,
     serial_from_words,
 )
 from .solarman import (
@@ -118,6 +125,13 @@ _CLOUD_BUDGET = 20.0
 _PROTOCOLS = (PROTOCOL_V5, PROTOCOL_MBTCP, PROTOCOL_MBTCP_ALT)
 _KNOWN_PROTOCOLS = (*_PROTOCOLS, PROTOCOL_RTU)
 _FC3_KINDS = {LOGGER_S2, LOGGER_S5, LOGGER_MBTCP, LOGGER_RTU}
+# A sleeping stick is looked for on the LAN at most this often.
+_DISCOVERY_EVERY = 900.0
+# S2-WL-ST firmware ignores port 502 for 3 to 6 minutes after a socket closes.
+# The setup probe closes one, so a failure that soon after it is that wedge.
+_S2_WEDGE = 420.0
+_S2_WEDGE_RETRY = 30.0
+_RECENT_S2_PROBES: dict[tuple[str, int], float] = {}
 
 HostCallback = Callable[[str, str], None]
 TextCallback = Callable[[str], None]
@@ -127,14 +141,13 @@ class RegisterReader(Protocol):
     """A framed Modbus client. V5, MBAP and raw RTU all look like this."""
 
     host: str
-    _port: int
+
+    @property
+    def port(self) -> int: ...
 
     async def read_input(self, slave: int, address: int, count: int) -> list[int]: ...
 
     async def close(self) -> None: ...
-
-
-Reader = RegisterReader
 
 
 class SnapshotReader(Protocol):
@@ -220,7 +233,29 @@ def asleep_snapshot(previous: SolisSnapshot) -> SolisSnapshot:
     return replace(previous, inverters=inverters, fetched_at=now, partial=True, source="asleep")
 
 
+def _period_counters(inverter: InverterSnapshot, now: datetime) -> InverterSnapshot:
+    """Today, month and year restart at local midnight even while the stick is dark."""
+    moment = inverter.data_timestamp
+    if moment is None:
+        return inverter
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    before = dt_util.as_local(moment)
+    current = dt_util.as_local(now)
+    today = inverter.energy_today_kwh
+    month = inverter.energy_month_kwh
+    year = inverter.energy_year_kwh
+    if before.date() != current.date() and today is not None:
+        today = 0.0
+    if (before.year, before.month) != (current.year, current.month) and month is not None:
+        month = 0.0
+    if before.year != current.year and year is not None:
+        year = 0.0
+    return replace(inverter, energy_today_kwh=today, energy_month_kwh=month, energy_year_kwh=year)
+
+
 def _asleep_inverter(inverter: InverterSnapshot, now: datetime) -> InverterSnapshot:
+    inverter = _period_counters(inverter, now)
     return replace(
         inverter,
         state=2,
@@ -297,7 +332,7 @@ class SolisLocalTransport:
         self._on_serial = on_serial
         self.degraded_reason = ""
         self._active = self._protocol or self._spec.protocol
-        self._client: Reader | None = _client(
+        self._client: RegisterReader | None = _client(
             host,
             int(logger_serial),
             self._active,
@@ -312,6 +347,7 @@ class SolisLocalTransport:
         self._busy_logged = False
         self._next_attempt = 0.0
         self._backoff_step = 0
+        self._next_discovery = 0.0
         self._has_series = False
         self.identity_checked = False
         self.cloud_fill = False
@@ -325,19 +361,25 @@ class SolisLocalTransport:
                 reason=self.degraded_reason or REASON_LOCKED,
             )
         try:
-            snapshot = await self._read_connected()
+            try:
+                snapshot = await self._read_connected()
+            except SolisLoggerOffline as err:
+                # A lock found while handling the offline read (a refused port
+                # on the known host, an S2 that went silent) must reach the
+                # busy handler below, so it is not raised from this clause.
+                snapshot = await self._after_offline(err)
+            else:
+                self._clear_backoff()
+                self.degraded_reason = ""
+                self._asleep_logged = False
+                self._busy_logged = False
+                # The first miss after a good read may look for a moved stick at once.
+                self._next_discovery = 0.0
         except SolisLoggerBusy as err:
             if not err.waiting:
                 self.degraded_reason = err.reason or REASON_LOCKED
                 self._arm_backoff()
             raise
-        except SolisLoggerOffline as err:
-            snapshot = await self._after_offline(err)
-        else:
-            self._clear_backoff()
-            self.degraded_reason = ""
-            self._asleep_logged = False
-            self._busy_logged = False
         self._last = snapshot
         return snapshot
 
@@ -346,10 +388,14 @@ class SolisLocalTransport:
         self._backoff_step += 1
         self._next_attempt = time.monotonic() + delay
         if not self._busy_logged:
-            _LOGGER.info(
-                "%s",
-                _reset_log(self._kind, self._spec.label, self._stick_label(), int(delay)),
-            )
+            if self.degraded_reason == REASON_TIMEOUT:
+                text = (
+                    f"{self._spec.label} {self._stick_label()} is not answering and the "
+                    f"inverter is not asleep; next try in {int(delay)} seconds"
+                )
+            else:
+                text = _reset_log(self._kind, self._spec.label, self._stick_label(), int(delay))
+            _LOGGER.info("%s", text)
             self._busy_logged = True
         return delay
 
@@ -377,10 +423,25 @@ class SolisLocalTransport:
                 return recovered
         if found == self._host and err is not None and err.refused:
             raise SolisLoggerBusy(f"{self._host} refused the port")
+        self._not_night(err)
         self._log_asleep()
         if self._last is None:
             raise SolisLoggerOffline(f"logger {self._logger_serial} is offline")
         return asleep_snapshot(self._last)
+
+    def _not_night(self, err: SolisLoggerOffline | None) -> None:
+        """A hybrid runs on its battery at night, so a dark stick there is a fault.
+
+        The read is paused (degraded, not asleep): the priority transport then
+        publishes the fresh cloud sample or holds the last reading, instead of
+        zero power with the battery still working.
+        """
+        if self._map != REGISTER_HYBRID:
+            return
+        raise SolisLoggerBusy(
+            f"{self._stick_label()} did not answer and a hybrid inverter does not sleep",
+            reason=REASON_TIMEOUT,
+        ) from err
 
     def _adopt_host(self, host: str) -> None:
         self._host = host
@@ -402,22 +463,36 @@ class SolisLocalTransport:
             # A closed S5 port is firmware, including a socket that was open and
             # then reset. S2 still treats that close as the inverter powering off.
             failure = SolisLoggerBusy(str(err), reason=REASON_S5_CLOSED)
+        if failure is not None and self._just_probed():
+            # The setup probe's own close wedged the port. That is not the
+            # firmware fault a repair would describe, and it clears in minutes.
+            self.degraded_reason = REASON_LOCKED
+            self._next_attempt = time.monotonic() + _S2_WEDGE_RETRY
+            raise SolisLoggerBusy(
+                f"{self._host} port {self._port} is still closed after setup",
+                waiting=True,
+                reason=REASON_LOCKED,
+            ) from err
         if failure is not None:
-            self.degraded_reason = failure.reason
-            self._arm_backoff()
             raise failure
+        self._not_night(err)
         self._log_asleep()
         if self._last is None:
             raise SolisLoggerOffline(f"logger {self._stick_label()} is offline")
         return asleep_snapshot(self._last)
 
+    def _just_probed(self) -> bool:
+        if self._last is not None:
+            return False
+        probed = _RECENT_S2_PROBES.get((self._host, self._port))
+        return probed is not None and time.monotonic() - probed < _S2_WEDGE
+
     async def _bridge_offline(self, err: SolisLoggerOffline | None) -> SolisSnapshot:
         """A refused gateway is a fault. A timeout after TCP opens is the inverter."""
         failure = _bridge_busy(self._host, err)
         if failure is not None:
-            self.degraded_reason = failure.reason
-            self._arm_backoff()
             raise failure
+        self._not_night(err)
         self._log_asleep()
         if self._last is None:
             raise SolisLoggerOffline(f"logger {self._stick_label()} is offline")
@@ -429,8 +504,13 @@ class SolisLocalTransport:
         return self._stick_serial or self._inverter_serial or self._host
 
     async def _find_stick(self) -> str | None:
+        """Look for the stick on the LAN. A sleeping stick is looked for every 15 minutes."""
         if self._kind != LOGGER_SOLARMAN:
             return None
+        now = time.monotonic()
+        if now < self._next_discovery:
+            return None
+        self._next_discovery = now + _DISCOVERY_EVERY
         try:
             sticks = await discover_sticks(timeout=1.0)
         except OSError:
@@ -438,6 +518,8 @@ class SolisLocalTransport:
         for stick in sticks:
             if stick.serial == self._logger_serial:
                 self._mac = stick.mac or self._mac
+                # Found: the next miss may look again at once (the stick moved).
+                self._next_discovery = 0.0
                 return stick.host
         return None
 
@@ -496,12 +578,12 @@ class SolisLocalTransport:
             return HYBRID_BLOCKS
         return tuple(block for block in STRING_BLOCKS if block[0] < REGISTER_SAFE_CEILING)
 
-    async def _open(self, protocol: str) -> Reader:
+    async def _open(self, protocol: str) -> RegisterReader:
         if self._client is not None and self._active == protocol:
             return self._client
         await self._drop()
         if protocol == PROTOCOL_RTU:
-            client: Reader = RtuTcpClient(
+            client: RegisterReader = RtuTcpClient(
                 self._host,
                 port=self._port,
                 timeout=self._timeout,
@@ -542,10 +624,13 @@ class SolisLocalTransport:
             self._on_protocol(protocol)
 
     async def _drop(self) -> None:
-        """Close the socket and keep the client so the next read can reconnect."""
+        """Close the socket and keep the client so the next read can reconnect.
+
+        ``self._port`` is the configured port. Port 30003 belongs to the
+        MBTCP_ALT client only, so a sweep never moves V5 or MBTCP off it.
+        """
         if self._client is None:
             return
-        self._port = self._client._port
         await self._client.close()
 
     def adopt_serial(self, serial: str) -> None:
@@ -591,7 +676,7 @@ class SolisLocalTransport:
         return {
             "kind": self._kind,
             "protocol": self._protocol or self._active,
-            "port": str(self._port),
+            "port": str(self._client.port if self._client is not None else self._port),
             "slave": str(self._slave),
             "register_map": self._map,
             "function": str(self._function),
@@ -615,6 +700,7 @@ class SolisPriorityTransport:
         self._cloud = cloud
         self._fill: SolisSnapshot | None = None
         self._fill_due = 0.0
+        self._budget_logged = False
         self.cloud_error: SolisCloudError | None = None
 
     async def async_read(self) -> SolisSnapshot:
@@ -623,6 +709,9 @@ class SolisPriorityTransport:
             return _tagged(await _read_cloud(self._cloud), "cloud")
         try:
             local = await self._local.async_read()
+        except SolisLoggerAuthError:
+            # A rejected stick password needs the user (reauth), not a held sample.
+            raise
         except SolisLoggerBusy:
             return await self._when_busy()
         except SolisLoggerOffline:
@@ -632,21 +721,45 @@ class SolisPriorityTransport:
                 return await self._with_cloud_fill(local)
             return await self._with_identity(local)
         if local is not None:
-            return _fill_missing_energy(local, await self._optional_cloud())
+            return await self._while_asleep(local)
         if self._mode == SOURCE_LOCAL:
             raise SolisLoggerOffline("logger is offline")
         cloud = await self._optional_cloud()
-        if cloud is None:
+        donor = _cloud_donor(self._local, cloud) if cloud is not None else None
+        if cloud is None or donor is None:
             raise SolisLoggerOffline("logger is offline")
-        return asleep_snapshot(cloud)
+        # Only this entry's inverter, never another one on the same account.
+        return asleep_snapshot(replace(cloud, inverters=(donor,)))
+
+    async def _while_asleep(self, local: SolisSnapshot) -> SolisSnapshot:
+        """A dark stick. A fresh cloud sample that says the inverter is online wins.
+
+        The stick is powered by the inverter, so a dark stick is normally night.
+        When SolisCloud has a recent sample of this inverter still online and
+        producing, the stick is the one at fault and the cloud is published.
+        """
+        local_source = self._local
+        assert local_source is not None
+        cloud = await self._optional_cloud()
+        if self._mode == SOURCE_BOTH and cloud is not None:
+            donor = _cloud_donor(local_source, cloud)
+            if (
+                donor is not None
+                and donor.state == 1
+                and (donor.ac_power_w or 0) > 0
+                and _donor_is_fresh(cloud, donor)
+            ):
+                return _degraded_cloud(local_source, cloud, donor)
+        return _fill_missing_energy(local, cloud, local_source.logger_serial)
 
     async def _when_busy(self) -> SolisSnapshot:
         local = self._local
         assert local is not None
         if self._mode == SOURCE_BOTH:
             cloud = await self._optional_cloud()
-            if cloud is not None and _cloud_is_fresh(cloud):
-                return _degraded_cloud(local, cloud)
+            donor = _cloud_donor(local, cloud) if cloud is not None else None
+            if cloud is not None and donor is not None and _donor_is_fresh(cloud, donor):
+                return _degraded_cloud(local, cloud, donor)
         if local.last_snapshot is not None:
             return _mark_degraded(local.last_snapshot)
         raise SolisLoggerBusy(
@@ -725,6 +838,15 @@ class SolisPriorityTransport:
                 async with asyncio.timeout(_CLOUD_BUDGET):
                     sample = _tagged(await _read_cloud(self._cloud), "cloud")
             except (SolisCloudError, TimeoutError) as err:
+                if isinstance(err, TimeoutError) and not self._budget_logged:
+                    _LOGGER.info(
+                        "SolisCloud did not answer within %d seconds; the local "
+                        "reading is published without it and the cloud is tried "
+                        "again in %d seconds",
+                        int(_CLOUD_BUDGET),
+                        int(_FILL_RETRY),
+                    )
+                    self._budget_logged = True
                 self._fill_due = now + _FILL_RETRY
                 self.cloud_error = (
                     err if isinstance(err, (SolisAuthError, SolisClockError)) else None
@@ -733,6 +855,7 @@ class SolisPriorityTransport:
                 self._fill = sample
                 self._fill_due = now + _FILL_EVERY
                 self.cloud_error = None
+                self._budget_logged = False
         return self._fill
 
     async def close(self) -> None:
@@ -757,15 +880,17 @@ class SolisPriorityTransport:
         return info
 
 
-def _cloud_is_fresh(snapshot: SolisSnapshot) -> bool:
-    if not snapshot.inverters:
-        return False
-    moment = snapshot.inverters[0].data_timestamp
-    if moment is None:
-        return True
-    if moment.tzinfo is None:
-        moment = moment.replace(tzinfo=UTC)
-    return datetime.now(UTC) - moment <= _FRESH
+def _cloud_donor(local: LocalSource, cloud: SolisSnapshot) -> InverterSnapshot | None:
+    """The cloud inverter for this entry, matched by serial.
+
+    A placeholder serial (``L`` and the logger number) matches only when the
+    account has exactly one inverter. Another inverter's serial or totals are
+    never adopted.
+    """
+    serial = local.inverter_serial
+    if placeholder_serial(serial, local.logger_serial):
+        return match_inverter(cloud, "")
+    return match_inverter(cloud, serial)
 
 
 def _donor_is_fresh(sample: SolisSnapshot, donor: InverterSnapshot) -> bool:
@@ -798,9 +923,10 @@ def _prefer(previous: float | None, incoming: float | None) -> float | None:
     return incoming
 
 
-def _degraded_cloud(local: LocalSource, cloud: SolisSnapshot) -> SolisSnapshot:
-    """Publish the cloud sample on the local inverter serial."""
-    donor = cloud.inverters[0]
+def _degraded_cloud(
+    local: LocalSource, cloud: SolisSnapshot, donor: InverterSnapshot
+) -> SolisSnapshot:
+    """Publish the matched cloud inverter on the local inverter serial."""
     previous = (
         local.last_snapshot.inverters[0]
         if local.last_snapshot and local.last_snapshot.inverters
@@ -932,16 +1058,16 @@ async def _probe_locked(
     for framing in order:
         client = _client(host, logger_serial, framing, port=port, timeout=timeout, gap=gap)
         try:
-            for slave in slaves:
-                register_map = await _detect_map(client, slave)
-                if register_map is None:
-                    continue
+            found = await _scan_slaves(client, slaves)
+            if found is not None:
+                slave, register_map = found
                 learned, unsupported = await _serial_once(
                     client,
                     slave,
                     known=inverter_serial,
                     unsupported=serial_unsupported,
                     logger_serial=logger_serial,
+                    register_map=register_map,
                 )
                 return LoggerProbe(
                     slave=slave,
@@ -973,7 +1099,7 @@ def _client(
     gap: float,
     function: int = 4,
     fallback: int = 0,
-) -> Reader:
+) -> RegisterReader:
     if protocol == PROTOCOL_RTU:
         return RtuTcpClient(
             host,
@@ -997,8 +1123,15 @@ def _client(
     return SolarmanClient(host, logger_serial, port=port, timeout=timeout, gap=gap)
 
 
-async def _detect_map(client: Reader, slave: int) -> str | None:
-    """Prefer the 3000-range map. Probe 33022 only when 3004 is an illegal address."""
+async def _detect_map(client: RegisterReader, slave: int) -> str | None:
+    """Return the register map this slave answers, or None.
+
+    3004 is read first: an old Solis-mini 4G resets the session on reads at
+    3050 and above, so nothing higher is read once the 3000 map answers.
+    When 3004 is an illegal address, the type register 35000 names the map
+    (hn/ginlong-solis), and 33022 is the fallback when 35000 says nothing.
+    A silent slave raises the timeout so the caller can try the next slave.
+    """
     try:
         await client.read_input(slave, 3004, 2)
     except ModbusException as err:
@@ -1012,6 +1145,9 @@ async def _detect_map(client: Reader, slave: int) -> str | None:
         return None
     else:
         return REGISTER_STRING
+    named = await _type_register(client, slave)
+    if named is not None:
+        return named if named == REGISTER_HYBRID else None
     try:
         await client.read_input(slave, 33022, 1)
     except ModbusException:
@@ -1025,32 +1161,84 @@ async def _detect_map(client: Reader, slave: int) -> str | None:
     return REGISTER_HYBRID
 
 
+async def _type_register(client: RegisterReader, slave: int) -> str | None:
+    """Read 35000. A failure or an unknown value leaves the 33022 probe to decide."""
+    try:
+        values = await client.read_input(slave, TYPE_REGISTER, 1)
+    except ModbusException:
+        return None
+    except SolisLoggerBusy:
+        raise
+    except SolisLoggerOffline as err:
+        if err.refused or (err.reason and err.reason != REASON_TIMEOUT):
+            raise
+        return None
+    if not values:
+        return None
+    return map_from_type(values[0])
+
+
+async def _scan_slaves(client: RegisterReader, slaves: tuple[int, ...]) -> tuple[int, str] | None:
+    """Return the first slave with a Solis map.
+
+    A slave that does not answer (a timeout on an open socket, or a gateway's
+    exception 0x0B) is another slave id to try, not another framing. When
+    every slave was silent the last timeout is raised; when one answered
+    without a Solis map the result is None.
+    """
+    silent: SolisLoggerOffline | None = None
+    answered = False
+    for slave in slaves:
+        try:
+            register_map = await _detect_map(client, slave)
+        except SolisLoggerOffline as err:
+            if err.connected and not err.refused and err.reason == REASON_TIMEOUT:
+                silent = err
+                continue
+            raise
+        if register_map is not None:
+            return slave, register_map
+        answered = True
+    if silent is not None and not answered:
+        raise silent
+    return None
+
+
 async def _serial_once(
-    client: Reader,
+    client: RegisterReader,
     slave: int,
     *,
     known: str,
     unsupported: bool,
     logger_serial: int,
+    register_map: str = REGISTER_STRING,
 ) -> tuple[str, bool]:
-    """Read 3060 once. A failure is cached so the poll never scans that range again."""
+    """Read the serial once. A failure is cached so the poll never scans that range again.
+
+    The string map keeps it hex-nibble encoded at 3060-3063; a hybrid keeps
+    it as ASCII at 33004-33019.
+    """
     if known and not placeholder_serial(known, logger_serial):
         return known, unsupported
     if unsupported:
         return known or f"L{logger_serial}", True
+    block = HYBRID_SERIAL_BLOCK if register_map == REGISTER_HYBRID else SERIAL_BLOCK
     try:
-        words = await client.read_input(slave, SERIAL_BLOCK[0], SERIAL_BLOCK[1])
+        words = await client.read_input(slave, block[0], block[1])
     except SolisLoggerBusy:
         return known or f"L{logger_serial}", True
     except (SolisLoggerOffline, ModbusException, ValueError, TimeoutError):
         return known or f"L{logger_serial}", True
-    bank = {SERIAL_BLOCK[0] + offset: value for offset, value in enumerate(words)}
-    learned = serial_from_words(bank)
+    if register_map == REGISTER_HYBRID:
+        learned = hybrid_serial_from_words(list(words))
+    else:
+        bank = {block[0] + offset: value for offset, value in enumerate(words)}
+        learned = serial_from_words(bank)
     return learned or known or f"L{logger_serial}", not bool(learned)
 
 
 async def _read_blocks(
-    client: Reader,
+    client: RegisterReader,
     slave: int,
     blocks: tuple[tuple[int, int], ...],
 ) -> dict[int, int]:
@@ -1079,13 +1267,19 @@ def _tagged(snapshot: SolisSnapshot, source: str) -> SolisSnapshot:
     )
 
 
-def _fill_missing_energy(local: SolisSnapshot, cloud: SolisSnapshot | None) -> SolisSnapshot:
-    """Use cloud counters only where the local snapshot has no number."""
+def _fill_missing_energy(
+    local: SolisSnapshot, cloud: SolisSnapshot | None, logger_serial: int = 0
+) -> SolisSnapshot:
+    """Use this inverter's cloud counters only where the local snapshot has no number."""
     if cloud is None or not local.inverters or not cloud.inverters:
         return local
-    donor = cloud.inverters[0]
     filled = []
     for inverter in local.inverters:
+        wanted = "" if placeholder_serial(inverter.serial, logger_serial) else inverter.serial
+        donor = match_inverter(cloud, wanted)
+        if donor is None:
+            filled.append(inverter)
+            continue
         filled.append(
             replace(
                 inverter,
@@ -1437,17 +1631,19 @@ async def _probe_s2_locked(
     )
     try:
         slaves = (request.slave,) if request.slave else (1, 2, 3)
-        for slave in slaves:
-            register_map = await _detect_map(client, slave)
-            if register_map is None:
-                continue
+        found = await _scan_slaves(client, slaves)
+        if found is not None:
+            slave, register_map = found
             learned, unsupported = await _serial_once(
                 client,
                 slave,
                 known=request.inverter_serial,
                 unsupported=serial_unsupported,
                 logger_serial=numeric,
+                register_map=register_map,
             )
+            # The entry's first poll will meet the port this close may wedge.
+            _RECENT_S2_PROBES[(request.host, port)] = time.monotonic()
             return LoggerProbe(
                 slave=slave,
                 register_map=register_map,

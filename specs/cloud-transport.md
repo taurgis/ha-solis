@@ -26,7 +26,8 @@ commits to.
 - **Pacing.** Calls to one path are at least `endpoint_interval` apart
   (default 2 s, below the published 2 calls/s because faster traffic is a
   common cause of HTTP 502). A poll is sequential: station list, then per
-  selected plant the detail, day-energy row and inverter list, then each
+  selected plant the detail, the day-energy row (only when the detail lacks
+  one of today's generation, import, export or load) and inverter list, then each
   inverter detail, then alarms, collectors and EPMs.
 - **Retries.** Timeouts, DNS/TLS errors and 5xx retry with exponential
   backoff, jitter and an 8 s cap; `Retry-After` is a floor. A 429 waits
@@ -34,31 +35,50 @@ commits to.
   auth failures, an uncorrectable clock, and platform code `1` (abnormal
   data) are not retried.
 - **Error classification.** HTML, truncated or non-JSON bodies are gateway
-  failures, not bad credentials. 401/403 raise `SolisAuthError` only when the
-  body is the Solis auth envelope.
+  failures, not bad credentials. A 401/403 raises `SolisAuthError` unless its
+  body is HTML (gateway or WAF page → `SolisServerError`); SolisCloud answers
+  a wrong secret with a bare 403, not `R0000`. A JSON body fails when `code`
+  is not `"0"` or `success` is `false`; the message is `msg`, else `message`.
 - **Circuit breaker.** After four gateway failures the client skips the
   network until a cooldown of at most five minutes.
 - **Partial polls.** A failed inverter list keeps the previous inverters; an
   empty list is believed only after two polls. One inverter's failed detail
   leaves the others updating. A sample older than the cached one, or a day
   in the future, is ignored. Rows no longer listed by a complete poll are
-  pruned. A repeated fault is logged once at warning, then at debug.
+  pruned. A repeated fault is logged once at warning, then at debug. An
+  inverter detail whose `sn` differs from the list row (SolisCloud's
+  placeholder for an unknown serial: zeros, `dataTimestamp: "0"`) is
+  rejected like a failed detail, and the list serial is always the identity.
 - **Units.** Every power/energy figure is converted with its companion unit
-  string; a missing unit falls back to the V2.0 field-table default. Literal
+  string and its own `*Pec` scale factor; a missing unit falls back to the
+  V2.0 field-table default (kW for power, kWh for energy). Celsius is
+  accepted as `C`, `°C` or `℃` (`*Str` or `*Unit`). Literal
   `"null"`/`"None"` strings are missing values. Known platform typos
   (`bstteryCurrent`, energy labelled `kW`) are handled explicitly.
-- **Time.** `dataTimestamp` is a Unix epoch (ms). The plant's numeric offset
-  is mapped to an IANA zone: Home Assistant's zone when within an hour of the
-  offset (so DST is followed), otherwise the fixed offset, unless the
-  `time_zone` option names a zone or `plant`.
-- **Battery sign.** Battery power is positive while charging:
-  `batteryPowerZheng − batteryPowerFu` when present, otherwise the unsigned
-  value negated while `storageBatteryCurrent` is negative.
+- **Time.** `dataTimestamp` is a Unix epoch (ms). The plant's zone for
+  "today" is, in order: the `time_zone` option when it names a zone (`plant`
+  keeps the fixed numeric offset); the plant's `timeZoneStandardId` when it
+  loads and is within an hour of the numeric offset; Home Assistant's zone
+  when within an hour of the offset (so DST is followed); otherwise the fixed
+  offset. The transport loads the plant zone in the executor before parsing,
+  so nothing reads tzdata in the event loop.
+- **Battery sign.** Battery power is positive while charging, negative while
+  discharging. `batteryPowerZheng`/`batteryPowerFu` are watts with no unit
+  field; when their difference is non-zero it gives the sign and
+  `batteryPower` (with its `Str`/`Pec`) the magnitude, falling back to
+  Zheng − Fu in watts. Without a split, an unsigned value is negated while
+  `storageBatteryCurrent` is negative. Published unchanged from upstream.
+- **Grid sign.** `psum` (grid power) is negative while importing and positive
+  while exporting. It is published as-is for upstream compatibility, which
+  is the opposite of Home Assistant's "positive = import".
+- **Lifetime totals.** Grid import/export and load lifetime counters are read
+  per inverter from inverter detail (`gridPurchasedTotalEnergy`,
+  `gridSellTotalEnergy`, `homeLoadTotalEnergy`), as upstream did.
 
 ## Boundary
 
 - Home Assistant–free; depends only on the shared kernel (`models`,
-  `errors`, `const`) and aiohttp. The session is injected by
+  `errors`, `const`), aiohttp and the standard library. The session is injected by
   `integration-setup`.
 - Never calls `/v2/api/control` or `/v2/api/atRead`.
 - Raises errors from `errors.py` only; policy on what to do with them

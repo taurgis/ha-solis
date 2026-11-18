@@ -1,8 +1,10 @@
 """Recorded-style SolisCloud bodies for the mock.
 
-Numbers are the shapes the Platform API v2 samples use: companion ``*Str``
-units, ``*Pec`` multipliers, epoch-millisecond timestamps, and one offline
-inverter whose ``pac`` must not keep being reported as generation.
+Numbers are the shapes the Platform API v2 samples and live captures use:
+companion ``*Str`` units, ``*Pec`` multipliers, epoch-millisecond timestamps,
+``*Zheng``/``*Fu`` sign splits in watts with no unit field, the plant's IANA
+``timeZoneStandardId``, and one offline inverter whose ``pac`` must not keep
+being reported as generation.
 """
 
 from __future__ import annotations
@@ -50,6 +52,7 @@ def station_details() -> dict[str, dict[str, Any]]:
             "sno": "North Roof",
             "timeZone": 0,
             "timeZoneStr": "UTC+00:00",
+            "timeZoneStandardId": "Europe/London",
             "dayEnergy": 6.0,
             "dayEnergyStr": "kWh",
             "gridPurchasedDayEnergy": 1.5,
@@ -58,7 +61,10 @@ def station_details() -> dict[str, dict[str, Any]]:
             "gridSellDayEnergyStr": "kWh",
             "homeLoadTodayEnergy": 3.2,
             "homeLoadTodayEnergyStr": "kWh",
+            "homeLoadEnergy": 3.2,
+            "homeLoadEnergyStr": "kWh",
             "capacity": 5,
+            "capacityPec": "1",
             "capacityStr": "kWp",
             "latitude": 51.5,
             "longitude": -0.12,
@@ -68,14 +74,25 @@ def station_details() -> dict[str, dict[str, Any]]:
             "id": BARN,
             "stationName": "Barn",
             "timeZone": 8,
+            "timeZoneStandardId": "Asia/Shanghai",
             "dayEnergy": 10,
             "dayEnergyStr": "kWh",
             "gridPurchasedDayEnergy": 0.4,
             "gridPurchasedDayEnergyStr": "kWh",
             "gridSellDayEnergy": 2.1,
             "gridSellDayEnergyStr": "kWh",
-            "homeLoadTodayEnergy": 6.5,
-            "homeLoadTodayEnergyStr": "kWh",
+            "homeLoadEnergy": 6.5,
+            "homeLoadEnergyStr": "kWh",
+            "batteryPower": -1.2,
+            "batteryPowerStr": "kW",
+            "batteryPowerPec": "1",
+            "batteryPowerZheng": 0,
+            "batteryPowerFu": 1200.0,
+            "psum": -0.5,
+            "psumStr": "kW",
+            "psumPec": "1",
+            "psumZheng": 0,
+            "psumFu": 500.0,
             "capacity": 15,
             "capacityStr": "kW",
             "latitude": 31.2,
@@ -94,7 +111,7 @@ def _common(serial: str, device_id: str, station_id: str, name: str) -> dict[str
         "fac": 50.01,
         "facStr": "Hz",
         "inverterTemperature": 42.5,
-        "inverterTemperatureStr": "C",
+        "inverterTemperatureUnit": "℃",
         "dataTimestamp": 0,
     }
 
@@ -137,8 +154,16 @@ def inverter_details() -> dict[str, dict[str, Any]]:
             "pow1Str": "W",
             "psum": 0.2,
             "psumStr": "kW",
+            "psumPec": "1",
             "familyLoadPower": 0.4,
             "familyLoadPowerStr": "kW",
+            "familyLoadPowerPec": "1",
+            "gridPurchasedTotalEnergy": 1.204,
+            "gridPurchasedTotalEnergyStr": "MWh",
+            "gridSellTotalEnergy": 5.31,
+            "gridSellTotalEnergyStr": "MWh",
+            "homeLoadTotalEnergy": 3.9,
+            "homeLoadTotalEnergyStr": "MWh",
             "hmiVersionAll": "4C0010",
         }
     )
@@ -187,11 +212,12 @@ def inverter_details() -> dict[str, dict[str, Any]]:
             "iPv2Str": "A",
             "pow2": 2925,
             "pow2Str": "W",
-            "batteryPower": 1.2,
+            # Discharging 1.2 kW. Zheng and Fu are watts with no unit field.
+            "batteryPower": -1.2,
             "batteryPowerStr": "kW",
             "batteryPowerPec": "1",
             "batteryPowerZheng": 0,
-            "batteryPowerFu": 1.2,
+            "batteryPowerFu": 1200.0,
             "storageBatteryCurrent": -4.0,
             "storageBatteryCurrentStr": "A",
             "storageBatteryVoltage": 51.2,
@@ -208,10 +234,22 @@ def inverter_details() -> dict[str, dict[str, Any]]:
             "batteryTotalDischargeEnergyStr": "kWh",
             "socChargingSet": 20,
             "socDischargeSet": 15,
+            # Importing 500 W: psum is negative while importing.
             "psum": -0.5,
             "psumStr": "kW",
+            "psumPec": "1",
+            "psumZheng": 0,
+            "psumFu": 500.0,
             "familyLoadPower": 1.1,
             "familyLoadPowerStr": "kW",
+            "familyLoadPowerPec": "1",
+            "gridPurchasedTotalEnergy": 521.88,
+            "gridPurchasedTotalEnergyStr": "kWh",
+            "gridSellTotalEnergy": 0.0,
+            "gridSellTotalEnergyStr": "kWh",
+            "homeLoadTotalEnergy": 4.712,
+            "homeLoadTotalEnergyStr": "MWh",
+            "timeZoneStandardId": "Asia/Shanghai",
             "hmiVersionAll": "4B0100",
         }
     )
@@ -224,8 +262,10 @@ def inverter_details() -> dict[str, dict[str, Any]]:
             "state": 2,
             "acOutputType": 1,
             "dcInputType": 0,
+            # History-style scale factor: 1500 x 0.001 kW.
             "pac": 1500,
-            "pacStr": "W",
+            "pacStr": "kW",
+            "pacPec": "0.001",
             "eToday": 0.5,
             "eTodayStr": "kWh",
             "eTotal": 3.2,
@@ -350,6 +390,27 @@ def epms() -> list[dict[str, Any]]:
             "pEpmTotalStr": "kW",
         }
     ]
+
+
+def placeholder_detail() -> dict[str, Any]:
+    """What inverterDetail returns for a serial SolisCloud does not know.
+
+    The call succeeds with a placeholder record: a different serial (zeros),
+    no model, ``version: "--"`` and ``dataTimestamp: "0"``.
+    """
+    return {
+        "id": "",
+        "sn": "000000000000000",
+        "version": "--",
+        "dataTimestamp": "0",
+        "state": 0,
+        "pac": 0.0,
+        "pacStr": "kW",
+        "eToday": 0.0,
+        "eTodayStr": "kWh",
+        "eTotal": 0.0,
+        "eTotalStr": "kWh",
+    }
 
 
 def null_detail() -> dict[str, Any]:

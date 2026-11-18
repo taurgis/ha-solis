@@ -16,6 +16,7 @@ from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.exceptions import ConfigEntryAuthFailed
 
 from .conftest import entry_data, entry_options
+from .flow_helpers import logger_form, pick, start_user
 from .test_coordinator import _entry, _issue_keys, _Scripted, _snapshot
 from .test_web_stick import _Cloud, _cloud_snapshot, _transport
 from custom_components.solis import async_migrate_entry, async_remove_entry, local_transport as lt
@@ -32,21 +33,19 @@ from custom_components.solis.solarman import ModbusTcpClient, parse_discovery
 from custom_components.solis.units import as_float
 from mock_soliscloud.web_stick import WebStickEmulator
 
-PAGE = "110E40182280017;0F000F;E4;38.4;382;2.800000;21986;NO;"
+PAGE = "1031000000000001;0F000F;E4;38.4;382;2.800000;21986;NO;"
 
 
 def test_page_values_must_be_plausible() -> None:
-    """NaN, infinity, absurd numbers and a blank alarm word are a garbled page."""
-    for bad in (
-        PAGE.replace("38.4", "nan"),
-        PAGE.replace("382", "inf"),
-        PAGE.replace("21986", "1e99"),
-        PAGE.replace("2.800000", "-1"),
-        PAGE.replace("38.4", "900"),
-        PAGE.replace(";NO;", ";;"),
-    ):
+    """Power must be plausible. Implausible optional fields are dropped, not the page."""
+    for bad in (PAGE.replace("382", "inf"), PAGE.replace("382", "nan"), PAGE.replace("382", "2e7")):
         with pytest.raises(ValueError):
             parse_inverter(bad)
+    assert parse_inverter(PAGE.replace("38.4", "nan")).temperature_c is None
+    assert parse_inverter(PAGE.replace("38.4", "900")).temperature_c is None
+    assert parse_inverter(PAGE.replace("21986", "1e99")).energy_total_kwh is None
+    assert parse_inverter(PAGE.replace("2.800000", "-1")).energy_today_kwh is None
+    assert not parse_inverter(PAGE.replace(";NO;", ";;")).in_alarm
     assert parse_inverter(PAGE.replace("382", "-3")).power_w == -3.0
 
 
@@ -105,16 +104,21 @@ def test_a_night_snapshot_clears_voltages_and_temperature() -> None:
 async def test_the_cloud_is_read_once_while_the_stick_is_paused(
     stick: WebStickEmulator,
 ) -> None:
-    """A wrong password pauses the stick. The cloud is not polled on every local poll."""
+    """A wrong password reaches the coordinator (reauth) and is not hidden by the cloud."""
+    from custom_components.solis.errors import SolisLoggerAuthError, SolisLoggerBusy
     from custom_components.solis.web_transport import SolisWebTransport
 
     cloud = _Cloud()
     wrong = SolisWebTransport("127.0.0.1", "nope", port=stick.port, timeout=2)
     transport = SolisPriorityTransport(SOURCE_BOTH, wrong, cloud)
-    assert (await transport.async_read()).source == "degraded"
-    assert (await transport.async_read()).source == "degraded"
-    assert (await transport.async_read()).source == "degraded"
-    assert cloud.reads == 1
+    with pytest.raises(SolisLoggerAuthError):
+        await transport.async_read()
+    for _ in range(2):
+        try:
+            await transport.async_read()
+        except SolisLoggerBusy:
+            pass
+    assert cloud.reads <= 1
 
 
 async def test_a_rejected_cloud_key_is_reported_and_retried(stick: WebStickEmulator) -> None:
@@ -180,7 +184,7 @@ async def test_cloud_fill_is_judged_by_the_reading_time(stick: WebStickEmulator)
     assert lt._donor_is_fresh(replace(cloud, inverters=(naive,)), naive) in {True, False}
     undated = replace(cloud.inverters[0], data_timestamp=None)
     assert lt._donor_is_fresh(cloud, undated)
-    stale = fill_from_cloud(web, sample, serial="110E40182280017", fresh=False)
+    stale = fill_from_cloud(web, sample, serial="1031000000000001", fresh=False)
     assert stale.inverters[0].frequency_hz is None
     assert stale.alarms == () and stale.epms == ()
 
@@ -195,7 +199,7 @@ async def test_a_degraded_cloud_sample_brings_todays_own_counter(
     assert previous is not None
     cloud = _cloud_snapshot()
     donor = replace(cloud.inverters[0], energy_today_kwh=0.4, energy_total_kwh=100.0)
-    merged = lt._degraded_cloud(local, replace(cloud, inverters=(donor,)))
+    merged = lt._degraded_cloud(local, replace(cloud, inverters=(donor,)), donor)
     inverter = merged.inverters[0]
     assert inverter.energy_today_kwh == 0.4
     assert inverter.energy_total_kwh == 21986.0
@@ -213,7 +217,7 @@ class _CloudSide:
 
 
 async def test_a_rejected_cloud_key_opens_the_repair_and_one_reauth(hass: HomeAssistant) -> None:
-    """Local data keeps flowing, and the user is still told the API key no longer works."""
+    """Local data keeps flowing, and one reauth tells the user the API key no longer works."""
     entry = _entry(hass)
     transport = _CloudSide(SolisAuthError("rejected"))
     coordinator = SolisCoordinator(hass, entry, transport)  # type: ignore[arg-type]
@@ -223,7 +227,8 @@ async def test_a_rejected_cloud_key_opens_the_repair_and_one_reauth(hass: HomeAs
         await coordinator._async_update_data()
         await coordinator._async_update_data()
         reauth.assert_called_once_with(hass)
-    assert any(key.startswith("invalid_auth") for key in _issue_keys(hass))
+    # The reauth card is the notice: no repair duplicates it.
+    assert not any(key.startswith("invalid_auth") for key in _issue_keys(hass))
     transport.cloud_error = SolisClockError("skew")
     await coordinator._async_update_data()
     assert any(key.startswith("clock_skew") for key in _issue_keys(hass))
@@ -295,7 +300,7 @@ async def test_reauth_works_for_an_entry_keyed_by_its_logger(
         data={**entry_data(url), "source": SOURCE_BOTH},
         options=entry_options(),
         version=3,
-        unique_id="web:110E40182280017",
+        unique_id="web:1031000000000001",
     )
     entry.add_to_hass(hass)
     flow = await entry.start_reauth_flow(hass)
@@ -326,42 +331,44 @@ async def test_a_saved_web_password_is_not_sent_to_another_host(
             "logger_host": "192.0.2.1",
             "logger_port": stick.port,
             "logger_password": "hunter2",
-            "inverter_serial": "110E40182280017",
+            "inverter_serial": "1031000000000001",
         },
         options=entry_options(),
         version=3,
-        unique_id="web:110E40182280017",
+        unique_id="web:1031000000000001",
     )
     entry.add_to_hass(hass)
     started = await entry.start_reconfigure_flow(hass)
-    form = {
-        "api_url": url,
-        "station_ids": ["1900000000000001001", "1900000000000001002"],
-        "scan_interval": 120,
-        "request_timeout": 30,
-        "endpoint_interval": 0.5,
-        "source": SOURCE_BOTH,
-        "logger_kind": LOGGER_WEB,
-        "logger_host": "127.0.0.1",
-        "logger_port": str(stick.port),
-    }
-    result = await hass.config_entries.flow.async_configure(started["flow_id"], form)
+    assert started["menu_options"] == ["reconfigure_cloud", "stations", "logger", "connection"]
+    opened = await pick(hass, started["flow_id"], "logger")
+    form = logger_form(logger_kind=LOGGER_WEB, logger_host="127.0.0.1", logger_port=stick.port)
+    result = await hass.config_entries.flow.async_configure(opened["flow_id"], form)
     assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "logger_password"
     assert result["errors"]["base"] == "logger_web_password"
     assert stick.state.password != WEB_DEFAULT_PASSWORD
-    switched = await hass.config_entries.flow.async_configure(
-        started["flow_id"], {**form, "source": "cloud"}
+    again = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    assert again["errors"]["base"] == "logger_web_password"
+    retyped = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"logger_password": "hunter2"}
     )
+    assert retyped["reason"] == "reconfigure_successful"
+    assert entry.data["logger_host"] == "127.0.0.1"
+    assert entry.data["logger_password"] == "hunter2"
+    menu = await entry.start_reconfigure_flow(hass)
+    shown = await pick(hass, menu["flow_id"], "connection")
+    switched = await hass.config_entries.flow.async_configure(shown["flow_id"], {"source": "cloud"})
     assert switched["type"] is FlowResultType.ABORT
     assert entry.data["source"] == "cloud"
+    assert entry.data["logger_host"] == "127.0.0.1"
 
 
 async def test_the_key_form_keeps_what_was_typed(hass: HomeAssistant) -> None:
     """A wrong key does not clear the other fields."""
-    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
+    result = await start_user(hass, "cloud")
     again = await hass.config_entries.flow.async_configure(
         result["flow_id"],
-        {"source": "cloud", "api_url": "http://127.0.0.1:9", "key_id": "", "key_secret": "abc"},
+        {"api_url": "http://127.0.0.1:9", "key_id": "", "key_secret": "abc"},
     )
     assert again["errors"]["base"] == "key_required"
     suggested = {

@@ -16,12 +16,19 @@ from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import device_registry as dr, issue_registry as ir
 
 from .conftest import entry_data, entry_options
+from .flow_helpers import logger_form, pick
 from .test_coordinator import _entry, _snapshot
 from .test_web_stick import _Cloud, _cloud_snapshot, _transport
 from custom_components.solis import async_remove_config_entry_device, local_transport as lt
 from custom_components.solis.cloud_fill import fill_from_cloud
 from custom_components.solis.config_flow import _normalize_url
-from custom_components.solis.const import DOMAIN, LOGGER_WEB, SOURCE_BOTH, SOURCE_LOCAL
+from custom_components.solis.const import (
+    DOMAIN,
+    LOGGER_WEB,
+    SOURCE_BOTH,
+    SOURCE_CLOUD,
+    SOURCE_LOCAL,
+)
 from custom_components.solis.coordinator import SolisCoordinator
 from custom_components.solis.diagnostics import async_get_config_entry_diagnostics
 from custom_components.solis.errors import SolisLoggerOffline
@@ -206,10 +213,12 @@ async def test_reconfigure_aborts_when_another_entry_owns_the_logger(
     await emulator.start()
     try:
         started = await other.start_reconfigure_flow(hass)
-        assert started["step_id"] == "logger"
+        assert started["menu_options"] == ["logger", "reconfigure_cloud"]
+        opened = await pick(hass, started["flow_id"], "logger")
+        assert opened["step_id"] == "logger"
         result = await hass.config_entries.flow.async_configure(
-            started["flow_id"],
-            {"logger_host": "127.0.0.1", "logger_serial": str(SERIAL)},
+            opened["flow_id"],
+            logger_form(logger_host="127.0.0.1", logger_serial=str(SERIAL)),
         )
     finally:
         await emulator.close()
@@ -325,18 +334,18 @@ async def test_a_local_entry_has_no_placeholder_plant_sensors(
             "logger_host": "127.0.0.1",
             "logger_port": stick.port,
             "logger_password": "123456789",
-            "inverter_serial": "110E40182280017",
+            "inverter_serial": "1031000000000001",
         },
         options=entry_options(),
         version=3,
-        unique_id="web:110E40182280017",
+        unique_id="web:1031000000000001",
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     ids = {item.unique_id for item in hass.data["entity_registry"].entities.values()}
     assert not any(unique.startswith("local_") for unique in ids)
-    assert "110E40182280017_ac_power" in ids
+    assert "1031000000000001_ac_power" in ids
     stick.state.alarm = "E01"
     await entry.runtime_data.async_refresh()
     await hass.async_block_till_done()
@@ -351,10 +360,10 @@ async def test_a_local_entry_has_no_placeholder_plant_sensors(
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
-async def test_reconfigure_needs_a_host_for_a_local_connection(
+async def test_reconfigure_offers_only_connections_it_has_settings_for(
     hass: HomeAssistant, solis_server: tuple[Any, str]
 ) -> None:
-    """Choosing a local connection without a logger IP is an error, not a silent no-op."""
+    """A cloud entry without a logger has no connection switch; adding a stick is the way."""
     _state, url = solis_server
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -365,19 +374,22 @@ async def test_reconfigure_needs_a_host_for_a_local_connection(
     )
     entry.add_to_hass(hass)
     started = await entry.start_reconfigure_flow(hass)
-    result = await hass.config_entries.flow.async_configure(
-        started["flow_id"],
-        {
-            "api_url": url,
-            "station_ids": ["1900000000000001001", "1900000000000001002"],
-            "scan_interval": 120,
-            "request_timeout": 30,
-            "endpoint_interval": 0.5,
-            "source": SOURCE_BOTH,
-        },
+    assert started["type"] is FlowResultType.MENU
+    assert started["menu_options"] == ["reconfigure_cloud", "stations", "logger"]
+    parked = MockConfigEntry(
+        domain=DOMAIN,
+        data={**entry_data(url), "logger_host": "10.0.0.7", "logger_serial": "7"},
+        options=entry_options(),
+        version=3,
+        unique_id="7",
     )
-    assert result["type"] is FlowResultType.FORM
-    assert result["errors"]["base"] == "logger_host_required"
+    parked.add_to_hass(hass)
+    menu = await parked.start_reconfigure_flow(hass)
+    assert "connection" in menu["menu_options"]
+    shown = await pick(hass, menu["flow_id"], "connection")
+    schema = shown["data_schema"].schema
+    options = next(iter(schema.values())).config["options"]
+    assert options == [SOURCE_CLOUD, SOURCE_LOCAL, SOURCE_BOTH]
 
 
 async def test_the_snapshot_is_saved_when_home_assistant_stops(
@@ -394,11 +406,11 @@ async def test_the_snapshot_is_saved_when_home_assistant_stops(
             "logger_host": "127.0.0.1",
             "logger_port": stick.port,
             "logger_password": "123456789",
-            "inverter_serial": "110E40182280017",
+            "inverter_serial": "1031000000000001",
         },
         options=entry_options(),
         version=3,
-        unique_id="web:110E40182280017",
+        unique_id="web:1031000000000001",
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)

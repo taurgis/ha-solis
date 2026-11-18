@@ -128,9 +128,9 @@ All of these are in V2.0. Page and list calls use `pageNo` / `pageSize` up to
 | --- | --- |
 | `/v1/api/userStationList` | Plants on the key. `id`, `stationName`, `timeZone`. |
 | `/v1/api/stationDetail` | Plant energies, capacity, coordinates, timezone. Body `{"id": ...}`. |
-| `/v1/api/stationDayEnergyList` | One civil day. Body needs `time` as `yyyy-MM-dd` and `stationIds`. Fallback when station detail omits today's import, export or load. |
+| `/v1/api/stationDayEnergyList` | One civil day. Body needs `time` as `yyyy-MM-dd` and `stationIds`. Only called when station detail omits today's generation, import, export or load (`homeLoadTodayEnergy` or `homeLoadEnergy`). |
 | `/v1/api/inverterList` | Inverters for `stationId`. A call may return at most 100. Rows include `sn`, `id`, `state`, `pac`. |
-| `/v1/api/inverterDetail` | Live inverter. Body `{"id", "sn"}`. This is the main telemetry document. |
+| `/v1/api/inverterDetail` | Live inverter. Body `{"id", "sn"}`. This is the main telemetry document. An unknown serial is not an error: the call succeeds with a placeholder record for another serial (fifteen zeros), `version: "--"` and `dataTimestamp: "0"`. A detail whose `sn` differs from the list row is rejected; the list serial is the identity. |
 | `/v1/api/alarmList` | Account alarms. `state` `0` pending, `1` processed, `2` restored. |
 | `/v1/api/collectorList` | Data loggers. `state` `1` online, `2` offline. |
 | `/v1/api/epmList` | Export power managers. `pEpmTotal` plus `pEpmTotalStr`. |
@@ -189,15 +189,47 @@ Rules implemented here:
   statistic cannot go backwards because of a sign error (upstream issue 508).
 - The station sample labels `generatorTodayEnergyStr` as `kW`. An energy field
   whose only unit is `kW` is read as kWh.
-- `*Pec` other than 1 multiplies the number before the unit scale.
+- `*Pec` other than 1 multiplies the number before the unit scale. Every
+  field read with a unit string is also read with its own `*Pec`
+  (`pac`, `psum`, `familyLoadPower`, `batteryPower`, energies, `capacity`,
+  `pEpmTotal`, …). Live details mostly send `"1"`; history sends `"0.001"`
+  (`pac: 1154`, `pacPec: "0.001"`, `pacStr: "kW"` is 1.154 kW). The unit and
+  factor come from the same key as the value, so an alias such as
+  `bstteryCurrent` never borrows `batteryCurrentStr`.
+- Temperature units `C`, `°C` and `℃` are all Celsius. Inverter detail sends
+  `inverterTemperatureUnit: "℃"`; `{key}Unit` is read when `{key}Str` is
+  absent.
+- A missing power `*Str` stays on the kW default. Upstream solis-sensor
+  leaves such a value unconverted and labels it W, which would publish a
+  kW number as watts (1000× low). Every live detail in the captures carries
+  the unit string, and only history series (which this integration does
+  not read) have unit-less watts, so the documented kW default is kept.
+- Lifetime grid import, grid export and load come from inverter detail
+  `gridPurchasedTotalEnergy`, `gridSellTotalEnergy` and `homeLoadTotalEnergy`
+  (each with `*Str`, often `MWh`), as upstream read them. Station detail has
+  the same names, but its `homeLoadTotalEnergy` is calculated
+  (generation + import − export − charge + discharge, so it includes inverter
+  losses) and was 5.216 MWh against the inverter's measured 4.712 MWh on the
+  same capture. The inverter value is used so migrated history continues
+  without a jump.
 - Null, `""` and the string `"null"` are missing. They are not coerced to 0.
   Energy sensors then keep the last good reading for the rest of that
   plant-local day, month, year or lifetime, so a missing sample cannot punch
   a zero into statistics (issues 382, 421, 533). A lifetime total also
   ignores a later reading that is smaller or that jumps by more than
   100 000 kWh.
+- Grid power `psum` is **negative while importing and positive while
+  exporting** (confirmed on a live capture: PV 300 W, load 673 W, battery at
+  its floor, `psum` −373 W; `psumFu` carries the import magnitude). This is
+  the opposite of Home Assistant's "positive = import" grid convention. The
+  value is published unchanged for upstream compatibility; a user who wants
+  HA's convention has to negate it (for example with a template sensor or
+  the energy dashboard's inverted-sign option). `psum` can briefly show up to
+  about 240 W of "export" on a zero-export system when the load changes
+  sharply; that is the meter catching up.
 - Battery power is positive when the battery is charging and negative when
-  it is discharging. The cloud does not document that sign in one sentence,
+  it is discharging (confirmed on a live capture: positive in the morning as
+  state of charge rises, negative overnight). The cloud does not document that sign in one sentence,
   but the same split shows up in a real `inverterDay` sample, in measured
   `storageBatteryCurrent`, and in the local Modbus map. Details are in
   [Battery power sign](#battery-power-sign) below. `bstteryCurrent` is the
@@ -207,10 +239,16 @@ Rules implemented here:
   epoch milliseconds (`1687846773000`). The companion `dataTimestampStr` is the
   part rendered in China time. We parse the number as an epoch and ignore the
   string for the instant. Values that are not epoch-sized are ignored.
-- Plant `timeZone` is a fixed numeric offset (`8`, `-9`, or `UTC+08:00`), not
-  an IANA zone. Every energy sensor uses `total_increasing` and does not
-  publish `last_reset`. The day, month and year boundary used to decide when
-  a lower reading is a real reset follows Home Assistant's timezone when that
+- Plant `timeZone` is a fixed numeric offset (`8`, `-9`, or `UTC+08:00`) and
+  is the zone's *standard* offset, ignoring daylight saving. Station and
+  inverter detail also carry the IANA name in `timeZoneStandardId`
+  (`Africa/Harare`, `Australia/Canberra`). Every energy sensor uses
+  `total_increasing` and does not publish `last_reset`. The day, month and
+  year boundary used to decide when a lower reading is a real reset uses
+  that IANA zone when it loads and is within an hour of the numeric offset.
+  The cloud transport loads it in the executor and keeps a reference before
+  the parser needs it, so no tzdata is read in the event loop. Without a
+  usable IANA name the boundary follows Home Assistant's timezone when that
   zone is within an hour of the plant offset, which is the daylight-saving
   gap behind battery charge and discharge resetting around 23:00 (issue 533).
   A plant in another region keeps the numeric offset. Options can force an
@@ -257,14 +295,23 @@ not flip a power that is already negative. viking2010 confirmed the result:
 charge stays positive, discharge becomes negative
 ([issue 158, after 3.2.0](https://github.com/hultenvp/solis-sensor/issues/158)).
 
+`batteryPowerZheng` and `batteryPowerFu` are always **watts** and have no
+unit field of their own. A live inverter detail had `batteryPower: -1.364`
+with `batteryPowerStr: "kW"` and `batteryPowerFu: 1364.0`; another had
+`batteryPower: -0.46`, `batteryPowerFu: 460.0`. Applying `batteryPowerStr`
+to them (as this integration once did) reads 1364 W as 1.364 MW.
+
 Order used here:
 
-1. If `batteryPowerZheng` or `batteryPowerFu` is greater than zero, publish
-   Zheng minus Fu, in the unit of `batteryPowerStr` (kW when that string is
-   missing). This wins over current, including when the two disagree.
-2. Otherwise, if `batteryPower` is already negative, keep it. Older loggers
+1. `batteryPower` is converted with its own `batteryPowerStr` and
+   `batteryPowerPec` (kW when the string is missing).
+2. If Zheng minus Fu (in watts) is non-zero, it supplies the sign and
+   `batteryPower` the magnitude. This wins over current, including when the
+   two disagree. When `batteryPower` is missing, or 0 while the split is not
+   (rounding to three kW decimals), Zheng minus Fu in watts is published.
+3. Otherwise, if `batteryPower` is already negative, keep it. Older loggers
    publish a signed value.
-3. Otherwise, if `batteryPower` is positive and `storageBatteryCurrent` (or
+4. Otherwise, if `batteryPower` is positive and `storageBatteryCurrent` (or
    `bstteryCurrent` / `batteryCurrent`) is negative, negate it.
 
 Local Modbus agrees with that direction, and it is not what this cloud
@@ -293,10 +340,10 @@ which the Solis plugin shares as the battery-interface convention).
 
 Confidence: high for "positive = charging, negative = discharging", because
 the day-sample components, the measured current, the solis-sensor 3.2.0
-behaviour, and Modbus register 33135 all say the same thing. Medium for
-applying `batteryPowerStr` to Zheng and Fu: the day sample used the same
-number for the signed value and for Fu, and the PDF does not give those two
-fields their own unit string.
+behaviour, Modbus register 33135 and the 2026 live captures
+([SolisCloud.Net API notes](https://github.com/ericvdw/SolisCloud.Net/blob/main/docs/api-notes.md)) all say the same thing.
+High for Zheng and Fu being watts: two live inverter details pair a kW
+`batteryPower` with a watt-sized Fu.
 
 ### Stored battery energy
 
@@ -332,7 +379,13 @@ The appendix is short and does not match every failure people see:
 | `I0012` | Wrong account or password |
 
 `I0012`, `R0000` and `B0011`, and HTTP 401/403, are authentication failures and
-start a reauth flow. HTTP 408 is the clock. Anything else on 5xx is retried.
+start a reauth flow. A live probe with a wrong API secret got HTTP **403**, not
+the documented `R0000` envelope; the body of that 403 was not captured, so any
+non-HTML 401/403 (plain text or JSON of any shape) is treated as a rejected
+key. An HTML 401/403 is a gateway or WAF page and is a transient server
+error. HTTP 408 is the clock. Anything else on 5xx is retried. A JSON body is
+a failure when `code` is not `"0"` **or** `success` is `false`; the text is
+read from `msg`, or `message` when `msg` is absent.
 
 ### Legacy Ginlong portal
 

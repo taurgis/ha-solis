@@ -3,6 +3,12 @@
 Transparent Elfin, USR and Waveshare modes copy the RS485 bytes onto the
 socket. One request is in flight. Function 4 is first. Exception 1 retries
 function 3 once, which is the Solis Modbus Poll demo.
+
+The reader resyncs: it looks for a CRC-valid reply from our slave with our
+function and register count, drops bytes that do not start one, and skips
+whole frames from other slaves on a shared bus. Only when the deadline
+passes does it name what it saw: frames for another slave, bytes that never
+formed a frame, or nothing.
 """
 
 from __future__ import annotations
@@ -10,11 +16,17 @@ from __future__ import annotations
 import asyncio
 import struct
 
-from ..const import REASON_CLOSED, REASON_WRONG_PROTOCOL, REASON_WRONG_SLAVE
+from ..const import REASON_CLOSED, REASON_TIMEOUT, REASON_WRONG_PROTOCOL, REASON_WRONG_SLAVE
 from ..errors import SolisLoggerBusy, SolisLoggerOffline
-from ..solarman import ModbusException, _PacedClient, classify_io, crc16, host_gate
-
-_IO_ERRORS = (TimeoutError, ConnectionError, OSError, asyncio.IncompleteReadError, ValueError)
+from ..solarman import (
+    IO_ERRORS,
+    ModbusException,
+    _PacedClient,
+    classify_io,
+    crc16,
+    host_gate,
+    no_rs485_answer,
+)
 
 
 def rtu_request(slave: int, function: int, address: int, count: int) -> bytes:
@@ -41,6 +53,43 @@ def take_rtu(buffer: bytes) -> tuple[bytes | None, bytes]:
     if len(buffer) < total:
         return None, buffer
     return buffer[:total], buffer[total:]
+
+
+def find_rtu(
+    buffer: bytes, slave: int, function: int, count: int
+) -> tuple[bytes | None, bytes, int, bool]:
+    """Find the reply to one read in ``buffer``.
+
+    Returns the frame (or None), the bytes still to look at, how many bytes
+    were dropped as noise, and whether a valid frame from another slave was
+    skipped. A plausible frame that is not complete yet stays in the buffer.
+    """
+    index = 0
+    dropped = 0
+    other = False
+    data_len = 5 + count * 2
+    while len(buffer) - index >= 5:
+        kind = buffer[index + 1]
+        if kind == (function | 0x80) & 0xFF:
+            total = 5
+        elif kind == function and buffer[index + 2] == count * 2:
+            total = data_len
+        else:
+            index += 1
+            dropped += 1
+            continue
+        if len(buffer) - index < total:
+            break
+        candidate = buffer[index : index + total]
+        if crc16(candidate[:-2]) == int.from_bytes(candidate[-2:], "little"):
+            if candidate[0] == (slave & 0xFF):
+                return candidate, buffer[index + total :], dropped, other
+            other = True
+            index += total
+            continue
+        index += 1
+        dropped += 1
+    return None, buffer[index:], dropped, other
 
 
 def decode_rtu(frame: bytes, function: int) -> list[int]:
@@ -112,26 +161,21 @@ class RtuTcpClient(_PacedClient):
         self._buffer = b""
         try:
             await self._send(writer, request)
-            frame = await self._read_frame(reader, echo=request)
+            frame = await self._read_frame(
+                reader, echo=request, slave=slave, function=function, count=count
+            )
         except (SolisLoggerBusy, SolisLoggerOffline):
             await self.close()
             raise
-        except _IO_ERRORS as err:
+        except IO_ERRORS as err:
             await self.close()
             raise classify_io(err, connected=True) from err
-        if frame[0] != (slave & 0xFF):
-            await self.close()
-            raise SolisLoggerOffline(
-                "modbus rtu slave did not match",
-                connected=True,
-                reason=REASON_WRONG_SLAVE,
-            )
         try:
             words = decode_rtu(frame, function)
-            if len(words) != count:
-                raise ValueError("rtu register count does not match")
-            return words
-        except ModbusException:
+        except ModbusException as err:
+            gateway = no_rs485_answer(err)
+            if gateway is not None:
+                raise gateway from err
             raise
         except ValueError as err:
             await self.close()
@@ -140,37 +184,72 @@ class RtuTcpClient(_PacedClient):
                 connected=True,
                 reason=REASON_WRONG_PROTOCOL,
             ) from err
+        return words
 
-    async def _read_frame(self, reader: asyncio.StreamReader, *, echo: bytes = b"") -> bytes:
-        # A peer that keeps sending junk would reset a per-chunk timeout for ever.
-        deadline = asyncio.get_running_loop().time() + 2 * self._timeout
+    async def _read_frame(
+        self,
+        reader: asyncio.StreamReader,
+        *,
+        echo: bytes = b"",
+        slave: int = 1,
+        function: int = 4,
+        count: int = 1,
+    ) -> bytes:
+        # One deadline: a peer that keeps sending junk cannot extend the wait.
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 2 * self._timeout
+        noise = 0
+        other = False
         while True:
-            if asyncio.get_running_loop().time() > deadline:
-                raise classify_io(TimeoutError(), connected=True)
             if echo and (self._buffer.startswith(echo) or echo.startswith(self._buffer)):
                 if len(self._buffer) < len(echo):
-                    self._buffer += await self._read_chunk(reader)
+                    chunk = await self._read_chunk(reader, deadline, noise, other)
+                    self._buffer += chunk
                     continue
                 self._buffer = self._buffer[len(echo) :]
+                echo = b""
                 continue
-            frame, rest = take_rtu(self._buffer)
+            frame, rest, dropped, skipped = find_rtu(self._buffer, slave, function, count)
+            noise += dropped
+            other = other or skipped
+            self._buffer = rest
             if frame is not None:
-                self._buffer = rest
                 return frame
-            if rest is not self._buffer:
-                self._buffer = rest
-                continue
-            self._buffer += await self._read_chunk(reader)
+            self._buffer += await self._read_chunk(reader, deadline, noise, other)
 
-    async def _read_chunk(self, reader: asyncio.StreamReader) -> bytes:
+    async def _read_chunk(
+        self, reader: asyncio.StreamReader, deadline: float, noise: int, other: bool
+    ) -> bytes:
+        remaining = deadline - asyncio.get_running_loop().time()
         try:
-            chunk = await asyncio.wait_for(reader.read(256), timeout=self._timeout)
-        except (TimeoutError, ConnectionError, OSError) as err:
+            if remaining <= 0:
+                raise TimeoutError
+            chunk = await asyncio.wait_for(reader.read(256), timeout=min(self._timeout, remaining))
+        except TimeoutError as err:
+            raise _nothing_for_us(noise, other) from err
+        except (ConnectionError, OSError) as err:
             raise classify_io(err, connected=True) from err
         if not chunk:
+            if other or noise:
+                raise _nothing_for_us(noise, other)
             raise SolisLoggerOffline(
                 "logger closed the connection",
                 connected=True,
                 reason=REASON_CLOSED,
             )
         return chunk
+
+
+def _nothing_for_us(noise: int, other: bool) -> SolisLoggerOffline:
+    """Name what the deadline saw: another slave, noise, or silence."""
+    if other:
+        return SolisLoggerOffline(
+            "modbus rtu replies came from another slave", connected=True, reason=REASON_WRONG_SLAVE
+        )
+    if noise:
+        return SolisLoggerOffline(
+            "logger sent bytes that are not Modbus RTU",
+            connected=True,
+            reason=REASON_WRONG_PROTOCOL,
+        )
+    return SolisLoggerOffline("logger did not answer", connected=True, reason=REASON_TIMEOUT)

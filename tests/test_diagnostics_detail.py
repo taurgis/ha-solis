@@ -46,7 +46,10 @@ async def test_station_diagnostics_omit_other_plants(
     )
     assert device is not None
     payload = await async_get_device_diagnostics(hass, entry, device)
-    assert payload["snapshot"]["stations"][0]["station_id"] == "1900000000000001001"
+    assert len(payload["snapshot"]["stations"]) == 1
+    # Plant ids and device identifiers tie the dump to a SolisCloud account.
+    assert payload["snapshot"]["stations"][0]["station_id"] == "**REDACTED**"
+    assert payload["identifiers"] == "**REDACTED**"
     assert payload["snapshot"]["inverters"] == []
     assert "latitude" not in payload["snapshot"]["stations"][0] or (
         payload["snapshot"]["stations"][0]["latitude"] == "**REDACTED**"

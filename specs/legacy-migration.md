@@ -27,10 +27,18 @@ The upstream id formats and why the domain stays `solis` are in
   inverter are left alone.
 - **Entity ids.** Unique ids `{serial}{config name} {sensor label}` (spaces
   as underscores, English labels from upstream's `SENSOR_TYPES`) become
-  `{serial}_{key}`, including phase and PV-string sensors. Plant import,
-  export and load move onto the plant device and keep their entity id. If a
-  new entity already exists beside the legacy one, the legacy entity id is
-  kept and the duplicate removed.
+  `{serial}_{key}`, including phase (voltage, current and `Grid Phase{n}
+  Power`) and PV-string sensors, `Timestamp Measurements Received`
+  (`data_timestamp`), and the lifetime counters `Total Energy Purchased`
+  (`grid_import_total`), `Total On-grid Energy` (`grid_export_total`) and
+  `Total Energy Used` / Ginlong `Total Consumption Energy` (`load_total`).
+  Plant daily import, export and load move onto the plant device and keep
+  their entity id. If a fresh new entity already exists beside the legacy
+  one, the legacy entity id is kept and the duplicate removed. A row that
+  already holds the stable id because it was itself migrated
+  (`previous_unique_id` set) is never removed: on a multi-inverter plant each
+  inverter had its own copy of a plant counter, the first keeps the stable id
+  and the others stay on their legacy ids with their history.
 - **Device ids.** `{serial}_SolisCloud`-style devices are retargeted to
   `inverter:{serial}`; if the new device already exists, the legacy one is
   detached from the entry so a partial migration leaves one device.
