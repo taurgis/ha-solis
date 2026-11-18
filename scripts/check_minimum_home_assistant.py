@@ -194,7 +194,8 @@ def _advance(base: str, token: str, flow_id: str, payload: dict[str, Any]) -> di
     return body
 
 
-def _add_solis(base: str, token: str) -> str:
+def _start_flow(base: str, token: str, source: str) -> tuple[str, dict[str, Any]]:
+    """Start a user flow and pick ``source`` (cloud, local or both) in the menu."""
     status, started = _http(
         "POST",
         f"{base}/api/config/config_entries/flow",
@@ -203,17 +204,26 @@ def _add_solis(base: str, token: str) -> str:
     )
     if status != 200 or not isinstance(started, dict):
         raise CheckError(f"config flow did not start: {status} {started}")
+    if started.get("type") != "menu":
+        raise CheckError(f"expected the connection menu: {json.dumps(started)[:1500]}")
     flow_id = str(started.get("flow_id") or "")
-    current = _advance(
+    return flow_id, _advance(base, token, flow_id, {"next_step_id": source})
+
+
+def _cloud_form(base: str, token: str, flow_id: str, current: dict[str, Any]) -> dict[str, Any]:
+    if current.get("step_id") != "cloud":
+        raise CheckError(f"expected the SolisCloud form: {json.dumps(current)[:1500]}")
+    return _advance(
         base,
         token,
         flow_id,
-        {
-            "api_url": API_URL,
-            "key_id": "test-key",
-            "key_secret": "test-secret",
-        },
+        {"api_url": API_URL, "key_id": "test-key", "key_secret": "test-secret"},
     )
+
+
+def _add_solis(base: str, token: str) -> str:
+    flow_id, current = _start_flow(base, token, "cloud")
+    current = _cloud_form(base, token, flow_id, current)
     if current.get("type") != "form" or current.get("step_id") != "stations":
         raise CheckError(f"expected the plant step: {json.dumps(current)[:1500]}")
     current = _advance(
@@ -310,6 +320,7 @@ def _ws(base: str, token: str, message: dict[str, Any]) -> Any:
 
 
 def _reconfigure(base: str, token: str, entry_id: str) -> None:
+    """Reconfigure the same plants, then set the plant timezone in options."""
     status, started = _http(
         "POST",
         f"{base}/api/config/config_entries/flow",
@@ -318,21 +329,35 @@ def _reconfigure(base: str, token: str, entry_id: str) -> None:
     )
     if status != 200 or not isinstance(started, dict):
         raise CheckError(f"reconfigure did not start: {status} {started}")
-    current = _advance(
-        base,
-        token,
-        str(started.get("flow_id") or ""),
-        {
-            "api_url": API_URL,
-            "station_ids": [NORTH, BARN],
-            "scan_interval": 300,
-            "request_timeout": 30,
-            "endpoint_interval": 2,
-            "time_zone": "plant",
-        },
-    )
+    if started.get("type") != "menu":
+        raise CheckError(f"expected the reconfigure menu: {json.dumps(started)[:1500]}")
+    flow_id = str(started.get("flow_id") or "")
+    current = _advance(base, token, flow_id, {"next_step_id": "stations"})
+    if current.get("step_id") != "stations":
+        raise CheckError(f"expected the plant step: {json.dumps(current)[:1500]}")
+    current = _advance(base, token, flow_id, {"station_ids": [NORTH, BARN]})
     if current.get("type") != "abort" or current.get("reason") != "reconfigure_successful":
         raise CheckError(f"reconfigure failed: {json.dumps(current)[:1500]}")
+    _set_options(base, token, entry_id, {"scan_interval": 300, "time_zone": "plant"})
+
+
+def _set_options(base: str, token: str, entry_id: str, payload: dict[str, Any]) -> None:
+    status, started = _http(
+        "POST",
+        f"{base}/api/config/config_entries/options/flow",
+        {"handler": entry_id, "show_advanced_options": False},
+        token=token,
+    )
+    if status != 200 or not isinstance(started, dict):
+        raise CheckError(f"options did not start: {status} {started}")
+    status, current = _http(
+        "POST",
+        f"{base}/api/config/config_entries/options/flow/{started.get('flow_id')}",
+        payload,
+        token=token,
+    )
+    if status != 200 or not isinstance(current, dict) or current.get("type") != "create_entry":
+        raise CheckError(f"options failed: {status} {json.dumps(current)[:1500]}")
 
 
 def _reauth_flow_id(base: str, token: str) -> str:
@@ -708,21 +733,9 @@ def _refresh_until(base: str, token: str, entity_id: str) -> None:
 
 
 def _add_logger(base: str, token: str, source: str, host: str) -> str:
-    status, started = _http(
-        "POST",
-        f"{base}/api/config/config_entries/flow",
-        {"handler": "solis", "show_advanced_options": False},
-        token=token,
-    )
-    if status != 200 or not isinstance(started, dict):
-        raise CheckError(f"logger flow did not start: {status} {started}")
-    flow_id = str(started.get("flow_id") or "")
-    user: dict[str, Any] = {"api_url": API_URL, "source": source}
-    if source != "local":
-        user["key_id"] = "test-key"
-        user["key_secret"] = "test-secret"
-    current = _advance(base, token, flow_id, user)
+    flow_id, current = _start_flow(base, token, source)
     if source == "both":
+        current = _cloud_form(base, token, flow_id, current)
         if current.get("step_id") != "stations":
             raise CheckError(f"expected the plant step: {json.dumps(current)[:1500]}")
         current = _advance(base, token, flow_id, {"station_ids": [NORTH, BARN]})
@@ -732,7 +745,11 @@ def _add_logger(base: str, token: str, source: str, host: str) -> str:
         base,
         token,
         flow_id,
-        {"logger_kind": "auto", "logger_host": host, "logger_serial": LOGGER_SERIAL},
+        {
+            "logger_kind": "auto",
+            "logger_host": host,
+            "advanced": {"logger_serial": LOGGER_SERIAL},
+        },
     )
     if current.get("type") != "create_entry":
         raise CheckError(f"logger flow did not create an entry: {json.dumps(current)[:1500]}")
