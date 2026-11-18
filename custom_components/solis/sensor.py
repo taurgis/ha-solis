@@ -44,7 +44,7 @@ from .coordinator import SolisCoordinator
 from .energy import consider_energy, sanitize_kwh
 from .entity import SolisEntity, collector_device, epm_device, inverter_device, station_device
 from .migration import async_migrate_devices, async_migrate_entity_ids, legacy_name_from_entry
-from .models import CollectorSnapshot, InverterSnapshot, SolisSnapshot
+from .models import CollectorSnapshot, InverterSnapshot, SolisSnapshot, StationSnapshot
 from .parser import plant_period_start, resolve_zone
 
 _LOGGER = logging.getLogger(__name__)
@@ -588,6 +588,7 @@ class SolisSensor(SolisEntity, RestoreSensor, SensorEntity):
             str(self.coordinator.config_entry.options.get(CONF_TIME_ZONE, "")),
             self.coordinator.hass.config.time_zone,
             now,
+            self._plant_zone(),
         )
         return plant_period_start(
             self._offset() or 0.0,
@@ -618,18 +619,25 @@ class SolisSensor(SolisEntity, RestoreSensor, SensorEntity):
                 return inverter
         return None
 
-    def _offset(self) -> float | None:
-        """The plant's UTC offset, or None when no cloud station reported one."""
+    def _plant_station(self) -> StationSnapshot | None:
+        """The cloud station this entity belongs to, if any."""
         station_id = self._station_id
         if station_id is None:
             inverter = self._inverter()
             station_id = inverter.station_id if inverter else None
         if station_id is None:
             return None
-        station = self.coordinator.data.station(station_id)
-        if station is None:
-            return None
-        return station.timezone_offset_hours
+        return self.coordinator.data.station(station_id)
+
+    def _offset(self) -> float | None:
+        """The plant's UTC offset, or None when no cloud station reported one."""
+        station = self._plant_station()
+        return station.timezone_offset_hours if station else None
+
+    def _plant_zone(self) -> str | None:
+        """The plant's IANA zone name (``timeZoneStandardId``), if reported."""
+        station = self._plant_station()
+        return station.timezone_name if station else None
 
 
 _STATION_ATTR = {

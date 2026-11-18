@@ -325,7 +325,7 @@ async def test_rtu_happy_path_and_dribble(socket_enabled: None) -> None:
         )
         assert probe.kind == LOGGER_RTU
         assert probe.protocol == "rtu"
-        assert probe.inverter_serial == "SOLIS001"
+        assert probe.inverter_serial == "1031230000000AB1"  # hex-nibble encoded at 3060
         transport = SolisLocalTransport(
             "127.0.0.1",
             0,

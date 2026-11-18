@@ -905,11 +905,9 @@ def _flatten(user_input: Mapping[str, Any]) -> dict[str, Any]:
     flat = {key: value for key, value in user_input.items() if key != ADVANCED}
     flat.update(user_input.get(ADVANCED) or {})
     for key in (CONF_LOGGER_PORT, CONF_SLAVE_ID):
-        value = flat.get(key)
-        if isinstance(value, float) and value.is_integer():
+        # The number selector hands back a float, the parser reads digits.
+        if (value := flat.get(key)) is not None:
             flat[key] = str(int(value))
-        elif value is not None:
-            flat[key] = str(value)
     return flat
 
 

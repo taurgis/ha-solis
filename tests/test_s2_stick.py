@@ -96,7 +96,7 @@ async def test_s2_probe_reads_the_string_map(socket_enabled: None) -> None:
     assert probe.register_map == "string"
     assert probe.slave == 1
     assert probe.function == 4
-    assert probe.inverter_serial == "SOLIS001"
+    assert probe.inverter_serial == "1031230000000AB1"
     assert probe.port == port
 
 
@@ -316,7 +316,7 @@ async def test_flow_creates_an_s2_entry_and_rejects_bad_input(
     assert created["type"] is FlowResultType.CREATE_ENTRY
     assert created["result"].unique_id == "s2:5A120001"
     assert created["result"].data["logger_kind"] == LOGGER_S2
-    assert created["result"].data["inverter_serial"] == "SOLIS001"
+    assert created["result"].data["inverter_serial"] == "1031230000000AB1"
     assert created["result"].options["scan_interval"] == 60
 
 

@@ -82,7 +82,7 @@ async def test_emulator_answers_string_reads_and_rejects_hybrid(socket_enabled: 
         probe = await probe_logger("127.0.0.1", SERIAL, timeout=2, port=port)
         assert probe.register_map == "string"
         assert probe.slave == 1
-        assert probe.inverter_serial == "SOLIS001"
+        assert probe.inverter_serial == "1031230000000AB1"
         power = await client.read_input(1, 3004, 2)
         assert power == [0, 0]
         with pytest.raises(Exception, match="exception 2"):
