@@ -426,7 +426,6 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
         self._asleep_polls = 0
         self._clear_logger_lock()
         self._recover_pace()
-        self._clear_stick_rejections()
         self._last_good = snapshot
         self.auth_failed = False
         if self._outage_logged:
@@ -510,6 +509,9 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
         self._open(issue_key, ir.IssueSeverity.WARNING)
 
     def _clear_logger_lock(self) -> None:
+        # Night ends a run of rejected stick passwords too: a 401 at dusk and
+        # one the next morning are not "in a row".
+        self._clear_stick_rejections()
         self._degraded_since = None
         self._degraded_logged = False
         self._reason = ""

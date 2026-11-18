@@ -384,6 +384,26 @@ async def test_a_local_stick_password_asks_after_ten_minutes(hass: HomeAssistant
         await coordinator._async_update_data()
 
 
+@pytest.mark.parametrize("night", ["asleep", "offline"])
+async def test_night_ends_a_rejection_run(hass: HomeAssistant, night: str) -> None:
+    """A 401 at dusk and one the next morning do not add up to a reauth."""
+    entry = _local_entry(hass, logger_kind="solis_web")
+    rejected = SolisLoggerAuthError("rejected")
+    dark: SolisSnapshot | Exception = (
+        asleep_snapshot(_local()) if night == "asleep" else SolisLoggerOffline("night")
+    )
+    transport = _Transport(_local(), rejected, dark, rejected)
+    coordinator = SolisCoordinator(hass, entry, transport)  # type: ignore[arg-type]
+    await coordinator._async_update_data()
+    await coordinator._async_update_data()
+    coordinator._stick_rejected_since = time.monotonic() - 601
+    await coordinator._async_update_data()
+    assert coordinator._stick_rejected_since is None
+    assert (await coordinator._async_update_data()).source == DATA_DEGRADED
+    assert coordinator._stick_rejections == 1
+    assert coordinator.auth_failed is False
+
+
 async def test_another_stick_fault_breaks_the_rejection_run(hass: HomeAssistant) -> None:
     """Rejections only count in a row."""
     entry = _local_entry(hass, logger_kind="solis_web")
