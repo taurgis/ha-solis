@@ -124,7 +124,10 @@ _CLOUD_BUDGET = 20.0
 _PROTOCOLS = (PROTOCOL_V5, PROTOCOL_MBTCP, PROTOCOL_MBTCP_ALT)
 _KNOWN_PROTOCOLS = (*_PROTOCOLS, PROTOCOL_RTU)
 _FC3_KINDS = {LOGGER_S2, LOGGER_S5, LOGGER_MBTCP, LOGGER_RTU}
-# A sleeping stick is looked for on the LAN at most this often.
+# A missing stick is looked for on the LAN after 60 s, then at doubling gaps up
+# to 15 minutes, so a whole night costs a handful of broadcasts while a stick
+# that moved after a short drop is found quickly. A good read resets the gap.
+_DISCOVERY_FIRST = 60.0
 _DISCOVERY_EVERY = 900.0
 # S2-WL-ST firmware ignores port 502 for 3 to 6 minutes after a socket closes.
 # The setup probe closes one, so a failure that soon after it is that wedge.
@@ -347,6 +350,7 @@ class SolisLocalTransport:
         self._next_attempt = 0.0
         self._backoff_step = 0
         self._next_discovery = 0.0
+        self._discovery_step = 0
         self._has_series = False
         self.identity_checked = False
         self.cloud_fill = False
@@ -374,6 +378,7 @@ class SolisLocalTransport:
                 self._busy_logged = False
                 # The first miss after a good read may look for a moved stick at once.
                 self._next_discovery = 0.0
+                self._discovery_step = 0
         except SolisLoggerBusy as err:
             if not err.waiting:
                 self.degraded_reason = err.reason or REASON_LOCKED
@@ -503,13 +508,15 @@ class SolisLocalTransport:
         return self._stick_serial or self._inverter_serial or self._host
 
     async def _find_stick(self) -> str | None:
-        """Look for the stick on the LAN. A sleeping stick is looked for every 15 minutes."""
+        """Look for the stick on the LAN, at growing gaps while it stays missing."""
         if self._kind != LOGGER_SOLARMAN:
             return None
         now = time.monotonic()
         if now < self._next_discovery:
             return None
-        self._next_discovery = now + _DISCOVERY_EVERY
+        gap = min(_DISCOVERY_FIRST * 2**self._discovery_step, _DISCOVERY_EVERY)
+        self._discovery_step += 1
+        self._next_discovery = now + gap
         try:
             sticks = await discover_sticks(timeout=1.0)
         except OSError:
@@ -519,6 +526,7 @@ class SolisLocalTransport:
                 self._mac = stick.mac or self._mac
                 # Found: the next miss may look again at once (the stick moved).
                 self._next_discovery = 0.0
+                self._discovery_step = 0
                 return stick.host
         return None
 

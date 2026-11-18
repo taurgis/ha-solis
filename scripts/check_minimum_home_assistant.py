@@ -745,6 +745,26 @@ def _refresh_until(base: str, token: str, entity_id: str) -> None:
     raise CheckError(f"update_entity failed: {last}")
 
 
+def _refresh_while_waiting(
+    base: str,
+    token: str,
+    entity_id: str,
+    unique_id: str,
+    predicate: Any,
+    timeout: float = 180,
+) -> None:
+    """Refresh every 10 s until ``unique_id`` matches, or fail after ``timeout``."""
+    deadline = time.monotonic() + timeout
+    while True:
+        _refresh_until(base, token, entity_id)
+        try:
+            _require_unique(base, token, unique_id, predicate, timeout=10)
+            return
+        except CheckError:
+            if time.monotonic() >= deadline:
+                raise
+
+
 def _add_logger(base: str, token: str, source: str, host: str) -> str:
     flow_id, current = _start_flow(base, token, source)
     if source == "both":
@@ -829,9 +849,14 @@ def _exercise_local(base: str, token: str, config: Path) -> None:
     _require_no_cloud_outage(base, token)
     _log("Night closed the stick: power 0, lifetime energy held, source asleep")
     _stick_control({"night": False, "host": MORNING_HOST, "registers": {"3005": 500}})
-    _refresh_until(base, token, energy_id)
-    _require_unique(
-        base, token, f"{LOCAL_SERIAL}_data_source", lambda item: item.get("state") == "local"
+    # A missing stick is looked for again 60 s after the first miss, then at
+    # growing gaps; keep refreshing until it is found on its new address.
+    _refresh_while_waiting(
+        base,
+        token,
+        energy_id,
+        f"{LOCAL_SERIAL}_data_source",
+        lambda item: item.get("state") == "local",
     )
     _require_unique(
         base, token, f"{LOCAL_SERIAL}_energy_total", lambda item: _number(item) == LOCAL_TOTAL

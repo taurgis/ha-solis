@@ -276,6 +276,31 @@ async def test_discovery_is_rate_limited(monkeypatch: pytest.MonkeyPatch) -> Non
     assert await _local(kind=LOGGER_S2)._find_stick() is None
 
 
+async def test_discovery_gap_grows_and_resets(monkeypatch: pytest.MonkeyPatch) -> None:
+    """60 s after the first miss, doubling to 15 minutes; a good read starts over."""
+
+    async def _none(timeout: float = 1.0) -> list[Stick]:
+        return []
+
+    monkeypatch.setattr(lt, "discover_sticks", _none)
+    local = _local()
+    gaps = []
+    for _ in range(6):
+        local._next_discovery = 0.0
+        before = time.monotonic()
+        assert await local._find_stick() is None
+        gaps.append(round(local._next_discovery - before, -1))
+    assert gaps == [60, 120, 240, 480, 900, 900]
+
+    async def _good() -> SolisSnapshot:
+        return _snapshot(_inverter())
+
+    local._read_connected = _good  # type: ignore[method-assign]
+    await local.async_read()
+    assert local._discovery_step == 0
+    assert local._next_discovery == 0.0
+
+
 # Finding 15: a dark hybrid is degraded; a dark string with a live cloud is degraded.
 
 
