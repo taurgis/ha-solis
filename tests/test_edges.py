@@ -98,18 +98,18 @@ async def test_device_diagnostics(hass: HomeAssistant, solis_server: tuple[Any, 
 async def test_config_flow_error_modes(hass: HomeAssistant, solis_server: tuple[Any, str]) -> None:
     """Timeouts and server errors surface as config-flow errors."""
     state, url = solis_server
-    from custom_components.solis.const import DOMAIN
+    from .flow_helpers import start_user
     from mock_soliscloud.catalog import KEY_ID, SECRET
 
     state.mode = "clock"
-    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
+    result = await start_user(hass, "cloud")
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {"api_url": url, "key_id": KEY_ID, "key_secret": SECRET},
     )
     assert result["errors"]["base"] == "clock_skew"
     state.mode = "server_error"
-    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
+    result = await start_user(hass, "cloud")
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {"api_url": url, "key_id": KEY_ID, "key_secret": SECRET},

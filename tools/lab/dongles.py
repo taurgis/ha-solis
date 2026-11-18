@@ -12,6 +12,13 @@ One process serves every stick the audit drives from Home Assistant:
 
 Each device has its own address on the loopback interface. POST
 http://127.0.0.1:8871/__control changes one device. The body is JSON.
+
+The devices behave like the hardware: a slave id that is not on the bus gets
+no reply, 3043 is 3 while producing, the V5 stick echoes only the low
+sequence byte (its own counter is the high byte) and can send a 0x4710
+heartbeat first (``heartbeat``), the Solarman inverter keeps its serial
+hex-nibble encoded at 3060, and ``hybrid`` serves the 33000 map with the type
+register 35000 instead of the 3000 map.
 """
 
 from __future__ import annotations
@@ -51,6 +58,12 @@ logger_serial_of = _SOLARMAN.logger_serial_of
 modbus_from_request = _SOLARMAN.modbus_from_request
 sequence_of = _SOLARMAN.sequence_of
 
+from mock_soliscloud.stick import (  # noqa: E402
+    HYBRID_TYPE,
+    INVERTER_SERIAL,
+    encode_serial,
+    hybrid_registers,
+)
 from mock_soliscloud.web_stick import WebStickEmulator, WebStickState  # noqa: E402
 
 CONTROL_PORT = 8871
@@ -58,7 +71,11 @@ LAB_NET = "192.168.250."
 
 
 def _words(serial: str, power: int) -> dict[int, int]:
-    """Old 3000-range string map. Lifetime energy is 21970 kWh."""
+    """Old 3000-range string map. Lifetime energy is 21970 kWh.
+
+    A 16-digit hex serial is stored hex-nibble encoded, as Solis firmware
+    does. Any other text is stored as ASCII, which the reader also accepts.
+    """
     text = serial.encode("ascii").ljust(8, b"\x00")[:8]
     words = {
         3000: 15,
@@ -75,8 +92,13 @@ def _words(serial: str, power: int) -> dict[int, int]:
         3035: 2349,
         3041: 272,
         3042: 4999,
-        3043: 1,
+        # 3 is generating; 0 is waiting for PV.
+        3043: 3 if power else 0,
     }
+    if len(serial) == 16 and all(character in "0123456789ABCDEF" for character in serial):
+        for offset, value in enumerate(encode_serial(serial)):
+            words[3060 + offset] = value
+        return words
     for offset in range(4):
         words[3060 + offset] = int.from_bytes(text[offset * 2 : offset * 2 + 2], "big")
     return words
@@ -99,6 +121,9 @@ class Device:
     page: str = ""
     night: bool = False
     mode: str = "ok"
+    hybrid: bool = False
+    heartbeat: bool = False
+    counter: int = 0x17
     registers: dict[int, int] = field(default_factory=dict)
     tcp: asyncio.Server | None = None
     http: asyncio.Server | None = None
@@ -115,7 +140,7 @@ def _devices() -> dict[str, Device]:
             f"{LAB_NET}10",
             8899,
             "v5",
-            "SOLIS001",
+            INVERTER_SERIAL,
             500,
             logger_serial=1902137671,
             mac="bc54f9f57b5c",
@@ -262,6 +287,14 @@ class Lab:
                 device.registers[int(address)] = int(value) & 0xFFFF
         if "power" in payload:
             device.registers[3005] = int(payload["power"]) & 0xFFFF
+            device.registers[3043] = 3 if device.registers[3005] else 0
+        if "heartbeat" in payload:
+            device.heartbeat = bool(payload["heartbeat"])
+        if "hybrid" in payload:
+            device.hybrid = bool(payload["hybrid"])
+            if device.hybrid:
+                device.registers.update(hybrid_registers())
+                device.registers[35000] = HYBRID_TYPE
         if rebound or device.mode == "closed":
             await self.listen(device)
         return {"ok": True, "device": name, "host": device.host, "mode": device.mode}
@@ -312,9 +345,18 @@ class Lab:
                 continue
             if logger_serial_of(frame) != device.logger_serial:
                 return
+            if frame[3:5] != b"\x10\x45":
+                # The client's time frame answering a heartbeat.
+                continue
             modbus = modbus_from_request(frame)
             reply = _rtu_pdu(device, modbus)
-            writer.write(build_response(device.logger_serial, sequence_of(frame), reply))
+            if reply is None:
+                continue
+            if device.heartbeat:
+                writer.write(_heartbeat(device.logger_serial))
+            device.counter = (device.counter + 1) & 0xFF
+            sequence = (device.counter << 8) | (sequence_of(frame) & 0xFF)
+            writer.write(build_response(device.logger_serial, sequence, reply))
             await writer.drain()
 
     async def _mbap(
@@ -330,6 +372,8 @@ class Lab:
             count = int.from_bytes(frame[10:12], "big") if len(frame) >= 12 else 1
             request = bytes((frame[6], function)) + frame[8:12]
             pdu = _pdu(device, request[0], function, address, count)
+            if pdu is None:
+                continue
             if device.mode == "wrong_slave":
                 pdu = _data_pdu(function, [device.registers.get(address, 0)])
                 unit = b"\x09"
@@ -350,6 +394,8 @@ class Lab:
             if device.mode == "wrong_slave":
                 address = int.from_bytes(request[2:4], "big")
                 reply = _rtu_frame(9, request[1], [device.registers.get(address, 0)])
+            if reply is None:
+                continue
             writer.write(reply)
             await writer.drain()
 
@@ -378,12 +424,28 @@ def _pop_v5(buffer: bytes) -> tuple[bytes | None, bytes]:
     return buffer[:total], buffer[total:]
 
 
-def _pdu(device: Device, slave: int, function: int, address: int, count: int) -> bytes:
+def _heartbeat(logger_serial: int) -> bytes:
+    payload = bytes((0x00,))
+    header = struct.pack("<BHBBHI", 0xA5, len(payload), 0x10, 0x47, 0, logger_serial)
+    body = header + payload
+    return body + bytes((sum(body[1:]) & 0xFF, 0x15))
+
+
+def _outside_map(device: Device, address: int) -> bool:
+    if device.hybrid:
+        return address < 33000
+    return address >= 33000
+
+
+def _pdu(device: Device, slave: int, function: int, address: int, count: int) -> bytes | None:
+    if slave not in {0, 1} and device.mode != "wrong_slave":
+        # Nothing on the bus has that id, so nothing answers.
+        return None
     if device.mode == "exception":
         return bytes((function | 0x80, 3))
     if device.mode == "short":
         return _data_pdu(function, [device.registers.get(address, 0)])
-    if address >= 33000 or slave not in {0, 1}:
+    if _outside_map(device, address):
         return bytes((function | 0x80, 2))
     if function not in {3, 4}:
         return bytes((function | 0x80, 1))
@@ -405,16 +467,18 @@ def _rtu_frame(slave: int, function: int, values: list[int]) -> bytes:
     return body + crc16(body).to_bytes(2, "little")
 
 
-def _rtu_pdu(device: Device, request: bytes) -> bytes:
+def _rtu_pdu(device: Device, request: bytes) -> bytes | None:
     if len(request) < 6:
         return _exception_frame(1, 4, 1)
     slave = request[0]
     function = request[1]
     address = int.from_bytes(request[2:4], "big")
     count = int.from_bytes(request[4:6], "big")
+    if slave != 1 and device.mode != "wrong_slave":
+        return None
     if device.mode == "exception":
         return _exception_frame(slave, function, 3)
-    if address >= 33000:
+    if _outside_map(device, address):
         return _exception_frame(slave, function, 2)
     if function not in {3, 4}:
         return _exception_frame(slave, function, 1)

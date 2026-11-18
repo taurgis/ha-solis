@@ -127,7 +127,7 @@ async def test_a_local_entry_can_add_soliscloud_later(
 
 
 async def test_reconfigure_cannot_take_a_key_another_entry_reads(
-    hass: HomeAssistant, solis_server: tuple[Any, str]
+    hass: HomeAssistant, solis_server: tuple[Any, str], no_setup: AsyncMock
 ) -> None:
     """A second cloud entry may not switch to the account the first one reads."""
     _state, url = solis_server
@@ -148,6 +148,13 @@ async def test_reconfigure_cannot_take_a_key_another_entry_reads(
     assert taken["type"] is FlowResultType.ABORT
     assert taken["reason"] == "already_configured"
     assert second.data["key_id"] == "other-key"
+    # The entry that owns the key may keep it: it does not conflict with itself.
+    menu = await first.start_reconfigure_flow(hass)
+    form = await pick(hass, menu["flow_id"], "reconfigure_cloud")
+    kept = await hass.config_entries.flow.async_configure(
+        form["flow_id"], {"api_url": url, "key_id": KEY_ID}
+    )
+    assert kept["reason"] == "reconfigure_successful"
 
 
 async def test_a_wrong_clock_is_its_own_error(hass: HomeAssistant) -> None:
