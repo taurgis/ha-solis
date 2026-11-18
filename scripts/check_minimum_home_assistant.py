@@ -691,6 +691,16 @@ def _entity_id(base: str, token: str, unique_id: str) -> str:
     raise CheckError(f"no Solis entity with unique id {unique_id}")
 
 
+def _require_disabled(base: str, token: str, unique_id: str) -> None:
+    """The entity exists but the integration disabled it by default."""
+    for row in _registry(base, token):
+        if row.get("unique_id") == unique_id and row.get("platform") == "solis":
+            if row.get("disabled_by") != "integration":
+                raise CheckError(f"{unique_id} was not disabled by default: {row}")
+            return
+    raise CheckError(f"no Solis entity with unique id {unique_id}")
+
+
 def _require_unique(
     base: str,
     token: str,
@@ -804,10 +814,8 @@ def _exercise_local(base: str, token: str, config: Path) -> None:
         base, token, f"{LOCAL_SERIAL}_data_source", lambda item: item.get("state") == "local"
     )
     _require_unique(base, token, f"{LOCAL_SERIAL}_ac_power", lambda item: _number(item) == 500)
-    _require_unique(
-        base, token, f"{LOCAL_SERIAL}_phase_1_voltage", lambda item: _number(item) == 234.9
-    )
-    _log("Local logger published 21970 kWh, 500 W and 234.9 V")
+    _require_disabled(base, token, f"{LOCAL_SERIAL}_phase_1_voltage")
+    _log("Local logger published 21970 kWh and 500 W; single-phase phase sensors start disabled")
     energy_id = _entity_id(base, token, f"{LOCAL_SERIAL}_energy_total")
     _stick_control({"night": True})
     _refresh_until(base, token, energy_id)
