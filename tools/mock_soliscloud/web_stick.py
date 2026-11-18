@@ -39,7 +39,8 @@ class WebStickState:
 
     host: str = "127.0.0.1"
     port: int = 0
-    password: str = "123456789"
+    # None: the factory password of the layout (IGEN status.html sticks use admin).
+    password: str | None = None
     serial: str = "1031000000000001"
     firmware: str = "0F000F"
     model: str = "E4"
@@ -172,7 +173,10 @@ class WebStickEmulator:
         return b"HTTP/1.0 200 OK\r\nServer: lwIP/1.3.1\r\nContent-type: text/html\r\n\r\n" + data
 
     def _authorized(self, lines: list[str]) -> bool:
-        wanted = base64.b64encode(f"admin:{self.state.password}".encode()).decode("ascii")
+        password = self.state.password
+        if password is None:
+            password = "admin" if self.state.layout == LAYOUT_STATUS else "123456789"
+        wanted = base64.b64encode(f"admin:{password}".encode()).decode("ascii")
         return any(line.strip() == f"Authorization: Basic {wanted}" for line in lines)
 
     def _body(self, path: str) -> str | None:

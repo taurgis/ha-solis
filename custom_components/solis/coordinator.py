@@ -74,6 +74,9 @@ _LOGGER = logging.getLogger(__name__)
 
 _BACKOFF_CAP = 900.0
 _LOCK_REPAIR_AFTER = 600.0
+# A stick that rejects its web password three times in a row, or for
+# _LOCK_REPAIR_AFTER, needs the new one. A single 401 can be a stick rebooting.
+_STICK_REJECTIONS = 3
 _SAVE_EVERY = 300.0
 DOCS_TROUBLESHOOTING = "https://github.com/taurgis/ha-solis/blob/main/docs/troubleshooting.md"
 # Repairs whose fix is a step the user takes outside Home Assistant. The page
@@ -314,6 +317,8 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
         self.auth_failed = False
         self._reauth_started = False
         self._stick_reauth_started = False
+        self._stick_rejections = 0
+        self._stick_rejected_since: float | None = None
         self._outage_logged = False
         self._open_issues: set[str] = set()
         self._transient_failures = 0
@@ -355,9 +360,11 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
         except _TRANSIENT as err:
             return await self._hold(err)
         except SolisLoggerBusy as err:
-            if _is_web_auth(err):
-                # A stick password does not fix itself. Holding the last sample
-                # would only hide that, so ask for the new one.
+            if not _is_web_auth(err):
+                self._clear_stick_rejections()
+            elif self._stick_password_due(rejected=not err.waiting) or not await self._has_sample():
+                # A password that keeps failing does not fix itself, so ask for
+                # the new one. With nothing to show yet there is nothing to hold.
                 self.auth_failed = True
                 raise ConfigEntryAuthFailed(
                     translation_domain=DOMAIN, translation_key="update_logger_web_auth"
@@ -419,6 +426,7 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
         self._asleep_polls = 0
         self._clear_logger_lock()
         self._recover_pace()
+        self._clear_stick_rejections()
         self._last_good = snapshot
         self.auth_failed = False
         if self._outage_logged:
@@ -429,13 +437,42 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
         return snapshot
 
     def _flag_stick_password(self) -> None:
-        """SolisCloud covers a stick that rejected its password: ask for it once."""
+        """SolisCloud covers a stick that rejected its password: ask for it once.
+
+        The cloud keeps the sensors going meanwhile, so this waits until the
+        password has been rejected for ``_LOCK_REPAIR_AFTER``.
+        """
         if str(getattr(self.transport, "degraded_reason", "") or "") != REASON_WEB_AUTH:
             self._stick_reauth_started = False
+            self._clear_stick_rejections()
             return
-        if not self._stick_reauth_started:
+        if not self._stick_reauth_started and self._stick_password_due(rejected=False):
             self._stick_reauth_started = True
             self.config_entry.async_start_reauth(self.hass)
+
+    def _stick_password_due(self, *, rejected: bool) -> bool:
+        """Count a rejected stick password. True after three in a row or 10 minutes.
+
+        ``rejected`` is a fresh 401; a read skipped during the backoff only
+        counts toward the time.
+        """
+        now = time.monotonic()
+        if self._stick_rejected_since is None:
+            self._stick_rejected_since = now
+        if rejected:
+            self._stick_rejections += 1
+        return (
+            self._stick_rejections >= _STICK_REJECTIONS
+            or now - self._stick_rejected_since >= _LOCK_REPAIR_AFTER
+        )
+
+    def _clear_stick_rejections(self) -> None:
+        self._stick_rejections = 0
+        self._stick_rejected_since = None
+
+    async def _has_sample(self) -> bool:
+        """True when there is a last or stored snapshot to hold."""
+        return self._last_good is not None or await self._load_stored() is not None
 
     def _slow_for_sleep(self) -> None:
         """Back off while the logger is powered down. Do not open a repair."""

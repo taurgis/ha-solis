@@ -57,12 +57,14 @@ config form reads `SELECTABLE_KINDS`, so the list is not copied.
   and serves the cached values (measured: two changes 5 min 02 s apart over
   12 minutes), the same delay as SolisCloud, so the page is local but not
   faster. It is read at the normal local poll (60 s) so a new sample shows
-  within a minute. Password is the web password, blank meaning the factory
-  `123456789`, stored in entry data and redacted. Identity is the inverter
+  within a minute. Password is the web password, blank (or the factory
+  `123456789`) meaning "try `123456789`, then the IGEN factory `admin`, and
+  keep the one that answers", stored in entry data and redacted. Identity is the inverter
   serial from the page, unique id `web:<serial>`. `inverter.cgi` is tried
   first; a 404 or another format falls back to `status.html`, and the
-  layout that answered is kept. A 401 (`web_auth`) needs a new password: the
-  coordinator turns it into reauthentication, not a repair. A page that is
+  layout that answered is kept. A 401 (`web_auth`) holds the last values; after
+  three 401s in a row or 10 minutes the coordinator turns it into
+  reauthentication, not a repair (at once when there is nothing to hold). A page that is
   not a Solis format, a bad status, or a TCP session that gives no page
   (`web_page`) is a paused session with the usual backoff, not night, and
   opens the `logger_web` repair after 10 minutes; no route is asleep. The

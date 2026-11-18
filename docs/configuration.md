@@ -61,9 +61,9 @@ names Waveshare, Elfin, Hi-Flying or USR, and otherwise the flow asks
 
 This step only appears for a stick that only serves a status web page, and
 only when that page rejected the factory password. The user is always
-`admin`. Leave the field empty for the factory password `123456789`. Some
-firmware uses your Wi-Fi password instead, and sticks made by IGEN/Solarman
-for Solis often use `admin`. The password is stored in the config entry and
+`admin`. Leave the field empty to try the factory passwords `123456789` and
+then `admin` (sticks made by IGEN/Solarman for Solis ship with `admin`).
+Some firmware uses your Wi-Fi password instead. The password is stored in the config entry and
 redacted in diagnostics.
 
 ## Discovery
