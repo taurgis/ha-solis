@@ -15,6 +15,7 @@ from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import entity_registry as er
 
 from .conftest import entry_options
+from .flow_helpers import logger_form, start_user
 from custom_components.solis.const import (
     DOMAIN,
     LOGGER_MBTCP,
@@ -324,7 +325,7 @@ async def test_rtu_happy_path_and_dribble(socket_enabled: None) -> None:
         )
         assert probe.kind == LOGGER_RTU
         assert probe.protocol == "rtu"
-        assert probe.inverter_serial == "SOLIS001"
+        assert probe.inverter_serial == "1031230000000AB1"  # hex-nibble encoded at 3060
         transport = SolisLocalTransport(
             "127.0.0.1",
             0,
@@ -468,7 +469,7 @@ async def test_rtu_resync_close_and_plain_exception(socket_enabled: None) -> Non
         with pytest.raises(ModbusException) as coded:
             await client.read_input(1, 3004, 2)
 
-        async def _boom(_reader: asyncio.StreamReader, *, echo: bytes = b"") -> bytes:
+        async def _boom(_reader: asyncio.StreamReader, **_kwargs: object) -> bytes:
             raise ValueError("not a frame")
 
         client._read_frame = _boom  # type: ignore[method-assign]
@@ -515,25 +516,16 @@ async def test_gateway_flow_diagnostics_and_night(
     assert emulator._tcp is not None
     port = emulator._tcp.sockets[0].getsockname()[1]
     try:
-        result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            {
-                "source": SOURCE_LOCAL,
-                "api_url": "http://127.0.0.1:9",
-                "key_id": "",
-                "key_secret": "",
-            },
-        )
+        result = await start_user(hass, "local")
         created = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            {
-                "logger_kind": LOGGER_MBTCP,
-                "logger_host": "127.0.0.1",
-                "logger_port": str(port),
-                "logger_serial": "gw-1",
-                "slave_id": "1",
-            },
+            logger_form(
+                logger_kind=LOGGER_MBTCP,
+                logger_host="127.0.0.1",
+                logger_port=str(port),
+                logger_serial="gw-1",
+                slave_id="1",
+            ),
         )
         assert created["type"] is FlowResultType.CREATE_ENTRY
         assert created["result"].unique_id == "tcp:gw-1"
@@ -655,24 +647,15 @@ async def test_s5_is_experimental_and_shares_the_s2_id(
         )
         assert probe.kind == LOGGER_S5
         assert probe.protocol == "mbtcp"
-        result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            {
-                "source": SOURCE_LOCAL,
-                "api_url": "http://127.0.0.1:9",
-                "key_id": "",
-                "key_secret": "",
-            },
-        )
+        result = await start_user(hass, "local")
         created = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            {
-                "logger_kind": LOGGER_S5,
-                "logger_host": "127.0.0.1",
-                "logger_port": str(port),
-                "logger_serial": "5A120099",
-            },
+            logger_form(
+                logger_kind=LOGGER_S5,
+                logger_host="127.0.0.1",
+                logger_port=str(port),
+                logger_serial="5A120099",
+            ),
         )
     finally:
         await emulator.close()
@@ -722,14 +705,10 @@ async def test_legacy_solarman_entry_has_no_kind(hass: HomeAssistant, socket_ena
 
 async def test_rtu_flow_rejects_a_closed_port(hass: HomeAssistant, socket_enabled: None) -> None:
     """The experimental RTU option explains a refused port instead of calling it night."""
-    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {"source": SOURCE_LOCAL, "api_url": "http://127.0.0.1:9", "key_id": "", "key_secret": ""},
-    )
+    result = await start_user(hass, "local")
     failed = await hass.config_entries.flow.async_configure(
         result["flow_id"],
-        {"logger_kind": LOGGER_RTU, "logger_host": "127.0.0.1", "logger_port": "1"},
+        logger_form(logger_kind=LOGGER_RTU, logger_host="127.0.0.1", logger_port="1"),
     )
     assert failed["errors"]["base"] == "logger_gateway"
 

@@ -111,6 +111,27 @@ class SolisLoggerBusy(SolisCloudError):
         self.reason = reason
 
 
+class SolisLoggerAuthError(SolisLoggerBusy):
+    """The stick web page answered 401 to the configured password.
+
+    A subclass of ``SolisLoggerBusy`` so callers that only know the paused
+    session keep working. The password does not fix itself: some sticks
+    replace the factory password with the Wi-Fi password once they join the
+    network, so the caller should ask the user for the new one (reauth).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str | None = None,
+        waiting: bool = False,
+        reason: str = "web_auth",
+    ) -> None:
+        """Default the reason to the web-password reason."""
+        super().__init__(message, code=code, waiting=waiting, reason=reason)
+
+
 def logger_failure_text(host: str, err: BaseException) -> str:
     """Return the sentence a manual read should print for this failure."""
     reason = str(getattr(err, "reason", "") or "")

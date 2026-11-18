@@ -25,6 +25,7 @@ from .catalog import (
     epms,
     inverter_details,
     null_detail,
+    placeholder_detail,
     station_details,
     stations,
 )
@@ -193,7 +194,9 @@ async def _handle(request: web.Request) -> web.Response:
         body=body,
         headers=headers,
     ):
-        return _envelope("I0012", "Incorrect account or password, please re-enter", status=403)
+        # SolisCloud answers a wrong secret with a bare HTTP 403, not the
+        # documented R0000 envelope (SolisCloud.Net live probe).
+        return web.Response(status=403, text="Forbidden", content_type="text/plain")
     if _skewed(headers.get("Date", "")):
         return web.Response(status=408, text="Date header is outside the 15 minute window")
     try:
@@ -282,6 +285,7 @@ def _dispatch(state: MockState, path: str, payload: dict[str, Any]) -> dict[str,
                     "state": detail.get("state"),
                     "pac": detail.get("pac"),
                     "pacStr": detail.get("pacStr"),
+                    **({"pacPec": detail["pacPec"]} if "pacPec" in detail else {}),
                 }
             )
         return _page(rows)
@@ -289,7 +293,9 @@ def _dispatch(state: MockState, path: str, payload: dict[str, Any]) -> dict[str,
         serial = str(payload.get("sn") or "")
         detail = _details(state, now).get(serial)
         if detail is None:
-            return _envelope_dict("B0049", "missing", None)
+            # An unknown serial is not an error: SolisCloud returns a
+            # placeholder record for another (all-zero) serial.
+            return _envelope_dict("0", "success", placeholder_detail())
         return _envelope_dict("0", "success", detail)
     if path == "/v1/api/stationDetail":
         detail = station_details().get(str(payload.get("id")))
@@ -306,8 +312,10 @@ def _dispatch(state: MockState, path: str, payload: dict[str, Any]) -> dict[str,
             "gridPurchasedEnergyStr": detail.get("gridPurchasedDayEnergyStr"),
             "gridSellEnergy": detail.get("gridSellDayEnergy"),
             "gridSellEnergyStr": detail.get("gridSellDayEnergyStr"),
-            "homeLoadEnergy": detail.get("homeLoadTodayEnergy"),
-            "homeLoadEnergyStr": detail.get("homeLoadTodayEnergyStr"),
+            "homeLoadEnergy": detail.get("homeLoadTodayEnergy", detail.get("homeLoadEnergy")),
+            "homeLoadEnergyStr": detail.get(
+                "homeLoadTodayEnergyStr", detail.get("homeLoadEnergyStr")
+            ),
         }
         rows = [real]
         if state.decoy_day:
@@ -362,11 +370,12 @@ def _details(state: MockState, now: datetime) -> dict[str, dict[str, Any]]:
         if state.force_charge:
             if detail.get("storageBatteryCurrent") is not None:
                 detail["storageBatteryCurrent"] = abs(float(detail["storageBatteryCurrent"]))
-            magnitude = detail.get("batteryPowerFu")
-            if magnitude in (None, 0):
-                magnitude = detail.get("batteryPower")
-            if magnitude not in (None, 0):
-                detail["batteryPowerZheng"] = abs(float(magnitude))
+            power = detail.get("batteryPower")
+            if power not in (None, 0):
+                # batteryPower keeps its kW unit; Zheng and Fu are watts.
+                kilowatts = abs(float(power))
+                detail["batteryPower"] = kilowatts
+                detail["batteryPowerZheng"] = round(kilowatts * 1000, 1)
                 detail["batteryPowerFu"] = 0
         kept[serial] = detail
     return kept

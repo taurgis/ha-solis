@@ -32,12 +32,12 @@ config form reads `SELECTABLE_KINDS`, so the list is not copied.
 
 | Kind | Framing | Port | Notes |
 | --- | --- | --- | --- |
-| `solarman` | V5, then plain Modbus TCP on the same port, then 30003 | 8899 | Found by UDP 48899 discovery (a reply counts only when it names the address it came from, and that is private or loopback) and DHCP OUI `BC:54:F9`. A frame read has an overall deadline of twice the timeout, so a peer that streams junk cannot hold the entry. |
+| `solarman` | V5, then plain Modbus TCP on the same port, then 30003 | 8899 | Found by UDP 48899 discovery (a reply counts only when it names the address it came from, and that is private or loopback) and DHCP OUIs `E8:FD:F8` and `BC:54:F9`. A frame read has an overall deadline of twice the timeout, so a peer that streams junk cannot hold the entry. |
 | `s2_wl_st` | Modbus TCP | 502 | Solis S2-WL-ST from firmware `100101B4`. |
 | `modbus_tcp` | Modbus TCP | 502 or typed | Waveshare / Elfin / USR gateway; mains-powered, so a refused port is a fault, not night. |
 | `s5_wifi_st` (experimental) | Modbus TCP | 502 | Only while firmware keeps 502 open. |
 | `rtu_tcp` (experimental) | Raw Modbus RTU on TCP | Vendor factory port | Transparent bridges; never auto-detected. |
-| `solis_web` | HTTP GET of `inverter.cgi`, basic auth `admin` | 80 | S3-class sticks with no Modbus or Solarman port. Auto-detected last, see below. |
+| `solis_web` | HTTP GET of `inverter.cgi`, else `status.html`; basic auth `admin` | 80 | S3-class sticks with no Modbus or Solarman port, and IGEN-made Solis sticks that serve `status.html`. Auto-detected last, see below. |
 
 ## Decisions
 
@@ -48,20 +48,28 @@ config form reads `SELECTABLE_KINDS`, so the list is not copied.
 - **Auto-detect probes 502 then 8899 and stops at the first Solis map.** It
   never tries RTU, other ports or mDNS: extra framings are how Solarman
   sticks lock up. Only when both fail without a connected-but-silent 502 does
-  it look at port 80: a `401` with `realm="solis"` plus a readable
-  `inverter.cgi` offers `solis_web`. The realm check keeps a router or another
-  stick from being claimed.
+  it look at port 80: any Basic-auth `401` plus a readable `inverter.cgi` or
+  `status.html` offers `solis_web`. Realms differ between sticks, so parsing
+  the data page is what keeps a router or another device from being
+  claimed; only the `solis` realm is trusted to report a wrong password
+  during detection.
 - **Web page stick.** The stick polls the inverter about every five minutes
   and serves the cached values (measured: two changes 5 min 02 s apart over
   12 minutes), the same delay as SolisCloud, so the page is local but not
   faster. It is read at the normal local poll (60 s) so a new sample shows
   within a minute. Password is the web password, blank meaning the factory
   `123456789`, stored in entry data and redacted. Identity is the inverter
-  serial from the page, unique id `web:<serial>`. A 401 (`web_auth`) or a
-  page that is not the Solis format, a bad status, or a TCP session that gives
-  no page (`web_page`) is a paused session with the usual backoff, not night;
-  no route is asleep. Both reasons share one repair. Evidence and field
-  layout: `docs/research/web-page-stick.md`.
+  serial from the page, unique id `web:<serial>`. `inverter.cgi` is tried
+  first; a 404 or another format falls back to `status.html`, and the
+  layout that answered is kept. A 401 (`web_auth`) needs a new password: the
+  coordinator turns it into reauthentication, not a repair. A page that is
+  not a Solis format, a bad status, or a TCP session that gives no page
+  (`web_page`) is a paused session with the usual backoff, not night, and
+  opens the `logger_web` repair after 10 minutes; no route is asleep. The
+  HTTP client is hand-written on asyncio streams (one request per
+  connection, no redirects, size and time caps) because the stick firmware
+  pads replies and handles one socket at a time. Evidence and field layout:
+  `docs/research/web-page-stick.md`.
 - **One paced cloud read.** `SolisPriorityTransport._optional_cloud` is the only
   cloud read behind a local source: at most every 5 minutes (60 s after a
   failure), within a 20 s budget, cached. The fill, the identity read and the

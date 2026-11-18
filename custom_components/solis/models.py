@@ -79,6 +79,11 @@ class InverterSnapshot:
     data_source: str = "cloud"
     # Short Solis model code such as E4, kept apart from the series name.
     model_code: str | None = None
+    # Lifetime grid and load counters from inverter detail (upstream
+    # hultenvp read these per inverter).
+    grid_import_total_kwh: float | None = None
+    grid_export_total_kwh: float | None = None
+    load_total_kwh: float | None = None
 
     def condition(self, now: datetime, stale_after: timedelta = STALE_AFTER) -> str:
         """Return online, offline, alarm, stale, or unknown."""
@@ -124,6 +129,8 @@ class StationSnapshot:
     address: str | None
     latitude: float | None
     longitude: float | None
+    # IANA name from timeZoneStandardId, when SolisCloud sent one.
+    timezone_name: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -301,6 +308,7 @@ def _station(raw: Mapping[str, Any]) -> StationSnapshot:
         address=_optional_str(raw, "address"),
         latitude=_optional_float(raw, "latitude"),
         longitude=_optional_float(raw, "longitude"),
+        timezone_name=_optional_str(raw, "timezone_name"),
     )
 
 
@@ -344,6 +352,9 @@ def _inverter(raw: Mapping[str, Any]) -> InverterSnapshot:
         unreachable=bool(raw.get("unreachable", False)),
         data_source=str(raw.get("data_source") or "cloud"),
         model_code=_optional_str(raw, "model_code"),
+        grid_import_total_kwh=_optional_float(raw, "grid_import_total_kwh"),
+        grid_export_total_kwh=_optional_float(raw, "grid_export_total_kwh"),
+        load_total_kwh=_optional_float(raw, "load_total_kwh"),
     )
 
 

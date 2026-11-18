@@ -3,7 +3,7 @@
 Input note, not a spec node. Read from a real stick on 2025: collector
 firmware `10010106`, web version `2.2.0`, inverter model code `E4`
 (Solis-mini, firmware `0F000F`), SolisCloud collector serial
-`7A122C096F409F31`, Wi-Fi module on Espressif OUI `B8:D6:1A`.
+`7A00000000000001`, Wi-Fi module on Espressif OUI `B8:D6:1A`.
 
 ## What it exposes
 
@@ -39,8 +39,35 @@ ssid, rssi, ip and MAC, 12 and 13 remote server A and B (`Connected`,
 
 Another firmware prints `;860041;205;20.1;790;0.300000;d;NO;`, an empty serial
 and decimal fields ([HA community post](https://community.home-assistant.io/t/using-the-restful-integration-to-get-data-from-a-solis-inverter-with-a-wifi-stick/891939)).
-The parser needs eight fields and numeric temperature, power and energy; it
-does not guess other layouts.
+With the field order of [hn/ginlong-solis](https://github.com/hn/ginlong-solis)
+(serial, firmware, model, temperature, power, today, total, alarms) the total
+there is `d`. The parser therefore requires only a plausible power field;
+temperature and energy that are not plausible numbers are left empty, and the
+alarm word is optional.
+
+## The IGEN-made status page
+
+Sticks made by IGEN/Solarman for Solis (and for other brands) serve no
+`inverter.cgi`. Their `/status.html`, behind Basic auth (`admin`/`admin` by
+default), carries the readings as JavaScript variables
+([gist](https://gist.github.com/s12wu/12d01bdaafc051d7e3ae83c3fbaec1b8),
+[solis2mqtt](https://github.com/thijsmans/solis2mqtt),
+[evcc `solarman` template](https://github.com/evcc-io/evcc/blob/master/templates/definition/meter/solarman.yaml),
+[HA community](https://community.home-assistant.io/t/getting-data-from-a-solis-ginlong-inverter/461672)):
+`webdata_sn` (inverter serial, space padded), `webdata_msvn`, `webdata_now_p`
+(W), `webdata_today_e` and `webdata_total_e` (kWh), `webdata_alarm` (empty
+without an alarm), `cover_mid` (stick serial), `cover_ver` (stick firmware)
+and `cover_sta_mac`. The visible `<div id="webdata_now_p">` shows `---` until
+the script fills it, so only the `var` lines are read. With no inverter data
+the values are empty (solis2mqtt then treats power as 0). The integration
+reads `inverter.cgi` first and falls back to `status.html` on a 404 or a reply
+in another format, then keeps the layout that answered. An empty or `---`
+power is reported as zero with the inverter offline, keeping the last totals.
+
+The Basic realm differs between sticks, so auto-detection accepts any Basic
+challenge on port 80 and confirms the stick by parsing the data page; only the
+`solis` realm is trusted enough to report a wrong password during
+auto-detection.
 
 ## Refresh cycle
 
@@ -54,8 +81,11 @@ stick's poll, not an average.
 
 ## Consequences for the integration
 
-- Kind `solis_web`, port 80, basic auth, one GET of `/inverter.cgi` per poll.
-  `/moniter.cgi` is read once at setup for the stick serial and MAC.
+- Kind `solis_web`, port 80, basic auth, one GET of `/inverter.cgi` (or
+  `/status.html`) per poll. `/moniter.cgi` (or the `cover_*` variables) is
+  read once at setup for the stick serial and MAC.
+- A rejected password raises `SolisLoggerAuthError`: it does not fix itself,
+  since some firmware switches the web password to the Wi-Fi password.
 - Reading faster than the stick refreshes gains nothing. Polling every
   minute keeps the lag after a refresh under a minute.
 - The page lacks month and year energy, frequency, phases, strings and the

@@ -14,10 +14,11 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import entity_registry as er, issue_registry as ir
-from homeassistant.helpers.update_coordinator import UpdateFailed
 
 from .conftest import entry_data, entry_options
+from .flow_helpers import logger_form, pick, start_user
 from custom_components.solis.cloud_fill import fill_from_cloud, match_inverter
 from custom_components.solis.const import (
     DOMAIN,
@@ -31,7 +32,12 @@ from custom_components.solis.const import (
     WEB_DEFAULT_PASSWORD,
 )
 from custom_components.solis.coordinator import SolisCoordinator
-from custom_components.solis.errors import SolisCloudError, SolisLoggerBusy, SolisLoggerOffline
+from custom_components.solis.errors import (
+    SolisCloudError,
+    SolisLoggerAuthError,
+    SolisLoggerBusy,
+    SolisLoggerOffline,
+)
 from custom_components.solis.local_transport import (
     LoggerProbe,
     LoggerRequest,
@@ -56,10 +62,10 @@ from custom_components.solis.web_transport import SolisWebTransport, probe_web
 from mock_soliscloud.stick import captured_registers
 from mock_soliscloud.web_stick import WebStickEmulator
 
-PAGE = "110E40182280017;0F000F;E4;38.4;382;2.800000;21986;NO;"
+PAGE = "1031000000000001;0F000F;E4;38.4;382;2.800000;21986;NO;"
 COLLECTOR = (
-    "\x00" * 33 + ";2;7A122C096F409F31;10010106;Disabled;null;null;Disabled;null;null;"
-    "192.168.0.112;B8:D6:1A:58:A7:0B;Connected;null;"
+    "\x00" * 33 + ";2;7A00000000000001;10010106;Disabled;null;null;Disabled;null;null;"
+    "192.168.0.112;B8:D6:1A:00:00:01;Connected;null;"
 )
 
 
@@ -72,8 +78,8 @@ def _transport(stick: WebStickEmulator, **kwargs: Any) -> SolisWebTransport:
 def _cloud_snapshot() -> SolisSnapshot:
     inverter = decode_string(
         captured_registers(),
-        serial="110E40182280017",
-        logger_serial="7A122C096F409F31",
+        serial="1031000000000001",
+        logger_serial="7A00000000000001",
         now=datetime.now(UTC),
     )
     return SolisSnapshot(
@@ -105,8 +111,8 @@ class _DownCloud:
 def test_parse_inverter_and_collector() -> None:
     """The semicolon strings of a real stick, with and without padding."""
     page = parse_inverter(" " * 30 + PAGE + " " * 200)
-    assert parse_inverter("\x00" * 33 + PAGE + " " * 200).serial == "110E40182280017"
-    assert page.serial == "110E40182280017"
+    assert parse_inverter("\x00" * 33 + PAGE + " " * 200).serial == "1031000000000001"
+    assert page.serial == "1031000000000001"
     assert page.firmware == "0F000F"
     assert page.model_code == "E4"
     assert (page.temperature_c, page.power_w) == (38.4, 382.0)
@@ -118,11 +124,11 @@ def test_parse_inverter_and_collector() -> None:
             parse_inverter(bad)
     collector = parse_collector(COLLECTOR)
     assert collector is not None
-    assert (collector.serial, collector.version) == ("7A122C096F409F31", "10010106")
-    assert collector.mac == "B8:D6:1A:58:A7:0B"
-    assert parse_collector(COLLECTOR.replace("B8:D6:1A:58:A7:0B", "null")).mac == ""  # type: ignore[union-attr]
+    assert (collector.serial, collector.version) == ("7A00000000000001", "10010106")
+    assert collector.mac == "B8:D6:1A:00:00:01"
+    assert parse_collector(COLLECTOR.replace("B8:D6:1A:00:00:01", "null")).mac == ""  # type: ignore[union-attr]
     assert parse_collector("short") is None
-    assert parse_collector(COLLECTOR.replace("7A122C096F409F31", "")) is None
+    assert parse_collector(COLLECTOR.replace("7A00000000000001", "")) is None
 
 
 def test_banner_check_needs_the_solis_realm() -> None:
@@ -138,7 +144,7 @@ async def test_client_reads_both_pages(stick: WebStickEmulator) -> None:
     assert (await client.read_inverter()).power_w == 382.0
     collector = await client.read_collector()
     assert collector is not None
-    assert collector.serial == "7A122C096F409F31"
+    assert collector.serial == "7A00000000000001"
     await client.close()
     assert stick.state.requests == ["/inverter.cgi", "/moniter.cgi"]
 
@@ -188,15 +194,15 @@ async def test_transport_publishes_a_local_snapshot(stick: WebStickEmulator) -> 
     snapshot = await transport.async_read()
     assert snapshot.source == "local"
     inverter = snapshot.inverters[0]
-    assert inverter.serial == "110E40182280017"
+    assert inverter.serial == "1031000000000001"
     assert inverter.data_source == "local"
     assert (inverter.ac_power_w, inverter.temperature_c) == (382.0, 38.4)
     assert (inverter.energy_today_kwh, inverter.energy_total_kwh) == (2.8, 21986.0)
     assert (inverter.hmi_version, inverter.model_code, inverter.state) == ("0F000F", "E4", 1)
     assert inverter.strings == () and inverter.phases == ()
     assert inverter.energy_month_kwh is None and inverter.frequency_hz is None
-    assert learned == ["110E40182280017"]
-    assert transport.inverter_serial == "110E40182280017"
+    assert learned == ["1031000000000001"]
+    assert transport.inverter_serial == "1031000000000001"
     assert transport.last_snapshot is snapshot
     assert transport.logger_serial == 0
     assert snapshot.collectors[0].model == "Solis web page"
@@ -304,9 +310,9 @@ async def test_probe_reads_the_stick_page_and_collector(stick: WebStickEmulator)
     )
     probe = await probe_web(request, auto=False)
     assert probe.kind == LOGGER_WEB
-    assert probe.inverter_serial == "110E40182280017"
-    assert probe.stick_serial == "7A122C096F409F31"
-    assert probe.mac == "B8:D6:1A:58:A7:0B"
+    assert probe.inverter_serial == "1031000000000001"
+    assert probe.stick_serial == "7A00000000000001"
+    assert probe.mac == "B8:D6:1A:00:00:01"
     named = await probe_web(
         LoggerRequest(
             "127.0.0.1",
@@ -319,7 +325,7 @@ async def test_probe_reads_the_stick_page_and_collector(stick: WebStickEmulator)
     )
     assert named.inverter_serial == "MINE"
     blank = await probe_web(LoggerRequest("127.0.0.1", LOGGER_WEB, stick.port), auto=False)
-    assert blank.inverter_serial == "110E40182280017"
+    assert blank.inverter_serial == "1031000000000001"
     stick.state.mode = "garbage"
     with pytest.raises(SolisLoggerBusy) as page:
         await probe_web(LoggerRequest("127.0.0.1", LOGGER_WEB, stick.port), auto=False)
@@ -342,7 +348,7 @@ async def test_probe_without_a_collector_page_still_works(stick: WebStickEmulato
     stick._body = body  # type: ignore[method-assign]
     probe = await probe_web(LoggerRequest("127.0.0.1", LOGGER_WEB, stick.port), auto=False)
     assert (probe.stick_serial, probe.mac) == ("", "")
-    assert probe.inverter_serial == "110E40182280017"
+    assert probe.inverter_serial == "1031000000000001"
 
 
 async def test_auto_detect_needs_a_solis_page(
@@ -377,7 +383,7 @@ async def test_auto_detect_needs_a_solis_page(
     monkeypatch.setattr("custom_components.solis.web_transport.WEB_PORT", stick.port)
     found = await identify_logger(LoggerRequest("127.0.0.1", timeout=2))
     assert found.kind == LOGGER_WEB
-    assert found.inverter_serial == "110E40182280017"
+    assert found.inverter_serial == "1031000000000001"
     stick.state.password = "other"
     with pytest.raises(SolisLoggerBusy) as auth:
         await identify_logger(LoggerRequest("127.0.0.1", timeout=2))
@@ -403,18 +409,18 @@ def test_form_setup_and_identity_helpers() -> None:
     probe = LoggerProbe(
         0,
         "web",
-        "110E40182280017",
+        "1031000000000001",
         "http",
         False,
         kind=LOGGER_WEB,
         port=80,
         function=0,
-        stick_serial="7A122C096F409F31",
+        stick_serial="7A00000000000001",
     )
-    fields, unique = logger_setup(request, probe, mac="B8:D6:1A:58:A7:0B", source=SOURCE_LOCAL)
-    assert unique == "web:110E40182280017"
+    fields, unique = logger_setup(request, probe, mac="B8:D6:1A:00:00:01", source=SOURCE_LOCAL)
+    assert unique == "web:1031000000000001"
     assert fields["logger_password"] == "secret"
-    assert fields["logger_serial"] == "7A122C096F409F31"
+    assert fields["logger_serial"] == "7A00000000000001"
     assert fields["logger_port"] == 80
     assert fields["logger_detect"] == "manual_solis_web"
     assert not needs_stable_id(probe, "", "")
@@ -447,7 +453,7 @@ async def test_both_mode_fills_what_the_page_lacks_from_the_cloud(
     assert inverter.energy_month_kwh == 30.0
     assert inverter.frequency_hz == 49.99
     assert inverter.strings and inverter.phases
-    assert inverter.serial == "110E40182280017"
+    assert inverter.serial == "1031000000000001"
     assert not local.needs_cloud_identity
     assert cloud.reads == 1
     stick.refresh(power=1792, temperature=39.7, today=2.9)
@@ -511,7 +517,7 @@ async def test_cloud_fill_starts_without_a_cloud_sample_and_skips_other_inverter
     web = await _transport(stick).async_read()
     assert fill_from_cloud(web, _cloud_snapshot(), serial="x", fresh=True) is web
     empty = replace(web, inverters=())
-    assert fill_from_cloud(empty, _cloud_snapshot(), serial="110E40182280017", fresh=True) is empty
+    assert fill_from_cloud(empty, _cloud_snapshot(), serial="1031000000000001", fresh=True) is empty
 
 
 async def test_both_mode_falls_back_to_a_fresh_cloud_sample(stick: WebStickEmulator) -> None:
@@ -537,29 +543,33 @@ async def test_flow_creates_a_web_entry_and_names_a_wrong_password(
     hass: HomeAssistant, stick: WebStickEmulator
 ) -> None:
     """Local flow: the inverter serial is the unique id and the password is stored."""
-    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {"source": SOURCE_LOCAL, "api_url": "http://127.0.0.1:9", "key_id": "", "key_secret": ""},
-    )
-    form = {"logger_kind": LOGGER_WEB, "logger_host": "127.0.0.1", "logger_port": str(stick.port)}
+    result = await start_user(hass, "local")
+    form = logger_form(logger_kind=LOGGER_WEB, logger_host="127.0.0.1", logger_port=stick.port)
+    stick.state.password = "hunter2"
+    asked = await hass.config_entries.flow.async_configure(result["flow_id"], form)
+    # The password field only appears once the stick refuses the factory password.
+    assert asked["step_id"] == "logger_password"
+    assert asked["errors"]["base"] == "logger_web_password"
+    assert asked["description_placeholders"] == {"host": "127.0.0.1"}
     wrong = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {**form, "logger_password": "nope"}
+        result["flow_id"], {"logger_password": "nope"}
     )
+    assert wrong["step_id"] == "logger_password"
     assert wrong["errors"]["base"] == "logger_web_password"
+    stick.state.password = "123456789"
     stick.state.mode = "garbage"
-    page = await hass.config_entries.flow.async_configure(result["flow_id"], form)
+    page = await hass.config_entries.flow.async_configure(result["flow_id"], {})
     assert page["errors"]["base"] == "logger_web_page"
     stick.state.mode = "ok"
-    created = await hass.config_entries.flow.async_configure(result["flow_id"], form)
+    created = await hass.config_entries.flow.async_configure(result["flow_id"], {})
     assert created["type"] is FlowResultType.CREATE_ENTRY
-    assert created["result"].unique_id == "web:110E40182280017"
+    assert created["result"].unique_id == "web:1031000000000001"
     data = created["result"].data
     assert data["logger_kind"] == LOGGER_WEB
     assert data["logger_password"] == "123456789"
-    assert data["logger_serial"] == "7A122C096F409F31"
-    assert data["logger_mac"] == "B8:D6:1A:58:A7:0B"
-    assert data["inverter_serial"] == "110E40182280017"
+    assert data["logger_serial"] == "7A00000000000001"
+    assert data["logger_mac"] == "B8:D6:1A:00:00:01"
+    assert data["inverter_serial"] == "1031000000000001"
     assert created["result"].options["scan_interval"] == 60
 
 
@@ -568,14 +578,14 @@ async def test_flow_asks_for_an_identity_when_the_page_has_no_serial(
 ) -> None:
     """A page without a serial and no typed serial has no stable id."""
     stick.state.serial = ""
-    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {"source": SOURCE_LOCAL, "api_url": "http://127.0.0.1:9", "key_id": "", "key_secret": ""},
-    )
+    result = await start_user(hass, "local")
     failed = await hass.config_entries.flow.async_configure(
         result["flow_id"],
-        {"logger_kind": LOGGER_WEB, "logger_host": "127.0.0.1", "logger_port": str(stick.port)},
+        logger_form(
+            logger_kind=LOGGER_WEB,
+            logger_host="127.0.0.1",
+            logger_port=str(stick.port),
+        ),
     )
     assert failed["errors"]["base"] == "logger_identity"
 
@@ -593,21 +603,21 @@ async def test_entry_publishes_the_stick_and_hides_the_password(
             "logger_kind": LOGGER_WEB,
             "logger_host": "127.0.0.1",
             "logger_port": stick.port,
-            "logger_serial": "7A122C096F409F31",
+            "logger_serial": "7A00000000000001",
             "logger_password": "123456789",
-            "inverter_serial": "110E40182280017",
+            "inverter_serial": "1031000000000001",
             "logger_detect": "manual_solis_web",
         },
         options=entry_options(),
         version=3,
-        unique_id="web:110E40182280017",
+        unique_id="web:1031000000000001",
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     registry = er.async_get(hass)
-    total = registry.async_get_entity_id("sensor", DOMAIN, "110E40182280017_energy_total")
-    power = registry.async_get_entity_id("sensor", DOMAIN, "110E40182280017_ac_power")
+    total = registry.async_get_entity_id("sensor", DOMAIN, "1031000000000001_energy_total")
+    power = registry.async_get_entity_id("sensor", DOMAIN, "1031000000000001_ac_power")
     assert total is not None and power is not None
     assert float(hass.states.get(total).state) == 21986  # type: ignore[union-attr]
     assert float(hass.states.get(power).state) == 382  # type: ignore[union-attr]
@@ -619,13 +629,13 @@ async def test_entry_publishes_the_stick_and_hides_the_password(
 
 
 async def test_wrong_password_repair_waits_ten_minutes(hass: HomeAssistant) -> None:
-    """One rejected poll is not a repair. Ten minutes of them is."""
+    """A rejected stick password asks for reauthentication at once and opens no repair."""
 
     class _Rejected:
         degraded_reason = REASON_WEB_AUTH
 
         async def async_read(self) -> SolisSnapshot:
-            raise SolisLoggerBusy("web password rejected", reason=REASON_WEB_AUTH)
+            raise SolisLoggerAuthError("web password rejected")
 
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -635,21 +645,16 @@ async def test_wrong_password_repair_waits_ten_minutes(hass: HomeAssistant) -> N
     )
     entry.add_to_hass(hass)
     coordinator = SolisCoordinator(hass, entry, _Rejected())
-    with pytest.raises(UpdateFailed) as failure:
+    with pytest.raises(ConfigEntryAuthFailed) as failure:
         await coordinator._async_update_data()
-    assert failure.value.translation_key == "update_logger_web"
+    assert failure.value.translation_key == "update_logger_web_auth"
+    assert coordinator.auth_failed is True
+    coordinator._degraded_since = time.monotonic() - 601
+    with pytest.raises(ConfigEntryAuthFailed):
+        await coordinator._async_update_data()
     assert not any(
         issue_id.startswith("logger_web") for (_domain, issue_id) in ir.async_get(hass).issues
     )
-    coordinator._degraded_since = time.monotonic() - 601
-    with pytest.raises(UpdateFailed):
-        await coordinator._async_update_data()
-    assert any(
-        issue_id.startswith("logger_web") for (_domain, issue_id) in ir.async_get(hass).issues
-    )
-    report = coordinator.logger_report()
-    assert report["reason"] == REASON_WEB_AUTH
-    assert "password" in report["detail"]
 
 
 async def test_reconfigure_keeps_the_saved_password_and_attaches_a_web_stick(
@@ -669,25 +674,20 @@ async def test_reconfigure_keeps_the_saved_password_and_attaches_a_web_stick(
     await hass.async_block_till_done()
     stick.state.password = "hunter2"
     started = await entry.start_reconfigure_flow(hass)
-    base = {
-        "api_url": url,
-        "station_ids": ["1900000000000001001", "1900000000000001002"],
-        "scan_interval": 120,
-        "request_timeout": 30,
-        "endpoint_interval": 0.5,
-        "logger_kind": LOGGER_WEB,
-        "logger_host": "127.0.0.1",
-        "logger_port": str(stick.port),
-    }
+    started = await pick(hass, started["flow_id"], "logger")
+    base = logger_form(logger_kind=LOGGER_WEB, logger_host="127.0.0.1", logger_port=stick.port)
+    asked = await hass.config_entries.flow.async_configure(started["flow_id"], base)
+    assert asked["step_id"] == "logger_password"
     updated = await hass.config_entries.flow.async_configure(
-        started["flow_id"], {**base, "logger_password": "hunter2"}
+        started["flow_id"], {"logger_password": "hunter2"}
     )
     assert updated["type"] is FlowResultType.ABORT
     assert updated["reason"] == "reconfigure_successful"
-    assert entry.unique_id == "web:110E40182280017"
+    assert entry.unique_id == "web:1031000000000001"
     assert entry.data["source"] == SOURCE_BOTH
     assert entry.data["logger_password"] == "hunter2"
     again = await entry.start_reconfigure_flow(hass)
+    again = await pick(hass, again["flow_id"], "logger")
     kept = await hass.config_entries.flow.async_configure(again["flow_id"], base)
     assert kept["type"] is FlowResultType.ABORT
     assert entry.data["logger_password"] == "hunter2"
@@ -697,7 +697,7 @@ async def test_reconfigure_keeps_the_saved_password_and_attaches_a_web_stick(
 async def test_local_reconfigure_keeps_the_saved_password(
     hass: HomeAssistant, stick: WebStickEmulator
 ) -> None:
-    """The local-only reconfigure form opens on the logger step."""
+    """The local-only reconfigure menu lists the logger first and keeps the password."""
     stick.state.password = "hunter2"
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -707,18 +707,24 @@ async def test_local_reconfigure_keeps_the_saved_password(
             "logger_host": "127.0.0.1",
             "logger_port": stick.port,
             "logger_password": "hunter2",
-            "inverter_serial": "110E40182280017",
+            "inverter_serial": "1031000000000001",
         },
         options=entry_options(),
         version=3,
-        unique_id="web:110E40182280017",
+        unique_id="web:1031000000000001",
     )
     entry.add_to_hass(hass)
     started = await entry.start_reconfigure_flow(hass)
+    assert started["menu_options"][0] == "logger"
+    started = await pick(hass, started["flow_id"], "logger")
     assert started["step_id"] == "logger"
     done = await hass.config_entries.flow.async_configure(
         started["flow_id"],
-        {"logger_kind": LOGGER_WEB, "logger_host": "127.0.0.1", "logger_port": str(stick.port)},
+        logger_form(
+            logger_kind=LOGGER_WEB,
+            logger_host="127.0.0.1",
+            logger_port=str(stick.port),
+        ),
     )
     assert done["type"] is FlowResultType.ABORT
     assert entry.data["logger_password"] == "hunter2"

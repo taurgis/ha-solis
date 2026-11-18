@@ -5,8 +5,8 @@ The default image is the ``homeassistant`` field in ``hacs.json``. Pass a
 version argument to boot another tag, such as the current stable release.
 
 The check fails unless the config entry loads, AC power matches the mock,
-a short 502 keeps that power, a sustained 502 hides it and opens a repair
-that clears on recovery, one inverter can fail on its own, bad bodies do not
+a short 502 keeps that power, a sustained 502 hides it without opening a
+repair, power returns on recovery, one inverter can fail on its own, bad bodies do not
 start reauthentication, and a null, zero, reset or spike does not move the
 lifetime total backwards. It then starts the Solarman stick emulator, adds a
 local entry, checks the captured string map, sleeps the stick, and brings it
@@ -45,6 +45,9 @@ STICK_CONTROL = "http://127.0.0.1:8877"
 LOGGER_SERIAL = "1902137671"
 LOCAL_TOTAL = 21970.0
 MORNING_HOST = "127.0.0.2"
+# The stick emulator keeps the inverter serial hex-nibble encoded, like real
+# firmware. It must match INVERTER_SERIAL in tools/mock_soliscloud/stick.py.
+LOCAL_SERIAL = "1031230000000AB1"
 
 
 class CheckError(Exception):
@@ -164,7 +167,7 @@ def _onboard(base: str, steps: list[dict[str, Any]]) -> str:
     if status != 200 or not isinstance(created, dict) or not created.get("auth_code"):
         raise CheckError(f"onboarding user failed: {status} {created}")
     token = _exchange(base, str(created["auth_code"]))
-    follow_ups = (
+    follow_ups: tuple[tuple[str, str, dict[str, Any]], ...] = (
         ("core_config", "/api/onboarding/core_config", {}),
         ("analytics", "/api/onboarding/analytics", {}),
         (
@@ -194,7 +197,8 @@ def _advance(base: str, token: str, flow_id: str, payload: dict[str, Any]) -> di
     return body
 
 
-def _add_solis(base: str, token: str) -> str:
+def _start_flow(base: str, token: str, source: str) -> tuple[str, dict[str, Any]]:
+    """Start a user flow and pick ``source`` (cloud, local or both) in the menu."""
     status, started = _http(
         "POST",
         f"{base}/api/config/config_entries/flow",
@@ -203,17 +207,26 @@ def _add_solis(base: str, token: str) -> str:
     )
     if status != 200 or not isinstance(started, dict):
         raise CheckError(f"config flow did not start: {status} {started}")
+    if started.get("type") != "menu":
+        raise CheckError(f"expected the connection menu: {json.dumps(started)[:1500]}")
     flow_id = str(started.get("flow_id") or "")
-    current = _advance(
+    return flow_id, _advance(base, token, flow_id, {"next_step_id": source})
+
+
+def _cloud_form(base: str, token: str, flow_id: str, current: dict[str, Any]) -> dict[str, Any]:
+    if current.get("step_id") != "cloud":
+        raise CheckError(f"expected the SolisCloud form: {json.dumps(current)[:1500]}")
+    return _advance(
         base,
         token,
         flow_id,
-        {
-            "api_url": API_URL,
-            "key_id": "test-key",
-            "key_secret": "test-secret",
-        },
+        {"api_url": API_URL, "key_id": "test-key", "key_secret": "test-secret"},
     )
+
+
+def _add_solis(base: str, token: str) -> str:
+    flow_id, current = _start_flow(base, token, "cloud")
+    current = _cloud_form(base, token, flow_id, current)
     if current.get("type") != "form" or current.get("step_id") != "stations":
         raise CheckError(f"expected the plant step: {json.dumps(current)[:1500]}")
     current = _advance(
@@ -310,6 +323,7 @@ def _ws(base: str, token: str, message: dict[str, Any]) -> Any:
 
 
 def _reconfigure(base: str, token: str, entry_id: str) -> None:
+    """Reconfigure the same plants, then set the plant timezone in options."""
     status, started = _http(
         "POST",
         f"{base}/api/config/config_entries/flow",
@@ -318,34 +332,56 @@ def _reconfigure(base: str, token: str, entry_id: str) -> None:
     )
     if status != 200 or not isinstance(started, dict):
         raise CheckError(f"reconfigure did not start: {status} {started}")
-    current = _advance(
-        base,
-        token,
-        str(started.get("flow_id") or ""),
-        {
-            "api_url": API_URL,
-            "station_ids": [NORTH, BARN],
-            "scan_interval": 300,
-            "request_timeout": 30,
-            "endpoint_interval": 2,
-            "time_zone": "plant",
-        },
-    )
+    if started.get("type") != "menu":
+        raise CheckError(f"expected the reconfigure menu: {json.dumps(started)[:1500]}")
+    flow_id = str(started.get("flow_id") or "")
+    current = _advance(base, token, flow_id, {"next_step_id": "stations"})
+    if current.get("step_id") != "stations":
+        raise CheckError(f"expected the plant step: {json.dumps(current)[:1500]}")
+    current = _advance(base, token, flow_id, {"station_ids": [NORTH, BARN]})
     if current.get("type") != "abort" or current.get("reason") != "reconfigure_successful":
         raise CheckError(f"reconfigure failed: {json.dumps(current)[:1500]}")
+    _set_options(base, token, entry_id, {"scan_interval": 300, "time_zone": "plant"})
 
 
-def _finish_reauth(base: str, token: str) -> None:
+def _set_options(base: str, token: str, entry_id: str, payload: dict[str, Any]) -> None:
+    status, started = _http(
+        "POST",
+        f"{base}/api/config/config_entries/options/flow",
+        {"handler": entry_id, "show_advanced_options": False},
+        token=token,
+    )
+    if status != 200 or not isinstance(started, dict):
+        raise CheckError(f"options did not start: {status} {started}")
+    status, current = _http(
+        "POST",
+        f"{base}/api/config/config_entries/options/flow/{started.get('flow_id')}",
+        payload,
+        token=token,
+    )
+    if status != 200 or not isinstance(current, dict) or current.get("type") != "create_entry":
+        raise CheckError(f"options failed: {status} {json.dumps(current)[:1500]}")
+
+
+def _reauth_flow_id(base: str, token: str) -> str:
+    """Return the flow id of a Solis reauthentication in progress, or ""."""
     progress = _ws(base, token, {"type": "config_entries/flow/progress"})
     if not isinstance(progress, list):
         raise CheckError(f"reauth progress was not a list: {progress}")
-    flow_id = ""
     for flow in progress:
-        if isinstance(flow, dict) and flow.get("handler") == "solis":
-            flow_id = str(flow.get("flow_id") or "")
-            break
+        if (
+            isinstance(flow, dict)
+            and flow.get("handler") == "solis"
+            and (flow.get("context") or {}).get("source") == "reauth"
+        ):
+            return str(flow.get("flow_id") or "")
+    return ""
+
+
+def _finish_reauth(base: str, token: str) -> None:
+    flow_id = _reauth_flow_id(base, token)
     if not flow_id:
-        raise CheckError(f"reauth flow was not in progress: {progress}")
+        raise CheckError("reauth flow was not in progress")
     current = _advance(
         base,
         token,
@@ -399,7 +435,8 @@ def _issues(base: str, token: str) -> list[dict[str, Any]]:
                     raise CheckError(f"repairs list failed: {message}")
                 result = message.get("result")
                 if isinstance(result, dict) and isinstance(result.get("issues"), list):
-                    return result["issues"]
+                    issues: list[dict[str, Any]] = result["issues"]
+                    return issues
                 raise CheckError(f"unexpected repairs payload: {message}")
 
     return asyncio.run(_call())
@@ -442,16 +479,16 @@ def _cloud_faults(
         timeout=150,
     )
     _require_energy(base, token, total_id, held)
-    if "cloud_outage" not in json.dumps(_issues(base, token)):
-        raise CheckError("sustained outage did not open a repair")
-    _log("Sustained 502 hid live power, held energy, and opened a repair")
+    if "cloud_outage" in json.dumps(_issues(base, token)):
+        raise CheckError("sustained outage opened a repair the user cannot act on")
+    _log("Sustained 502 hid live power and held energy without a repair")
     _mock_control({"fault": "ok"})
     _refresh(base, token, power_id)
     _wait_state(base, token, power_id, lambda item: _number(item) == north_power, timeout=150)
     _require_energy(base, token, total_id, held)
     if "cloud_outage" in json.dumps(_issues(base, token)):
         raise CheckError("outage repair was still open after recovery")
-    _log("Power recovered to the mock value and the repair cleared")
+    _log("Power recovered to the mock value")
     _mock_control({"fault": "partial"})
     _refresh(base, token, power_id)
     _wait_state(
@@ -484,7 +521,7 @@ def _cloud_faults(
             timeout=150,
         )
         _require_energy(base, token, total_id, held)
-        if "invalid_auth" in json.dumps(_issues(base, token)):
+        if _reauth_flow_id(base, token):
             raise CheckError(f"{fault} started reauthentication")
         _mock_control({"fault": "ok"})
         _refresh(base, token, power_id)
@@ -655,6 +692,16 @@ def _entity_id(base: str, token: str, unique_id: str) -> str:
     raise CheckError(f"no Solis entity with unique id {unique_id}")
 
 
+def _require_disabled(base: str, token: str, unique_id: str) -> None:
+    """The entity exists but the integration disabled it by default."""
+    for row in _registry(base, token):
+        if row.get("unique_id") == unique_id and row.get("platform") == "solis":
+            if row.get("disabled_by") != "integration":
+                raise CheckError(f"{unique_id} was not disabled by default: {row}")
+            return
+    raise CheckError(f"no Solis entity with unique id {unique_id}")
+
+
 def _require_unique(
     base: str,
     token: str,
@@ -699,22 +746,30 @@ def _refresh_until(base: str, token: str, entity_id: str) -> None:
     raise CheckError(f"update_entity failed: {last}")
 
 
+def _refresh_while_waiting(
+    base: str,
+    token: str,
+    entity_id: str,
+    unique_id: str,
+    predicate: Any,
+    timeout: float = 180,
+) -> None:
+    """Refresh every 10 s until ``unique_id`` matches, or fail after ``timeout``."""
+    deadline = time.monotonic() + timeout
+    while True:
+        _refresh_until(base, token, entity_id)
+        try:
+            _require_unique(base, token, unique_id, predicate, timeout=10)
+            return
+        except CheckError:
+            if time.monotonic() >= deadline:
+                raise
+
+
 def _add_logger(base: str, token: str, source: str, host: str) -> str:
-    status, started = _http(
-        "POST",
-        f"{base}/api/config/config_entries/flow",
-        {"handler": "solis", "show_advanced_options": False},
-        token=token,
-    )
-    if status != 200 or not isinstance(started, dict):
-        raise CheckError(f"logger flow did not start: {status} {started}")
-    flow_id = str(started.get("flow_id") or "")
-    user: dict[str, Any] = {"api_url": API_URL, "source": source}
-    if source != "local":
-        user["key_id"] = "test-key"
-        user["key_secret"] = "test-secret"
-    current = _advance(base, token, flow_id, user)
+    flow_id, current = _start_flow(base, token, source)
     if source == "both":
+        current = _cloud_form(base, token, flow_id, current)
         if current.get("step_id") != "stations":
             raise CheckError(f"expected the plant step: {json.dumps(current)[:1500]}")
         current = _advance(base, token, flow_id, {"station_ids": [NORTH, BARN]})
@@ -724,7 +779,11 @@ def _add_logger(base: str, token: str, source: str, host: str) -> str:
         base,
         token,
         flow_id,
-        {"logger_kind": "auto", "logger_host": host, "logger_serial": LOGGER_SERIAL},
+        {
+            "logger_kind": "auto",
+            "logger_host": host,
+            "advanced": {"logger_serial": LOGGER_SERIAL},
+        },
     )
     if current.get("type") != "create_entry":
         raise CheckError(f"logger flow did not create an entry: {json.dumps(current)[:1500]}")
@@ -764,29 +823,46 @@ def _require_no_cloud_outage(base: str, token: str) -> None:
         raise CheckError(f"asleep logger opened a cloud outage repair: {blob[:1500]}")
 
 
-def _exercise_local(base: str, token: str, config: Path) -> None:
+def _exercise_local(base: str, token: str, config: Path, cloud_id: str) -> None:
     """Local setup, night, a new DHCP address, then cloud totals that must not win."""
     _stick_control({"registers": {"3005": 500}})
     entry_id = _add_logger(base, token, "local", "127.0.0.1")
     _wait_loaded(base, token, entry_id)
-    _require_unique(base, token, "SOLIS001_energy_total", lambda item: _number(item) == LOCAL_TOTAL)
-    _require_unique(base, token, "SOLIS001_data_source", lambda item: item.get("state") == "local")
-    _require_unique(base, token, "SOLIS001_ac_power", lambda item: _number(item) == 500)
-    _require_unique(base, token, "SOLIS001_phase_1_voltage", lambda item: _number(item) == 234.9)
-    _log("Local logger published 21970 kWh, 500 W and 234.9 V")
-    energy_id = _entity_id(base, token, "SOLIS001_energy_total")
+    _require_unique(
+        base, token, f"{LOCAL_SERIAL}_energy_total", lambda item: _number(item) == LOCAL_TOTAL
+    )
+    _require_unique(
+        base, token, f"{LOCAL_SERIAL}_data_source", lambda item: item.get("state") == "local"
+    )
+    _require_unique(base, token, f"{LOCAL_SERIAL}_ac_power", lambda item: _number(item) == 500)
+    _require_disabled(base, token, f"{LOCAL_SERIAL}_phase_1_voltage")
+    _log("Local logger published 21970 kWh and 500 W; single-phase phase sensors start disabled")
+    energy_id = _entity_id(base, token, f"{LOCAL_SERIAL}_energy_total")
     _stick_control({"night": True})
     _refresh_until(base, token, energy_id)
-    _require_unique(base, token, "SOLIS001_ac_power", lambda item: _number(item) == 0)
-    _require_unique(base, token, "SOLIS001_energy_total", lambda item: _number(item) == LOCAL_TOTAL)
-    _require_unique(base, token, "SOLIS001_data_source", lambda item: item.get("state") == "asleep")
+    _require_unique(base, token, f"{LOCAL_SERIAL}_ac_power", lambda item: _number(item) == 0)
+    _require_unique(
+        base, token, f"{LOCAL_SERIAL}_energy_total", lambda item: _number(item) == LOCAL_TOTAL
+    )
+    _require_unique(
+        base, token, f"{LOCAL_SERIAL}_data_source", lambda item: item.get("state") == "asleep"
+    )
     _require_no_cloud_outage(base, token)
     _log("Night closed the stick: power 0, lifetime energy held, source asleep")
     _stick_control({"night": False, "host": MORNING_HOST, "registers": {"3005": 500}})
-    _refresh_until(base, token, energy_id)
-    _require_unique(base, token, "SOLIS001_data_source", lambda item: item.get("state") == "local")
-    _require_unique(base, token, "SOLIS001_energy_total", lambda item: _number(item) == LOCAL_TOTAL)
-    _require_unique(base, token, "SOLIS001_ac_power", lambda item: _number(item) == 500)
+    # A missing stick is looked for again 60 s after the first miss, then at
+    # growing gaps; keep refreshing until it is found on its new address.
+    _refresh_while_waiting(
+        base,
+        token,
+        energy_id,
+        f"{LOCAL_SERIAL}_data_source",
+        lambda item: item.get("state") == "local",
+    )
+    _require_unique(
+        base, token, f"{LOCAL_SERIAL}_energy_total", lambda item: _number(item) == LOCAL_TOTAL
+    )
+    _require_unique(base, token, f"{LOCAL_SERIAL}_ac_power", lambda item: _number(item) == 500)
     _wait_stored_host(config, entry_id, MORNING_HOST)
     _wait_loaded(base, token, entry_id)
     status, body = _http(
@@ -799,8 +875,10 @@ def _exercise_local(base: str, token: str, config: Path) -> None:
         raise CheckError(f"reload failed: {status} {body}")
     _wait_loaded(base, token, entry_id)
     _refresh_until(base, token, energy_id)
-    _require_unique(base, token, "SOLIS001_data_source", lambda item: item.get("state") == "local")
-    _require_unique(base, token, "SOLIS001_ac_power", lambda item: _number(item) == 500)
+    _require_unique(
+        base, token, f"{LOCAL_SERIAL}_data_source", lambda item: item.get("state") == "local"
+    )
+    _require_unique(base, token, f"{LOCAL_SERIAL}_ac_power", lambda item: _number(item) == 500)
     logs = _run([*DOCKER, "logs", CORE_NAME], check=False)
     combined = f"{logs.stdout}\n{logs.stderr}"
     moved = combined.count(f"Solarman logger {LOGGER_SERIAL} is now at {MORNING_HOST}")
@@ -808,23 +886,29 @@ def _exercise_local(base: str, token: str, config: Path) -> None:
         raise CheckError(f"expected one IP-change log line, found {moved}")
     _log(f"Logger {LOGGER_SERIAL} moved to {MORNING_HOST} and the entry was updated once")
     _delete_entry(base, token, entry_id)
+    # One SolisCloud key is read by one cloud-only entry or by local entries,
+    # never both, so the cloud-only entry goes before the local+cloud one.
+    _delete_entry(base, token, cloud_id)
     both_id = _add_logger(base, token, "both", MORNING_HOST)
     _wait_loaded(base, token, both_id)
-    _require_unique(base, token, "SOLIS001_energy_total", lambda item: _number(item) == LOCAL_TOTAL)
-    _require_unique(base, token, "SOLIS001_data_source", lambda item: item.get("state") == "local")
+    _require_unique(
+        base, token, f"{LOCAL_SERIAL}_energy_total", lambda item: _number(item) == LOCAL_TOTAL
+    )
+    _require_unique(
+        base, token, f"{LOCAL_SERIAL}_data_source", lambda item: item.get("state") == "local"
+    )
     _log("Local plus cloud kept the stick total of 21970 kWh")
-    energy_id = _entity_id(base, token, "SOLIS001_energy_total")
+    energy_id = _entity_id(base, token, f"{LOCAL_SERIAL}_energy_total")
     _stick_control({"night": True})
     _refresh_until(base, token, energy_id)
-    _require_unique(base, token, "SOLIS001_ac_power", lambda item: _number(item) == 0)
-    _require_unique(base, token, "SOLIS001_energy_total", lambda item: _number(item) == LOCAL_TOTAL)
-    _require_unique(base, token, "SOLIS001_data_source", lambda item: item.get("state") == "asleep")
+    _require_unique(base, token, f"{LOCAL_SERIAL}_ac_power", lambda item: _number(item) == 0)
+    _require_unique(
+        base, token, f"{LOCAL_SERIAL}_energy_total", lambda item: _number(item) == LOCAL_TOTAL
+    )
+    _require_unique(
+        base, token, f"{LOCAL_SERIAL}_data_source", lambda item: item.get("state") == "asleep"
+    )
     _require_no_cloud_outage(base, token)
-    expected = _expected()
-    north = next(row for row in expected["inverters"] if row["serial"].endswith("0001"))
-    cloud_power = _find(_states(base, token), "s6_gr1p5k_ac_power")
-    if _number(cloud_power) != north["ac_power_w"]:
-        raise CheckError(f"cloud entry changed while the stick slept: {cloud_power}")
     _stick_control({"night": False, "host": MORNING_HOST})
     _log("Night with cloud configured still published the asleep local snapshot")
 
@@ -971,8 +1055,8 @@ def _assert_cloud_recovery(
     _mock_control({"mode": "auth_error"})
     _refresh(base, token, power_id)
     _wait_state(base, token, power_id, lambda item: item.get("state") == "unavailable")
-    if "invalid_auth" not in json.dumps(_issues(base, token)):
-        raise CheckError("reauth repair was not opened")
+    if not _reauth_flow_id(base, token):
+        raise CheckError("reauthentication was not started")
     _mock_control({"mode": "ok"})
     _finish_reauth(base, token)
     _refresh(base, token, power_id)
@@ -1008,6 +1092,8 @@ def run_check(version: str) -> None:
         if _version_at_least(version, 2026, 3):
             _assert_local_brand(base, token)
         held = _number(total)
+        if held is None:
+            raise CheckError(f"lifetime energy has no number: {total}")
         north_power = float(power["state"])
         _cloud_faults(
             base,
@@ -1025,7 +1111,7 @@ def run_check(version: str) -> None:
         _log(f"Home Assistant {version} loaded Solis, recovered from 502, and completed reauth")
         _ensure_loopback_alias()
         stick = _start_stick()
-        _exercise_local(base, token, config)
+        _exercise_local(base, token, config, entry_id)
         (ROOT / "lab").mkdir(exist_ok=True)
         (ROOT / "lab" / f"states-{version}.json").write_text(
             json.dumps(_states(base, token), indent=2),

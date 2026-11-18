@@ -11,7 +11,7 @@ stick by serial and MAC.
 
 | Source | What this integration takes from it |
 | --- | --- |
-| [jmccrohan/pysolarmanv5](https://github.com/jmccrohan/pysolarmanv5) | V5 header layout: start `0xA5`, little-endian length, control, sequence, logger serial, then a prefix, the Modbus RTU frame, a checksum of the bytes after the start, and end `0x15`. Request control is `0x4510`. Response control is `0x1510`. The response Modbus RTU starts at byte 25. |
+| [jmccrohan/pysolarmanv5](https://github.com/jmccrohan/pysolarmanv5) | V5 header layout: start `0xA5`, little-endian length, control, sequence, logger serial, then a prefix, the Modbus RTU frame, a checksum of the bytes after the start, and end `0x15`. Request control is `0x4510`. Response control is `0x1510`. The response Modbus RTU starts at byte 25. The stick echoes only the low sequence byte. The client starts at a random sequence, answers unsolicited frames (`0x41`, `0x42`, `0x43`, `0x47`, `0x48`) with a time frame (code minus `0x30`, low sequence byte plus one, payload `0x0100`, Unix time, 0), skips frames for another sequence, logger, slave or count within one deadline, and treats a response with no Modbus payload as the inverter not answering. |
 | [davidrapan/ha-solarman](https://github.com/davidrapan/ha-solarman) and [StephanJoubert/home_assistant_solarman](https://github.com/StephanJoubert/home_assistant_solarman) | Discovery probes `WIFIKIT-214028-READ` and `HF-A11ASSISTHREAD` to UDP 48899. The reply is `ip,mac,serial`. Their Solis string profiles use the same 3000-range function-4 map. |
 | Ginlong ModbusRTU protocol, Ver.3.7 (the table mirrored by [voltrus.id](https://www.voltrus.id/ginlong-solis-modbus-rtu-protocol/)) | String-inverter input registers. High word first. |
 | [Pho3niX90/solis_modbus](https://github.com/Pho3niX90/solis_modbus) and the Modbus Connect Solis map | Hybrid input registers from 33000. Register 33135 is battery direction: 0 charge, 1 discharge. |
@@ -70,14 +70,23 @@ Register 3002 was 0, so the inverter is single phase. Phase A voltage was 0
 while 3035 held the grid voltage, so the single published phase uses the
 first non-zero of 3033, 3034 and 3035.
 
-Status 1 maps to cloud state 1 (online). Status 2 maps to cloud state 3
-(alarm). Status 3 was this waking inverter, which still had grid voltage and
-PV voltage, so it stays unknown. It is not published as an alarm.
+The Solis status table (3043, and 33095 on a hybrid) is 0 waiting, 1 open
+loop, 2 soft start, 3 generating, and 0x1000 and above a fault such as 0x1015
+no grid. Some firmware also reads 15 while normal. Every normal value maps to
+cloud state 1 (online) and a fault maps to cloud state 3 (alarm). Status 3 on
+this waking inverter is generating, so it is online. Any other value stays
+unknown.
 
 Pho3niX90's string profile pairs 3021 and 3022 as one uint32 of DC power.
 This capture separates them: 3021 is volts and 3022 is amps.
 
-Registers 3050-3070, including the ASCII serial at 3060-3063, did not answer
+The serial at 3060-3063 is hex-nibble encoded, not ASCII (hn/ginlong-solis
+`SDT_SNHEX`): each register gives four digits, the nibble-swapped low byte and
+then the nibble-swapped high byte, so `0x1301` reads `1031`. A bank of eight
+printable letters and digits is still read as ASCII. A hybrid keeps its
+serial as ASCII at 33004-33019, two characters per register.
+
+Registers 3050-3070, including the serial at 3060-3063, did not answer
 on this stick before the logger reset the TCP session. The emulator does
 answer 3060-3063. A real stick that stays silent there keeps the inverter
 serial learned at setup, or `L` plus the logger serial when setup could not
@@ -86,8 +95,18 @@ SolisCloud uses for the same inverter. Add the cloud account on the same
 entry only for energy fields the stick left empty. It does not rename the
 local device.
 
-The hybrid auto-detect probes 33022. Exception 2 selects the string map. A
-normal reply selects the 33000 hybrid map. Slave 1 is tried, then 2, then 3.
+Auto-detect reads 3004 first; a reply selects the string map. When 3004 is
+an illegal address, the type register 35000 names the map (value // 100 is
+10 for the 3000 map and 20 for the hybrid map; some firmware stores 0x10xx or
+0x20xx). When 35000 says nothing, a normal reply at 33022 selects the hybrid
+map. Slave 1 is tried, then 2, then 3. Nothing on the RS485 bus answers a
+slave id that is not there, so a timeout, or a gateway's Modbus exception
+0x0A or 0x0B, moves to the next slave id instead of the next framing.
+
+On the hybrid map, AC active power is S32 at 33079 (33057 is total PV
+power), temperature at 33093 and battery current at 33134 are S16, and the
+grid-port power at 33151 is the inverter's AC port, not the meter, so grid
+power is left empty.
 
 ## Night, and a new address in the morning
 
@@ -138,7 +157,8 @@ The cloud total was 21.97 MWh, which is the same 21970 kWh the stick
 reported. Power was 0.059 kW while the inverter display showed about 60 W.
 That is production. Asleep is only the stick disappearing from the LAN.
 
-The inverter serial SolisCloud uses is `110E40182280017`. Registers
+The inverter serial SolisCloud uses has 15 or 16 characters, such as
+`1031000000000001`. Registers
 3060-3063 are only eight bytes, and on this stick a read at 3050 or above
 resets the session, so the serial is taken from the cloud in `both` mode or
 typed in. Entity ids use that serial either way. The placeholder `L` plus
@@ -176,8 +196,8 @@ in pysolarmanv5 issue 22, StephanJoubert/home_assistant_solarman issue 523
 and davidrapan/ha-solarman issue 586. Recovery is the logger's TCP idle time,
 about 300 seconds and sometimes 600, or a power cycle of the inverter.
 
-The 3000-range map is cached. Register 33022 is read only when register 3004
-itself returns Modbus exception 2. Registers at 3050 and above are tried at
+The 3000-range map is cached. Registers 35000 and 33022 are read only when
+register 3004 itself returns Modbus exception 2. Registers at 3050 and above are tried at
 most once, during setup, and a failure is remembered.
 
 The first pause after a reset is at least 10 seconds. It doubles up to about

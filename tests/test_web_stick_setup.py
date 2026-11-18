@@ -24,6 +24,7 @@ from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import entity_registry as er, issue_registry as ir
 
 from .conftest import entry_data, entry_options
+from .flow_helpers import logger_form, start_user
 from custom_components.solis.const import DOMAIN, SOURCE_BOTH
 from custom_components.solis.diagnostics import async_get_config_entry_diagnostics
 from mock_soliscloud.catalog import NORTH_SERIAL
@@ -76,15 +77,15 @@ async def test_auto_detect_setup_reload_and_diagnostics(
     hass: HomeAssistant, target: Target
 ) -> None:
     """Config flow auto-detects the stick, entities carry its values, reload keeps them."""
-    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {"source": "local", "api_url": "http://127.0.0.1:9", "key_id": "", "key_secret": ""},
-    )
+    result = await start_user(hass, "local")
     created = await hass.config_entries.flow.async_configure(
         result["flow_id"],
-        {"logger_kind": "auto", "logger_host": target.host, "logger_password": _PASSWORD},
+        logger_form(logger_kind="auto", logger_host=target.host),
     )
+    if created.get("step_id") == "logger_password":
+        created = await hass.config_entries.flow.async_configure(
+            created["flow_id"], {"logger_password": _PASSWORD}
+        )
     assert created["type"] is FlowResultType.CREATE_ENTRY, created.get("errors")
     entry = created["result"]
     assert entry.data["logger_kind"] == "solis_web"

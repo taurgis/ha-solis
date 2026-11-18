@@ -132,7 +132,7 @@ async def test_failure_then_recovery(hass: HomeAssistant, solis_server: tuple[An
     assert _number(hass, total) == 12500
     from homeassistant.helpers import issue_registry as ir
 
-    assert any(
+    assert not any(
         issue_id.startswith("cloud_outage") for (_domain, issue_id) in ir.async_get(hass).issues
     )
     state.mode = "ok"
@@ -212,28 +212,28 @@ async def test_unique_id_and_device_migration(
     )
 
 
-async def test_unload_clears_auth_repair(
+async def test_unload_keeps_a_repair_and_removal_deletes_it(
     hass: HomeAssistant, solis_server: tuple[Any, str]
 ) -> None:
-    """Unloading the entry removes the auth repair opened by a failed poll."""
-    state, url = solis_server
+    """A repair stays while its condition may still hold; removing the entry deletes it."""
+    _, url = solis_server
     entry = await _setup(hass, url)
-    state.mode = "auth_error"
-    await _refresh(hass, entry)
     from homeassistant.helpers import issue_registry as ir
 
-    issues = ir.async_get(hass).issues
-    assert any(issue_id.startswith("invalid_auth") for (_domain, issue_id) in issues)
+    entry.runtime_data._open("clock_skew", ir.IssueSeverity.ERROR)
+    issue_id = f"clock_skew_{entry.entry_id}"
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
-    issues = ir.async_get(hass).issues
-    assert not any(issue_id.startswith("invalid_auth") for (_domain, issue_id) in issues)
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None
+    assert await hass.config_entries.async_remove(entry.entry_id)
+    await hass.async_block_till_done()
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
 
 
 async def test_auth_failure_starts_reauth(
     hass: HomeAssistant, solis_server: tuple[Any, str]
 ) -> None:
-    """A rejected key marks the entry for reauth and opens a repair."""
+    """A rejected key marks the entry for reauth. The reauth card replaces a repair."""
     state, url = solis_server
     entry = await _setup(hass, url)
     state.mode = "auth_error"
@@ -243,7 +243,7 @@ async def test_auth_failure_starts_reauth(
     from homeassistant.helpers import issue_registry as ir
 
     issues = ir.async_get(hass).issues
-    assert any(issue_id.startswith("invalid_auth") for (_domain, issue_id) in issues)
+    assert not any(issue_id.startswith("invalid_auth") for (_domain, issue_id) in issues)
 
 
 def test_serials_are_stable() -> None:

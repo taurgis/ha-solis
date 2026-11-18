@@ -1,15 +1,45 @@
 # Solis S2-WL-ST local reads
 
-The S2-WL-ST is Solis's own 4-pin Wi-Fi + LAN data logger. It is the stick
-the owner is buying to replace a DLS-L that locks up on local requests. It
-is not an IGEN / Solarman stick. It does not speak Solarman V5 and it does
+The S2-WL-ST is Solis's own 4-pin Wi-Fi + LAN data logger. It often replaces
+a DLS-L that locks up on local requests. It is not an IGEN / Solarman stick. It does not speak Solarman V5 and it does
 not answer the UDP 48899 discovery probes. On firmware that implements it,
 the local protocol is ordinary Modbus TCP on port 502.
 
-The inverter behind this note is the same Solis-mini-2500-4G (model E4,
-slave 1, serial `110E40182280017`, firmware `0F000F`) described in
-[solarman-local.md](solarman-local.md). The register map does not change
-with the stick. The transport does.
+The register map is the same 3000-range string-inverter map described in
+[solarman-local.md](solarman-local.md) (checked on a Solis-mini 4G, model
+E4, slave 1). The register map does not change with the stick. The
+transport does.
+
+## Setting it up
+
+1. Power the inverter so the stick is on. In the SolisCloud app the stick's
+   address on your network is on the logger details page. On a laptop
+   cabled straight to the stick the address is `10.10.100.254` (log in as
+   `admin` and set a password on the first visit). That setup address is
+   not the one Home Assistant uses once the stick has joined your network.
+2. Get stick firmware with Modbus TCP. `100101B4` is the first build that
+   has it. Solis's own guide says enabling Modbus TCP disconnects the stick
+   from SolisCloud. `100121cf`, `100121d0` and the `100141dx` builds are
+   reported to keep both working; some later updates close port 502
+   entirely. The full list of reports is under [Firmware](#firmware) below.
+   Ask Solis support for a build if yours has no Modbus TCP option.
+3. In Home Assistant add Solis, choose **Local stick** or **Local stick with
+   SolisCloud backup**, leave the logger type on Auto-detect and type the
+   IP. Auto-detect tries port 502 first. If the stick's web page does not
+   say what it is, the flow asks whether it is an S2-WL-ST or an RS485
+   gateway.
+4. Under Advanced options, the logger serial is the suffix of the setup
+   Wi-Fi name `D_<serial>` or `Solis_<serial>` (for example `5A12…`), not
+   the inverter serial. Leave the Modbus slave empty unless the inverter is
+   not address 1. Polling defaults to 60 seconds and cannot be faster than
+   30.
+5. Reserve the IP in your router's DHCP settings. Do not put a static
+   address on the stick unless the SolisCloud LAN settings are the only way
+   you can reach it. The stick does not answer the Solarman UDP broadcast
+   and no MAC prefix is published for it.
+
+Registers 3060-3063 hold only eight characters, so type the full inverter
+serial in the setup form if you want the entity ids to match SolisCloud.
 
 ## What the frames are
 
@@ -28,8 +58,8 @@ one checked on the mini. Register 33022 is read only when 3004 itself returns
 exception 2. Registers at 3050 and above, including the eight-byte serial at
 3060-3063, are tried once.
 
-The inverter serial SolisCloud shows for this plant is 15 characters
-(`110E40182280017`). Registers 3060-3063 are eight bytes, so they cannot hold
+A SolisCloud inverter serial is 15 characters (for example
+`1031000000000001`). Registers 3060-3063 are eight bytes, so they cannot hold
 that serial. The config-entry unique id is `s2:` plus the logger serial from
 the label when the user types it, otherwise `s2:` plus whatever serial the
 registers or the typed inverter serial supplied. Entity ids stay on the
@@ -78,7 +108,7 @@ stays silent.
 | --- | --- |
 | UDP 48899 `WIFIKIT-214028-READ` / `HF-A11ASSISTHREAD` | Not this stick. Those probes find the DLS-L. |
 | mDNS / hostname | Not documented in the official manual, the service articles, or the projects above. The integration does not browse mDNS. |
-| MAC OUI | Not published. DHCP in the manifest still matches only `BC:54:F9` (IGEN). If a MAC has been stored on the entry, a DHCP discovery for that MAC updates the IP. Home Assistant will not deliver the event until an OUI is known. |
+| MAC OUI | Not published. DHCP in the manifest matches the IGEN prefixes `E8:FD:F8` and `BC:54:F9`, plus devices already registered with a MAC. If a MAC has been stored on the entry, a DHCP discovery for that MAC updates the IP. |
 | Wi-Fi setup network | `Solis_<logger serial>` or `D_<logger serial>`, password `123456789`. Bluetooth name `D_<logger serial>`. Examples in the Solis articles look like `5A12…` and `7A12…`. That serial is not the inverter serial. [Wi-Fi configuration](https://solis-service.solisinverters.com/en/support/solutions/articles/44002156150-solis-wi-fi-configuration-for-s2-wl-st-s3-wifi-st-s4-wifi-st-and-s5-wifi-st-dataloggers). |
 | Direct cable or AP web UI | `http://10.10.100.254`, user `admin`. This is the stick's own setup address, not its address on the house LAN. |
 | House LAN | DHCP. The IP is on the SolisCloud logger page. Reserve it in the router. |

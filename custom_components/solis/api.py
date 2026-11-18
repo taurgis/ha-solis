@@ -30,7 +30,6 @@ from .parser import extract_records, page_count
 from .signing import signed_headers
 
 _AUTH_CODES = {"R0000", "I0012", "B0011"}
-_AUTH_WORDS = ("password", "signature", "api key", "key id")
 _MAX_PAGES = 20
 _PAGE_SIZE = 100
 _RETRY_CAP = 8.0
@@ -255,8 +254,6 @@ class SolisCloudClient:
                 server_date = _http_date(response.headers.get("Date"))
         except TimeoutError as err:
             raise SolisTimeoutError(f"{path} timed out after {self._timeout}s") from err
-        except asyncio.CancelledError:
-            raise
         except ClientError as err:
             raise SolisServerError(f"{path} connection failed: {err}") from err
         retry_after = _retry_after(retry_header, now=self._clock()) if retry_header else None
@@ -337,8 +334,8 @@ def _interpret(
         raise SolisServerError(f"{path} returned invalid JSON") from err
     if not isinstance(decoded, dict):
         raise SolisServerError(f"{path} returned a non-object body")
-    _raise_for_code(path, decoded)
     _raise_for_clock_message(path, decoded, server_date)
+    _raise_for_code(path, decoded)
     return decoded
 
 
@@ -366,32 +363,30 @@ def _raise_for_status_auth(
     raw: bytes,
     content_type: str | None,
 ) -> None:
-    """Reject a key only when the body is the Solis auth envelope.
+    """Reject the key on a 401 or 403 unless the body is an HTML page.
 
-    An HTML 401 or 403 from a gateway is a transient outage. Starting
+    SolisCloud answers a wrong API secret with HTTP 403 rather than the
+    documented ``R0000`` envelope. An HTML 401 or 403 comes from a gateway or
+    WAF in front of the API and is a transient outage; starting
     reauthentication for that would lock the entry on a bad day at the cloud.
     """
     if _looks_like_html(raw, content_type):
         raise SolisServerError(f"{path} returned an HTML error page", code=str(status))
-    if payload is not None and status == 403 and not _is_auth_payload(payload):
-        raise SolisCloudError(f"{path} returned HTTP {status}", code=str(status))
     code = str(status if payload is None else payload.get("code") or status)
-    raise SolisAuthError(f"{path} rejected the API key", code=code)
+    raise SolisAuthError(f"{path} rejected the API key (HTTP {status})", code=code)
 
 
-def _is_auth_payload(payload: dict[str, Any]) -> bool:
-    code = str(payload.get("code", ""))
-    if code in _AUTH_CODES:
-        return True
-    message = str(payload.get("msg") or "").lower()
-    return any(word in message for word in _AUTH_WORDS)
+def _message(payload: dict[str, Any]) -> str:
+    """Return the envelope text, which is ``msg`` and sometimes ``message``."""
+    return str(payload.get("msg") or payload.get("message") or "")
 
 
 def _raise_for_code(path: str, payload: dict[str, Any]) -> None:
     code = str(payload.get("code", "0"))
-    if code == "0":
+    failed = payload.get("success") is False or str(payload.get("success")).lower() == "false"
+    if code == "0" and not failed:
         return
-    message = str(payload.get("msg") or code)
+    message = _message(payload) or code
     if code in _AUTH_CODES:
         raise SolisAuthError(f"{path} {code}: {message}", code=code)
     if code == "1" or "数据异常" in message:
@@ -404,17 +399,6 @@ def _raise_for_clock_message(
     payload: dict[str, Any],
     server_date: datetime | None,
 ) -> None:
-    message = str(payload.get("msg") or "")
+    message = _message(payload)
     if "time" in message.lower() and "15" in message:
         raise SolisClockError(f"{path}: {message}", server_date=server_date)
-
-
-def date_is_skewed(date_header: str, *, now: datetime, window: timedelta) -> bool:
-    """Return whether a Date header is outside Solis's acceptance window."""
-    try:
-        parsed = parsedate_to_datetime(date_header)
-    except (TypeError, ValueError, IndexError):
-        return True
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return abs(now - parsed) > window

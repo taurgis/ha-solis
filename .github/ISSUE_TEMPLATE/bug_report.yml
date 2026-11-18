@@ -1,0 +1,95 @@
+name: Bug report
+description: A Solis entity, the setup dialog or a poll is wrong
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Thanks for reporting. Please check
+        [Troubleshooting](https://github.com/taurgis/ha-solis/blob/main/docs/troubleshooting.md)
+        first. Never paste your API key secret or stick password: the
+        diagnostics download already removes them.
+  - type: input
+    id: ha_version
+    attributes:
+      label: Home Assistant version
+      description: Settings → About.
+      placeholder: "2026.11.1"
+    validations:
+      required: true
+  - type: input
+    id: integration_version
+    attributes:
+      label: Integration version
+      description: HACS shows it, or `version` in custom_components/solis/manifest.json.
+      placeholder: "0.2.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: connection
+    attributes:
+      label: Connection
+      description: The choice on the first setup screen (or Reconfigure → Connection).
+      options:
+        - SolisCloud only
+        - Local stick only
+        - Local stick with SolisCloud backup
+    validations:
+      required: true
+  - type: dropdown
+    id: logger_kind
+    attributes:
+      label: Logger type
+      description: The logger type in the local stick form. Pick "Not applicable" for SolisCloud only.
+      options:
+        - Not applicable (SolisCloud only)
+        - Auto-detect
+        - Solarman / IGEN Wi-Fi stick (DLS-W, DLS-L, LSW)
+        - Solis S2-WL-ST (Wi-Fi + LAN)
+        - RS485 gateway in Modbus TCP mode (Waveshare, Elfin, USR)
+        - Solis S5-WiFi-ST (experimental)
+        - RS485 gateway in transparent mode (experimental)
+        - Solis stick with only a status web page (S3-class)
+    validations:
+      required: true
+  - type: input
+    id: inverter
+    attributes:
+      label: Inverter and stick model
+      description: >-
+        Inverter model, single or three phase, hybrid or not, and the stick
+        model and firmware if you know it. Do not include serial numbers.
+      placeholder: "S6-GR1P5K, single phase, DLS-L stick"
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: >-
+        Go to Settings → Devices & services → Solis, open the entry's menu
+        and choose Download diagnostics. Drag the JSON file into this box.
+        Keys, passwords, serials, addresses and plant names are redacted in
+        that file.
+      placeholder: Drop the diagnostics JSON file here.
+    validations:
+      required: true
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened
+      description: >-
+        What you saw, what you expected, and when (local time). If an energy
+        sensor dropped, say which one, and your Home Assistant timezone and
+        Plant timezone option.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: >-
+        Enable debug logging on the Solis entry, reproduce the problem, then
+        paste the relevant lines. Check that no key, password or serial is
+        left in them.
+      render: text

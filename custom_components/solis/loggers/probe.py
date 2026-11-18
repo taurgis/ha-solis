@@ -23,7 +23,7 @@ from ..const import (
     S2_PORT,
 )
 from ..errors import SolisLoggerBusy, SolisLoggerOffline
-from ..local_transport import LoggerProbe, LoggerRequest, _detect_map, _serial_once
+from ..local_transport import LoggerProbe, LoggerRequest, _scan_slaves, _serial_once
 from ..solarman import ModbusTcpClient, host_gate
 from .fingerprint import rtu_default_port
 from .rtu import RtuTcpClient
@@ -53,20 +53,18 @@ async def _probe_bridge_locked(
     serial_unsupported: bool,
 ) -> LoggerProbe:
     numeric = int(request.logger_serial) if request.logger_serial.isdigit() else 0
-    answered = False
     try:
         slaves = (request.slave,) if request.slave else (1, 2, 3)
-        for slave in slaves:
-            register_map = await _detect_map(client, slave)
-            if register_map is None:
-                answered = True
-                continue
+        found = await _scan_slaves(client, slaves)
+        if found is not None:
+            slave, register_map = found
             learned, unsupported = await _serial_once(
                 client,
                 slave,
                 known=request.inverter_serial,
                 unsupported=serial_unsupported,
                 logger_serial=numeric,
+                register_map=register_map,
             )
             return LoggerProbe(
                 slave=slave,
@@ -84,13 +82,12 @@ async def _probe_bridge_locked(
         raise _annotate_bridge(err) from err
     finally:
         await client.close()
-    if answered:
-        raise SolisLoggerOffline(
-            f"{request.host} speaks Modbus but not a Solis register map",
-            connected=True,
-            reason=REASON_UNSUPPORTED,
-        )
-    raise SolisLoggerOffline(f"{request.host} did not answer as a Solis inverter")
+    # Every slave was silent raises above; here at least one answered without a Solis map.
+    raise SolisLoggerOffline(
+        f"{request.host} speaks Modbus but not a Solis register map",
+        connected=True,
+        reason=REASON_UNSUPPORTED,
+    )
 
 
 def _open_bridge(request: LoggerRequest) -> tuple[int, _BridgeClient, str]:

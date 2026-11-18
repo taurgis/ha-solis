@@ -257,9 +257,13 @@ The help text says to type the port.
 
 The client sends one RTU frame at a time on one socket, waits one
 second between blocks, checks the slave byte and the CRC, and retries
-function 3 once when function 4 returns exception 1. A mismatched slave
-byte, a bad CRC, a short frame, a timeout and a TCP reset are separate
-errors. Auto-detect does not send RTU. A V5 stick on 8899 would see a
+function 3 once when function 4 returns exception 1. A transparent
+bridge can echo the request and pass on other slaves' traffic, so the
+client skips the echo once and searches the bytes for a CRC-valid reply
+from its slave, within one deadline. A reply only from another slave, bytes
+that are not RTU, a timeout and a TCP reset are separate errors. Exception
+0x0A or 0x0B from a gateway means nothing answered on RS485 and counts as a
+timeout. Auto-detect does not send RTU. A V5 stick on 8899 would see a
 bare RTU frame as noise, and a scan that probes RTU after V5 would open
 a second session into a stick that locks up when it is talked to twice.
 

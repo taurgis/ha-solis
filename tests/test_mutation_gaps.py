@@ -71,8 +71,8 @@ def test_cloud_fill_keeps_page_values_and_drops_stale_live_data() -> None:
 def test_the_hybrid_map_scales() -> None:
     """Voltage, today's energy, power and totals each use their own scale."""
     words = {
-        33057: 0,
-        33058: 4200,
+        33079: 0,
+        33080: 4200,
         33035: 123,
         33133: 5120,
         33139: 80,
@@ -89,7 +89,7 @@ def test_the_hybrid_map_scales() -> None:
 
 
 def test_the_string_map_with_production() -> None:
-    """A producing single-phase inverter with two strings."""
+    """A producing single-phase inverter. 3003 = 1 with an idle PV2 is one input."""
     words = {
         3002: 0,
         3003: 1,
@@ -102,7 +102,7 @@ def test_the_string_map_with_production() -> None:
     parsed = decode_string(words, serial="X", logger_serial="Y", now=NOW)
     assert parsed.energy_today_kwh == pytest.approx(5.9)
     assert parsed.ac_output_type == 0
-    assert len(parsed.strings) == 2
+    assert len(parsed.strings) == 1
     assert parsed.strings[0].power_w == 0.0
 
 
@@ -154,9 +154,10 @@ def test_energy_bounds_are_exact() -> None:
 
 
 def test_page_parser_edges() -> None:
-    """Seven fields is too few, and a lowercase alarm word still means no alarm."""
+    """Four fields is too few, and a lowercase alarm word still means no alarm."""
     with pytest.raises(ValueError):
-        parse_page("a;b;c;1;2;3;4")
+        parse_page("a;b;c;1")
+    assert not parse_page("a;b;c;1;2;3;4").in_alarm
     assert not parse_page("a;b;c;1;2;3;4;no;").in_alarm
     assert parse_page("a;b;c;1;2;3;4;E01;").in_alarm
 
@@ -184,7 +185,7 @@ def test_donor_freshness_reads_a_naive_time_as_utc() -> None:
 
 
 async def test_an_old_stored_snapshot_is_not_served_as_live(hass: HomeAssistant) -> None:
-    """After a restart a snapshot older than 15 minutes opens the outage repair at once."""
+    """After a restart a snapshot older than 15 minutes hides live readings at once."""
     entry = _entry(hass)
     old = replace(_snapshot(), fetched_at=datetime.now(UTC) - timedelta(minutes=20))
     old = replace(old, inverters=(_cloud_snapshot().inverters[0],))
@@ -192,7 +193,8 @@ async def test_an_old_stored_snapshot_is_not_served_as_live(hass: HomeAssistant)
     coordinator._last_good = old
     held = await coordinator._async_update_data()
     assert held.inverters[0].unreachable is True
-    assert any(key.startswith("cloud_outage") for key in _issue_keys(hass))
+    assert held.partial is True
+    assert not any(key.startswith("cloud_outage") for key in _issue_keys(hass))
 
 
 async def test_cloud_failures_back_off_and_a_good_poll_resets(hass: HomeAssistant) -> None:

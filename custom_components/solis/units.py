@@ -13,7 +13,19 @@ from typing import Any
 
 _POWER_TO_W = {"w": 1.0, "kw": 1_000.0, "mw": 1_000_000.0}
 _ENERGY_TO_KWH = {"wh": 0.001, "kwh": 1.0, "mwh": 1_000.0, "gwh": 1_000_000.0}
-_IDENTITY = {"v": 1.0, "a": 1.0, "hz": 1.0, "c": 1.0, "%": 1.0, "h": 1.0}
+# Temperature arrives as ``C``, ``°C`` or the single ``℃`` code point; the
+# inverter detail capture uses ``inverterTemperatureUnit: "℃"``.
+_IDENTITY = {
+    "v": 1.0,
+    "a": 1.0,
+    "hz": 1.0,
+    "c": 1.0,
+    "°c": 1.0,
+    "℃": 1.0,
+    "ºc": 1.0,
+    "%": 1.0,
+    "h": 1.0,
+}
 
 _MISSING_STRINGS = frozenset({"", "null", "none", "Null", "None"})
 

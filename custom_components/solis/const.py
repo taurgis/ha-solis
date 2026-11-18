@@ -77,9 +77,12 @@ REASON_WEB_PAGE = "web_page"
 # 3050 and the 33000 hybrid block are what lock the local port.
 REGISTER_SAFE_CEILING = 3050
 
-# IGEN / Solarman Wi-Fi sticks. The user's stick answered discovery as
-# bc:54:f9:f5:7b:5c.
+# MAC prefixes of IGEN / Solarman Wi-Fi sticks, as matched in manifest.json.
+# E8:FD:F8 is Shanghai High-Flying, the Wi-Fi module inside IGEN sticks (the
+# prefix ha-solarman matches). BC:54:F9 is registered to Drogoo Technology,
+# not IGEN; one real stick answered discovery with it, so it is kept too.
 SOLARMAN_OUI = "bc:54:f9"
+SOLARMAN_OUIS = ("e8:fd:f8", "bc:54:f9")
 
 DEFAULT_API_URL = "https://www.soliscloud.com:13333"
 DEFAULT_SCAN_INTERVAL = 300

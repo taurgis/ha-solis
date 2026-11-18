@@ -6,6 +6,17 @@ HTTP/1.0, basic auth with the user ``admin``, replies padded with spaces.
 and ``moniter.cgi`` returns the stick details. The real stick refreshes the
 values about every five minutes and serves the cached ones in between;
 ``refresh`` stands for that tick.
+
+Other firmware it can stand in for:
+
+- ``total_text``: a literal total field, such as the ``d`` one firmware prints.
+- ``layout="status"``: an IGEN/Solarman-made stick that has no ``inverter.cgi``
+  and serves ``status.html`` with ``var webdata_now_p = "...";`` variables.
+  ``night_value`` (``""`` or ``"---"``) blanks the readings as at night.
+- ``realm``: the name in the Basic challenge; sticks differ.
+- ``join_wifi``: some firmware replaces the web password with the Wi-Fi
+  password once the stick joins the network.
+- ``chunked``: answer HTTP/1.1 with a chunked body.
 """
 
 from __future__ import annotations
@@ -18,6 +29,8 @@ import socket
 import struct
 
 REALM = "solis"
+LAYOUT_CGI = "cgi"
+LAYOUT_STATUS = "status"
 
 
 @dataclass
@@ -27,7 +40,7 @@ class WebStickState:
     host: str = "127.0.0.1"
     port: int = 0
     password: str = "123456789"
-    serial: str = "110E40182280017"
+    serial: str = "1031000000000001"
     firmware: str = "0F000F"
     model: str = "E4"
     temperature: float = 38.4
@@ -35,8 +48,13 @@ class WebStickState:
     today: float = 2.8
     total: int = 21986
     alarm: str = "NO"
-    mid: str = "7A122C096F409F31"
-    mac: str = "B8:D6:1A:58:A7:0B"
+    total_text: str | None = None
+    layout: str = LAYOUT_CGI
+    night_value: str | None = None
+    realm: str = REALM
+    chunked: bool = False
+    mid: str = "7A00000000000001"
+    mac: str = "B8:D6:1A:00:00:01"
     # ok, garbage (200 with another body), error (500), silent (accept, send nothing),
     # redirect (302), nopage (200 with a non-HTTP reply), hang (accept, never answer),
     # reset (TCP reset).
@@ -74,6 +92,10 @@ class WebStickEmulator:
                 self._server.close_clients()
             await self._server.wait_closed()
             self._server = None
+
+    def join_wifi(self, wifi_password: str) -> None:
+        """The stick joined the network and now wants the Wi-Fi password."""
+        self.state.password = wifi_password
 
     def refresh(self, *, power: int, temperature: float, today: float | None = None) -> None:
         """The stick polled the inverter again."""
@@ -125,8 +147,8 @@ class WebStickEmulator:
             return (
                 b"HTTP/1.0 401 unauthorized\r\n"
                 b"Server: lwIP/1.3.1 (http://savannah.nongnu.org/projects/lwip)\r\n"
-                b'WWW-authenticate: Basic realm="solis"\r\n'
-                b"Content-type: text/html\r\n\r\n"
+                + f'WWW-authenticate: Basic realm="{self.state.realm}"\r\n'.encode("latin-1")
+                + b"Content-type: text/html\r\n\r\n"
             )
         if mode == "error":
             return b"HTTP/1.0 500 Internal Server Error\r\n\r\n"
@@ -135,10 +157,19 @@ class WebStickEmulator:
         body = self._body(path)
         if body is None:
             return b"HTTP/1.0 404 Not Found\r\n\r\n"
-        return (
-            b"HTTP/1.0 200 OK\r\nServer: lwIP/1.3.1\r\nContent-type: text/html\r\n\r\n"
-            + body.encode("latin-1")
-        )
+        data = body.encode("latin-1")
+        if self.state.chunked:
+            # Two chunks, with a chunk extension, as an HTTP/1.1 server may send.
+            half = len(data) // 2
+            chunks = b"".join(
+                f"{len(part):x};x=1\r\n".encode("ascii") + part + b"\r\n"
+                for part in (data[:half], data[half:])
+            )
+            return (
+                b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n"
+                b"Content-type: text/html\r\n\r\n" + chunks + b"0\r\n\r\n"
+            )
+        return b"HTTP/1.0 200 OK\r\nServer: lwIP/1.3.1\r\nContent-type: text/html\r\n\r\n" + data
 
     def _authorized(self, lines: list[str]) -> bool:
         wanted = base64.b64encode(f"admin:{self.state.password}".encode()).decode("ascii")
@@ -146,6 +177,8 @@ class WebStickEmulator:
 
     def _body(self, path: str) -> str | None:
         state = self.state
+        if state.layout == LAYOUT_STATUS:
+            return self._status_page() if path.startswith("/status.html") else None
         if path.startswith("/inverter.cgi"):
             if state.mode == "garbage":
                 return "<html>Not the inverter</html>"
@@ -156,7 +189,7 @@ class WebStickEmulator:
                 f"{state.temperature}",
                 f"{state.power}",
                 f"{state.today:.6f}",
-                f"{state.total}",
+                f"{state.total}" if state.total_text is None else state.total_text,
                 state.alarm,
             )
             return "\x00" * 33 + ";".join(fields) + ";" + " " * 200
@@ -181,3 +214,38 @@ class WebStickEmulator:
             )
             return "\x00" * 33 + ";".join(fields) + ";" + " " * 200
         return None
+
+    def _status_page(self) -> str:
+        """The IGEN-made status page: readings as JavaScript variables."""
+        state = self.state
+        if state.mode == "garbage":
+            return "<html>Not the status page</html>"
+        night = state.night_value
+        now = f"{state.power}" if night is None else night
+        today = f"{state.today:.2f}" if night is None else night
+        total = f"{state.total}" if night is None else night
+        alarm = "" if state.alarm == "NO" else state.alarm
+        values = (
+            ("webdata_sn", f"{state.serial}      "),
+            ("webdata_msvn", state.firmware),
+            ("webdata_ssvn", ""),
+            ("webdata_pv_type", ""),
+            ("webdata_rate_p", ""),
+            ("webdata_now_p", now),
+            ("webdata_today_e", today),
+            ("webdata_total_e", total),
+            ("webdata_alarm", alarm),
+            ("webdata_utime", "0"),
+            ("cover_mid", state.mid),
+            ("cover_ver", "MW3_16U_5406_1.59"),
+            ("cover_wmode", "APSTA"),
+            ("cover_sta_rssi", "40%"),
+            ("cover_sta_mac", state.mac),
+        )
+        script = "\n".join(f'var {name} = "{value}";' for name, value in values)
+        return (
+            "<html><head><title>Status</title>"
+            '<script type="text/javascript">\n'
+            + script
+            + '\n</script></head><body><div id="webdata_now_p">---</div></body></html>'
+        )

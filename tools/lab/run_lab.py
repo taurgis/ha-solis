@@ -27,6 +27,9 @@ COMPOSE = ROOT / "tools" / "lab" / "docker-compose.yml"
 CONTAINER = "ha-solis-lab-core"
 SOLAR_HOST = "192.168.250.10"
 MORNING_HOST = "192.168.250.15"
+# The Solarman inverter keeps its serial hex-nibble encoded, like real firmware.
+# It must match INVERTER_SERIAL in tools/mock_soliscloud/stick.py.
+SOLAR = "1031230000000AB1"
 ADDRESSES = (
     "192.168.250.10",
     "192.168.250.11",
@@ -260,7 +263,7 @@ def _upgrade(base: str, token: str, config: Path, version: str) -> list[dict[str
             )
         )
         CHECK._wait_loaded(base, token, solar)
-        _energy(base, token, "SOLIS001")
+        _energy(base, token, SOLAR)
         s2 = _entry_id(
             _flow(
                 base,
@@ -288,7 +291,7 @@ def _upgrade(base: str, token: str, config: Path, version: str) -> list[dict[str
         _wait_api("http://127.0.0.1:8123")
         CHECK._wait_loaded(base, token, solar_id, timeout=180)
         CHECK._wait_loaded(base, token, s2_id, timeout=180)
-        _energy(base, token, "SOLIS001")
+        _energy(base, token, SOLAR)
         _energy(base, token, "S2LOCAL1")
         solar_entry = CHECK._config_entry(base, token, solar_id)
         kind = str(solar_entry.get("data", {}).get("logger_kind") or "")
@@ -323,26 +326,26 @@ def _faults(base: str, token: str) -> list[dict[str, str]]:
 
     def _night() -> None:
         _control({"device": "solarman", "night": True})
-        _refresh(base, token, "SOLIS001")
-        _require(base, token, "SOLIS001_ac_power", lambda item: CHECK._number(item) == 0)
-        _energy(base, token, "SOLIS001")
-        _require(base, token, "SOLIS001_data_source", lambda item: item.get("state") == "asleep")
+        _refresh(base, token, SOLAR)
+        _require(base, token, f"{SOLAR}_ac_power", lambda item: CHECK._number(item) == 0)
+        _energy(base, token, SOLAR)
+        _require(base, token, f"{SOLAR}_data_source", lambda item: item.get("state") == "asleep")
         blob = json.dumps(CHECK._issues(base, token))
         if "logger_" in blob:
             raise CHECK.CheckError(f"night opened a logger repair: {blob[:500]}")
 
     def _move() -> None:
         _control({"device": "solarman", "night": False, "host": MORNING_HOST, "mode": "ok"})
-        _refresh(base, token, "SOLIS001")
-        _require(base, token, "SOLIS001_data_source", lambda item: item.get("state") == "local")
-        _require(base, token, "SOLIS001_ac_power", lambda item: CHECK._number(item) == 500)
-        _energy(base, token, "SOLIS001")
+        _refresh(base, token, SOLAR)
+        _require(base, token, f"{SOLAR}_data_source", lambda item: item.get("state") == "local")
+        _require(base, token, f"{SOLAR}_ac_power", lambda item: CHECK._number(item) == 500)
+        _energy(base, token, SOLAR)
 
     def _glitch() -> None:
         _control({"device": "solarman", "registers": {"3009": 0}})
-        _refresh(base, token, "SOLIS001")
-        _energy(base, token, "SOLIS001")
-        entity_id = CHECK._entity_id(base, token, "SOLIS001_energy_total")
+        _refresh(base, token, SOLAR)
+        _energy(base, token, SOLAR)
+        entity_id = CHECK._entity_id(base, token, f"{SOLAR}_energy_total")
         status, body = CHECK._http(
             "GET",
             f"{base}/api/history/period/2026-11-11T00:00:00+00:00?filter_entity_id={entity_id}",
@@ -461,7 +464,7 @@ def _restart_and_diagnostics(
     def _restart() -> None:
         _compose(version, config, "restart")
         _wait_api(base)
-        _energy(base, token, "SOLIS001")
+        _energy(base, token, SOLAR)
         _energy(base, token, "S2LOCAL1")
 
     def _diagnostics() -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -11,6 +12,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 
 from .conftest import entry_data, entry_options
+from .flow_helpers import pick, start_user
 from custom_components.solis.const import DOMAIN
 from mock_soliscloud.catalog import KEY_ID, SECRET
 
@@ -19,6 +21,10 @@ async def test_user_flow_creates_entry(hass: HomeAssistant, solis_server: tuple[
     """Selecting both plants creates one entry keyed by the API id."""
     _state, url = solis_server
     result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
+    assert result["type"] is FlowResultType.MENU
+    assert result["menu_options"] == ["cloud", "local", "both"]
+    result = await pick(hass, result["flow_id"], "cloud")
+    assert result["step_id"] == "cloud"
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {"api_url": url, "key_id": KEY_ID, "key_secret": SECRET},
@@ -38,7 +44,7 @@ async def test_user_flow_creates_entry(hass: HomeAssistant, solis_server: tuple[
 async def test_invalid_auth(hass: HomeAssistant, solis_server: tuple[Any, str]) -> None:
     """A bad secret is reported as invalid auth, not a generic connection error."""
     _state, url = solis_server
-    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
+    result = await start_user(hass, "cloud")
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {"api_url": url, "key_id": KEY_ID, "key_secret": "nope"},
@@ -51,21 +57,45 @@ async def test_duplicate_key(hass: HomeAssistant, solis_server: tuple[Any, str])
     _state, url = solis_server
     existing = MockConfigEntry(domain=DOMAIN, data=entry_data(url), unique_id=KEY_ID, version=2)
     existing.add_to_hass(hass)
-    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
+    result = await start_user(hass, "cloud")
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {"api_url": url, "key_id": KEY_ID, "key_secret": SECRET},
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {"station_ids": ["1900000000000001001"]},
     )
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "already_configured"
 
 
+async def test_key_of_a_local_with_cloud_entry_is_not_added_again(
+    hass: HomeAssistant, solis_server: tuple[Any, str]
+) -> None:
+    """A stick entry keyed by its logger id still owns its SolisCloud key."""
+    _state, url = solis_server
+    stick = MockConfigEntry(
+        domain=DOMAIN,
+        data={**entry_data(url), "source": "both", "logger_host": "10.0.0.5"},
+        unique_id="1902137671",
+        version=3,
+    )
+    stick.add_to_hass(hass)
+    result = await start_user(hass, "cloud")
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {"api_url": url, "key_id": KEY_ID, "key_secret": SECRET},
+    )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+    # A second stick on the same account is a separate inverter and stays allowed.
+    second = await start_user(hass, "both")
+    second = await hass.config_entries.flow.async_configure(
+        second["flow_id"],
+        {"api_url": url, "key_id": KEY_ID, "key_secret": SECRET},
+    )
+    assert second["step_id"] == "stations"
+
+
 async def test_reauth_and_reconfigure(hass: HomeAssistant, solis_server: tuple[Any, str]) -> None:
-    """Reauth replaces the secret and reconfigure keeps a new timeout."""
+    """Reauth replaces the secret and reconfigure changes the plants only."""
     _state, url = solis_server
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -84,21 +114,17 @@ async def test_reauth_and_reconfigure(hass: HomeAssistant, solis_server: tuple[A
     assert result["reason"] == "reauth_successful"
 
     result = await entry.start_reconfigure_flow(hass)
+    assert result["type"] is FlowResultType.MENU
+    assert result["menu_options"] == ["reconfigure_cloud", "stations", "logger"]
+    result = await pick(hass, result["flow_id"], "stations")
     result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {
-            "api_url": url,
-            "station_ids": ["1900000000000001002"],
-            "scan_interval": 120,
-            "request_timeout": 45,
-            "endpoint_interval": 1.5,
-        },
+        result["flow_id"], {"station_ids": ["1900000000000001002"]}
     )
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "reconfigure_successful"
     assert entry.data["station_ids"] == ["1900000000000001002"]
-    assert entry.options["request_timeout"] == 45
-    assert entry.options["scan_interval"] == 120
+    # Polling lives in options only. Reconfigure leaves it alone.
+    assert entry.options == entry_options()
 
 
 async def test_options_flow_keeps_timeout(
@@ -117,7 +143,7 @@ async def test_options_flow_keeps_timeout(
     result = await hass.config_entries.options.async_init(entry.entry_id)
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
-        {"scan_interval": 180, "request_timeout": 40, "endpoint_interval": 2},
+        {"scan_interval": 180, "advanced": {"request_timeout": 40, "endpoint_interval": 2}},
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert entry.options["request_timeout"] == 40
@@ -143,7 +169,7 @@ async def test_cloud_options_reject_a_30_second_poll(
     with pytest.raises(InvalidData):
         await hass.config_entries.options.async_configure(
             started["flow_id"],
-            {"scan_interval": 30, "request_timeout": 40, "endpoint_interval": 2},
+            {"scan_interval": 30, "advanced": {"request_timeout": 40, "endpoint_interval": 2}},
         )
 
 
@@ -162,17 +188,17 @@ async def test_local_options_allow_a_30_second_poll(hass: HomeAssistant) -> None
     )
     entry.add_to_hass(hass)
     result = await hass.config_entries.options.async_init(entry.entry_id)
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"],
-        {
-            "scan_interval": 30,
-            "request_timeout": 30,
-            "endpoint_interval": 2,
-            "time_zone": "",
-        },
-    )
+    # Saving options reloads the entry; the stick itself is not under test here.
+    with patch("custom_components.solis.async_setup_entry", return_value=True) as setup:
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {"scan_interval": 30, "time_zone": "auto"},
+        )
+        await hass.async_block_till_done()
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert entry.options["scan_interval"] == 30
+    assert entry.options["time_zone"] == ""
+    assert setup.call_count == 1
 
 
 async def test_migrate_legacy_entry(hass: HomeAssistant, solis_server: tuple[Any, str]) -> None:

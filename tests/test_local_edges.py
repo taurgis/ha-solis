@@ -13,6 +13,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 
+from .flow_helpers import logger_form, pick
 from custom_components.solis import (
     _store_inverter_serial,
     _store_text,
@@ -25,9 +26,10 @@ from custom_components.solis.local_transport import (
     LoggerProbe,
     SolisLocalTransport,
     SolisPriorityTransport,
-    _cloud_is_fresh,
+    _cloud_donor,
     _degraded_cloud,
     _detect_map,
+    _donor_is_fresh,
     _mark_degraded,
     _prefer,
     _serial_once,
@@ -37,7 +39,7 @@ from custom_components.solis.local_transport import (
 )
 from custom_components.solis.migration import async_adopt_inverter_serial
 from custom_components.solis.models import InverterSnapshot, SolisSnapshot
-from custom_components.solis.registers import _string_state, device_model_name, firmware_version
+from custom_components.solis.registers import device_model_name, firmware_version, inverter_state
 from custom_components.solis.solarman import (
     ModbusException,
     build_mbap,
@@ -56,10 +58,10 @@ from mock_soliscloud.stick import SERIAL, StickEmulator, StickState
 
 def _inverter(**kwargs: object) -> InverterSnapshot:
     base: dict[str, object] = {
-        "serial": "110E40182280017",
-        "device_id": "110E40182280017",
+        "serial": "1031000000000001",
+        "device_id": "1031000000000001",
         "station_id": "local",
-        "name": "110E40182280017",
+        "name": "1031000000000001",
         "model": "Solis 4G",
         "product_model": "1",
         "hmi_version": "0F000F",
@@ -114,13 +116,14 @@ def test_labels_and_failure_text() -> None:
     assert device_model_name(None, "E4") == "E4"
     assert device_model_name(None, None) == "Solis inverter"
     assert firmware_version({}) is None
-    assert _string_state(1) == 1
-    assert _string_state(2) == 3
+    assert inverter_state(1) == 1
+    assert inverter_state(3) == 1
+    assert inverter_state(0x1015) == 3
     assert "producing" in logger_failure_text("10.0.0.5", SolisLoggerBusy("reset"))
     assert "night" in logger_failure_text("10.0.0.5", SolisLoggerOffline("down"))
     assert placeholder_serial("", 1)
     assert placeholder_serial("L1", 1)
-    assert not placeholder_serial("110E40182280017", 1)
+    assert not placeholder_serial("1031000000000001", 1)
     assert _prefer(None, 1.0) == 1.0
     assert _prefer(5.0, None) == 5.0
     assert _prefer(5.0, 4.0) == 5.0
@@ -219,7 +222,7 @@ def test_degraded_overlay_keeps_a_higher_total() -> None:
         data_timestamp=datetime.now(UTC) - timedelta(hours=2),
     )
     cloud = _snapshot(donor, "cloud")
-    assert _cloud_is_fresh(cloud) is False
+    assert _donor_is_fresh(cloud, donor) is False
     fresh_inverter = _inverter(
         serial="CLOUD",
         model="Solis-mini-2500-4G",
@@ -228,12 +231,14 @@ def test_degraded_overlay_keeps_a_higher_total() -> None:
         energy_total_kwh=12500.0,
     )
     fresh = _snapshot(fresh_inverter)
-    assert _cloud_is_fresh(fresh) is True
+    assert _donor_is_fresh(fresh, fresh_inverter) is True
     local = SolisLocalTransport(
         "127.0.0.1", 1, slave=1, register_map="string", inverter_serial="L1", timeout=0.2, gap=0
     )
     local._last = previous
-    merged = _degraded_cloud(local, fresh)
+    picked = _cloud_donor(local, fresh)
+    assert picked is not None
+    merged = _degraded_cloud(local, fresh, picked)
     assert merged.inverters[0].energy_total_kwh == 21970
     assert merged.inverters[0].serial == "CLOUD"
     assert merged.inverters[0].model == "Solis-mini-2500-4G"
@@ -295,11 +300,11 @@ async def test_user_serial_skips_the_serial_block(socket_enabled: None) -> None:
             timeout=1,
             port=port,
             gap=0,
-            inverter_serial="110E40182280017",
+            inverter_serial="1031000000000001",
         )
     finally:
         await emulator.close()
-    assert probed == LoggerProbe(1, "string", "110E40182280017", "v5", False)
+    assert probed == LoggerProbe(1, "string", "1031000000000001", "v5", False)
 
 
 async def test_detect_map_and_serial_helpers() -> None:
@@ -359,22 +364,18 @@ async def test_reconfigure_reports_a_reset(
     entry.add_to_hass(hass)
 
     async def _stations(_hass: object, _data: object) -> dict[str, str]:
-        return {"1": "Plant"}
+        raise AssertionError("the logger form must not need SolisCloud")
 
     monkeypatch.setattr(flow, "_fetch_stations", _stations)
     started = await entry.start_reconfigure_flow(hass)
+    started = await pick(hass, started["flow_id"], "logger")
     result = await hass.config_entries.flow.async_configure(
         started["flow_id"],
-        {
-            "api_url": "http://127.0.0.1:9",
-            "station_ids": ["1"],
-            "scan_interval": 60,
-            "request_timeout": 5,
-            "endpoint_interval": 0.5,
-            "logger_host": "127.0.0.1",
-            "logger_serial": "1902137671",
-            "inverter_serial": "110E40182280017",
-        },
+        logger_form(
+            logger_host="127.0.0.1",
+            logger_serial="1902137671",
+            inverter_serial="1031000000000001",
+        ),
     )
     assert result["errors"]["base"] == "logger_busy"
 
@@ -438,20 +439,20 @@ async def test_adopt_moves_entity_and_device_ids(hass: HomeAssistant) -> None:
         identifiers={(DOMAIN, "inverter:L1")},
         name="old",
     )
-    async_adopt_inverter_serial(hass, entry.entry_id, "L1", "110E40182280017")
-    assert registry.async_get_entity_id("sensor", DOMAIN, "110E40182280017_energy_total")
+    async_adopt_inverter_serial(hass, entry.entry_id, "L1", "1031000000000001")
+    assert registry.async_get_entity_id("sensor", DOMAIN, "1031000000000001_energy_total")
     found = devices.async_get_device_by_identifier(
-        (DOMAIN, "inverter:110E40182280017"), entry.entry_id
+        (DOMAIN, "inverter:1031000000000001"), entry.entry_id
     )
     assert found is not None
-    async_adopt_inverter_serial(hass, entry.entry_id, "", "110E40182280017")
-    async_adopt_inverter_serial(hass, entry.entry_id, "110E40182280017", "110E40182280017")
+    async_adopt_inverter_serial(hass, entry.entry_id, "", "1031000000000001")
+    async_adopt_inverter_serial(hass, entry.entry_id, "1031000000000001", "1031000000000001")
     _store_text(hass, entry, "logger_protocol", "v5")
     _store_text(hass, entry, "logger_protocol", "v5")
     _store_inverter_serial(hass, entry, "")
     _store_inverter_serial(hass, entry, "L1")
-    _store_inverter_serial(hass, entry, "110E40182280017")
-    assert entry.data["inverter_serial"] == "110E40182280017"
+    _store_inverter_serial(hass, entry, "1031000000000001")
+    assert entry.data["inverter_serial"] == "1031000000000001"
 
     class _Device:
         identifiers = frozenset({("other", "x")})
@@ -486,7 +487,9 @@ async def test_heartbeat_is_skipped(socket_enabled: None) -> None:
         data = await reader.read(256)
         request_holder.append(data)
         heartbeat = bytes.fromhex("a501001047010000000000005d15")
-        writer.write(heartbeat + build_response(SERIAL, 0x2201, _reply()))
+        # The stick echoes the low sequence byte and puts its own counter high.
+        sequence = 0x2200 | data[5]
+        writer.write(heartbeat + build_response(SERIAL, sequence, _reply()))
         await writer.drain()
         writer.close()
 
@@ -576,10 +579,11 @@ async def test_router_edges() -> None:
         fetched_at=datetime.now(UTC),
         partial=False,
     )
-    assert _cloud_is_fresh(empty) is False
+    assert _cloud_donor(local, empty) is None
     naive = _inverter(data_timestamp=datetime(2026, 1, 1))
-    assert _cloud_is_fresh(_snapshot(naive)) is False
-    assert _cloud_is_fresh(_snapshot(_inverter(data_timestamp=None))) is True
+    assert _donor_is_fresh(_snapshot(naive), naive) is False
+    undated = _inverter(data_timestamp=None)
+    assert _donor_is_fresh(_snapshot(undated), undated) is True
     local._log_asleep()
     local._log_asleep()
     noted: list[str] = []
@@ -700,8 +704,8 @@ async def test_offline_adopts_a_new_address_and_a_refused_port() -> None:
     local.adopt_serial("S")
     heard: list[str] = []
     local._on_serial = heard.append
-    local.adopt_serial("110E40182280017")
-    assert heard == ["110E40182280017"]
+    local.adopt_serial("1031000000000001")
+    assert heard == ["1031000000000001"]
     await local._open("not-v5")
     await local._open("v5")
 

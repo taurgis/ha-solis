@@ -10,6 +10,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 
+from .flow_helpers import logger_form, start_user
 from custom_components.solis.const import (
     DOMAIN,
     LOGGER_RTU,
@@ -166,29 +167,21 @@ async def test_auto_names_a_gateway_and_asks_when_the_page_is_blank(
         )
         assert named.kind == "modbus_tcp" and named.detection == "auto_gateway_http"
         pages["text"] = ""
-        result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            {
-                "source": SOURCE_LOCAL,
-                "api_url": "http://127.0.0.1:9",
-                "key_id": "",
-                "key_secret": "",
-            },
-        )
+        result = await start_user(hass, "local")
         choice = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            {
-                "logger_kind": "auto",
-                "logger_host": "127.0.0.1",
-                "logger_serial": "5A120011",
-            },
+            logger_form(
+                logger_kind="auto",
+                logger_host="127.0.0.1",
+                logger_serial="5A120011",
+            ),
         )
         assert choice["step_id"] == "logger_choice"
-        assert "port 80" in choice["description_placeholders"]["note"].lower()
+        # The question is a translated sentence; no English note is passed through.
+        assert not choice["description_placeholders"]
         forced = await hass.config_entries.flow.async_configure(
             choice["flow_id"],
-            {"logger_kind": "s2_wl_st"},
+            logger_form(logger_kind="s2_wl_st"),
         )
     finally:
         await emulator.close()
@@ -213,28 +206,19 @@ async def test_choice_can_store_a_gateway_and_a_missing_serial_is_rejected(
     emulator, port = await _s2()
     _pretend_502(monkeypatch, port)
     try:
-        result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            {
-                "source": SOURCE_LOCAL,
-                "api_url": "http://127.0.0.1:9",
-                "key_id": "",
-                "key_secret": "",
-            },
-        )
+        result = await start_user(hass, "local")
         choice = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            {
-                "logger_kind": "auto",
-                "logger_host": "127.0.0.1",
-                "logger_port": str(port),
-                "logger_serial": "gw-2",
-            },
+            logger_form(
+                logger_kind="auto",
+                logger_host="127.0.0.1",
+                logger_port=str(port),
+                logger_serial="gw-2",
+            ),
         )
         created = await hass.config_entries.flow.async_configure(
             choice["flow_id"],
-            {"logger_kind": "modbus_tcp"},
+            logger_form(logger_kind="modbus_tcp"),
         )
     finally:
         await emulator.close()
@@ -245,23 +229,14 @@ async def test_choice_can_store_a_gateway_and_a_missing_serial_is_rejected(
     _pretend_502(monkeypatch, locked_port)
     locked.state.lock_above = 3050
     try:
-        result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            {
-                "source": SOURCE_LOCAL,
-                "api_url": "http://127.0.0.1:9",
-                "key_id": "",
-                "key_secret": "",
-            },
-        )
+        result = await start_user(hass, "local")
         failed = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            {
-                "logger_kind": "auto",
-                "logger_host": "127.0.0.1",
-                "logger_port": str(locked_port),
-            },
+            logger_form(
+                logger_kind="auto",
+                logger_host="127.0.0.1",
+                logger_port=str(locked_port),
+            ),
         )
     finally:
         await locked.close()
@@ -320,10 +295,10 @@ async def test_s5_closed_port_is_its_own_reason(socket_enabled: None) -> None:
     await transport.close()
 
 
-async def test_dhcp_remembers_a_gateway_mac_and_ignores_a_stranger(
+async def test_dhcp_follows_a_gateway_by_its_mac_and_ignores_hostnames(
     hass: HomeAssistant, socket_enabled: None
 ) -> None:
-    """A known hostname at the saved address stores the MAC. A later lease moves the host."""
+    """Gateway hostnames are not matched. A saved MAC (registered device) moves the host."""
     from homeassistant.config_entries import SOURCE_DHCP
 
     entry = MockConfigEntry(
@@ -333,33 +308,27 @@ async def test_dhcp_remembers_a_gateway_mac_and_ignores_a_stranger(
             "logger_kind": "modbus_tcp",
             "logger_host": "127.0.0.1",
             "logger_serial": "gw-1",
+            "logger_mac": "aa:bb:cc:dd:ee:10",
             "inverter_serial": "SOLIS001",
         },
         version=3,
         unique_id="tcp:gw-1",
     )
     entry.add_to_hass(hass)
-    adopted = await hass.config_entries.flow.async_init(
+    same = await hass.config_entries.flow.async_init(
         DOMAIN,
         context={"source": SOURCE_DHCP},
         data={"ip": "127.0.0.1", "macaddress": "aa:bb:cc:dd:ee:10", "hostname": "EW11_ab12"},
     )
-    assert adopted["reason"] == "already_configured"
-    assert entry.data["logger_mac"] == "aa:bb:cc:dd:ee:10"
+    assert same["reason"] == "already_configured"
+    # Another device at the same address with a gateway hostname is not adopted.
     held = await hass.config_entries.flow.async_init(
         DOMAIN,
         context={"source": SOURCE_DHCP},
         data={"ip": "127.0.0.1", "macaddress": "de:ad:be:ef:00:01", "hostname": "EW11"},
     )
-    assert held["reason"] == "already_configured"
+    assert held["reason"] == "not_solis_logger"
     assert entry.data["logger_mac"] == "aa:bb:cc:dd:ee:10"
-    assert entry.data["logger_host"] == "127.0.0.1"
-    again = await hass.config_entries.flow.async_init(
-        DOMAIN,
-        context={"source": SOURCE_DHCP},
-        data={"ip": "127.0.0.1", "macaddress": "aa:bb:cc:dd:ee:10", "hostname": "EW11_ab12"},
-    )
-    assert again["reason"] == "already_configured"
     moved = await hass.config_entries.flow.async_init(
         DOMAIN,
         context={"source": SOURCE_DHCP},
@@ -370,15 +339,9 @@ async def test_dhcp_remembers_a_gateway_mac_and_ignores_a_stranger(
     stranger = await hass.config_entries.flow.async_init(
         DOMAIN,
         context={"source": SOURCE_DHCP},
-        data={"ip": "10.9.9.9", "macaddress": "11:22:33:44:55:66", "hostname": "kitchen"},
-    )
-    assert stranger["reason"] == "not_solis_logger"
-    missing = await hass.config_entries.flow.async_init(
-        DOMAIN,
-        context={"source": SOURCE_DHCP},
         data={"ip": "10.9.9.8", "macaddress": "11:22:33:44:55:77", "hostname": "usr-tcp232-410s"},
     )
-    assert missing["reason"] == "logger_not_setup"
+    assert stranger["reason"] == "not_solis_logger"
 
 
 async def test_choice_rejects_a_kind_that_is_not_offered(
@@ -404,14 +367,10 @@ async def test_choice_rejects_a_kind_that_is_not_offered(
         return probe
 
     monkeypatch.setattr("custom_components.solis.config_flow.identify_logger", _named)
-    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {"source": SOURCE_LOCAL, "api_url": "http://127.0.0.1:9", "key_id": "", "key_secret": ""},
-    )
+    result = await start_user(hass, "local")
     choice = await hass.config_entries.flow.async_configure(
         result["flow_id"],
-        {"logger_kind": "auto", "logger_host": "127.0.0.1", "logger_serial": "5A120011"},
+        logger_form(logger_kind="auto", logger_host="127.0.0.1", logger_serial="5A120011"),
     )
     assert choice["step_id"] == "logger_choice"
     from homeassistant.data_entry_flow import InvalidData
@@ -419,11 +378,11 @@ async def test_choice_rejects_a_kind_that_is_not_offered(
     with pytest.raises(InvalidData):
         await hass.config_entries.flow.async_configure(
             choice["flow_id"],
-            {"logger_kind": "solarman"},
+            logger_form(logger_kind="solarman"),
         )
     created = await hass.config_entries.flow.async_configure(
         choice["flow_id"],
-        {"logger_kind": "s2_wl_st"},
+        logger_form(logger_kind="s2_wl_st"),
     )
     assert created["type"] is FlowResultType.CREATE_ENTRY
     assert created["result"].data["logger_kind"] == "s2_wl_st"

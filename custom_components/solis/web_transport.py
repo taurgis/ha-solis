@@ -3,8 +3,10 @@
 The page shows what the stick last read from the inverter, about every five
 minutes. A good read is a local snapshot, so ``SolisPriorityTransport`` does
 not call SolisCloud for it. A stick that cannot be reached is asleep, as for
-the other inverter-powered sticks. A wrong web password or a page that is not
-the Solis format is a paused session, not night.
+the other inverter-powered sticks. A page that is not a known stick format
+is a paused session, not night. A wrong web password raises
+``SolisLoggerAuthError`` (a ``SolisLoggerBusy``) on every read until the
+password changes, so the caller can ask the user for the new one.
 """
 
 from __future__ import annotations
@@ -17,11 +19,12 @@ import time
 from .const import (
     LOGGER_WEB,
     PROTOCOL_HTTP,
+    REASON_WEB_AUTH,
     REASON_WEB_PAGE,
     WEB_DEFAULT_PASSWORD,
     WEB_PORT,
 )
-from .errors import SolisLoggerBusy, SolisLoggerOffline
+from .errors import SolisLoggerAuthError, SolisLoggerBusy, SolisLoggerOffline
 from .local_transport import (
     LoggerProbe,
     LoggerRequest,
@@ -32,7 +35,12 @@ from .local_transport import (
 )
 from .loggers import spec_for
 from .loggers.fingerprint import read_http_banner
-from .loggers.web import WebInverter, WebStickClient, is_solis_web_banner
+from .loggers.web import (
+    WebInverter,
+    WebStickClient,
+    is_basic_auth_challenge,
+    is_solis_web_banner,
+)
 from .models import InverterSnapshot, SolisSnapshot
 from .solarman import host_gate
 
@@ -42,7 +50,12 @@ TextCallback = Callable[[str], None]
 
 
 def web_inverter(page: WebInverter, *, serial: str, logger: str, now: datetime) -> InverterSnapshot:
-    """Build the inverter from one page read. Fields the page lacks stay ``None``."""
+    """Build the inverter from one page read. Fields the page lacks stay ``None``.
+
+    A page without a power reading means the stick has nothing from the
+    inverter: it is reported offline with zero power.
+    """
+    silent = page.power_w is None
     return InverterSnapshot(
         serial=serial,
         device_id=serial,
@@ -51,11 +64,11 @@ def web_inverter(page: WebInverter, *, serial: str, logger: str, now: datetime) 
         model=None,
         product_model="1",
         hmi_version=page.firmware or None,
-        state=3 if page.in_alarm else 1,
+        state=2 if silent else 3 if page.in_alarm else 1,
         ac_output_type=None,
         data_timestamp=now,
         collector_serial=logger,
-        ac_power_w=page.power_w,
+        ac_power_w=0.0 if page.power_w is None else page.power_w,
         frequency_hz=None,
         temperature_c=page.temperature_c,
         energy_today_kwh=page.energy_today_kwh,
@@ -119,7 +132,10 @@ class SolisWebTransport:
     async def async_read(self) -> SolisSnapshot:
         """Return a snapshot. A paused session raises ``SolisLoggerBusy``."""
         if time.monotonic() < self._next_attempt:
-            raise SolisLoggerBusy(
+            error = (
+                SolisLoggerAuthError if self.degraded_reason == REASON_WEB_AUTH else SolisLoggerBusy
+            )
+            raise error(
                 f"{self._host} is in backoff",
                 waiting=True,
                 reason=self.degraded_reason or REASON_WEB_PAGE,
@@ -173,6 +189,9 @@ class SolisWebTransport:
     async def _read_connected(self) -> SolisSnapshot:
         async with host_gate(self._host, self._port):
             page = await self._client.read_inverter()
+        if page.power_w is None and self._last is not None:
+            # status.html with no reading: the inverter stopped talking to the stick.
+            return asleep_snapshot(self._last)
         serial = self._inverter_serial or page.serial
         if serial and serial != self._inverter_serial:
             self._inverter_serial = serial
@@ -238,16 +257,33 @@ class SolisWebTransport:
 
 
 async def probe_web(request: LoggerRequest, *, auto: bool) -> LoggerProbe:
-    """Confirm the web page. ``auto`` first checks that port 80 is a Solis stick.
+    """Confirm the web page. ``auto`` first checks that port 80 asks for Basic auth.
 
-    Raises ``SolisLoggerBusy`` with a web reason for a wrong password or a page
-    in another format, and ``SolisLoggerOffline`` when nothing answers.
+    Raises ``SolisLoggerAuthError`` for a wrong password, ``SolisLoggerBusy``
+    with the web-page reason for a page in another format, and
+    ``SolisLoggerOffline`` when nothing answers. In ``auto`` mode only a
+    stick whose challenge names the Solis realm reports those faults; any
+    other Basic challenge must be confirmed by a parsed page, or the host is
+    reported as not a web stick.
     """
     port = request.port or WEB_PORT
-    if auto and not is_solis_web_banner(
-        await read_http_banner(request.host, timeout=min(request.timeout, 3.0), port=port)
-    ):
+    if not auto:
+        return await _probe_page(request, port)
+    banner = await read_http_banner(request.host, timeout=min(request.timeout, 3.0), port=port)
+    if not is_basic_auth_challenge(banner):
         raise SolisLoggerOffline(f"{request.host} has no Solis web page", refused=True)
+    try:
+        return await _probe_page(request, port)
+    except SolisLoggerBusy as err:
+        if is_solis_web_banner(banner):
+            raise
+        raise SolisLoggerOffline(
+            f"{request.host} asks for a password and is not a known Solis web page",
+            refused=True,
+        ) from err
+
+
+async def _probe_page(request: LoggerRequest, port: int) -> LoggerProbe:
     client = WebStickClient(
         request.host,
         request.password or WEB_DEFAULT_PASSWORD,

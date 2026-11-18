@@ -46,7 +46,15 @@ LEGACY_LABELS: dict[str, str] = {
     "load_today": "Daily Grid Energy Used",
     "grid_import_today": "Daily Grid Energy Purchased",
     "grid_export_today": "Daily On-grid Energy",
+    "data_timestamp": "Timestamp Measurements Received",
+    "grid_import_total": "Total Energy Purchased",
+    "grid_export_total": "Total On-grid Energy",
+    "load_total": "Total Energy Used",
 }
+
+# Further upstream labels for a key above. ``Total Consumption Energy`` was
+# the Ginlong Platform 2.0 name for the lifetime load counter.
+LEGACY_ALIASES: tuple[tuple[str, str], ...] = (("load_total", "Total Consumption Energy"),)
 
 _LEGACY_API_NAMES = ("SolisCloud", "Ginlong Platform 2.0")
 # These counters moved from the inverter device onto the plant device.
@@ -56,6 +64,8 @@ for _index in range(1, 25):
     LEGACY_LABELS[f"string_{_index}_voltage"] = f"DC Voltage PV{_index}"
     LEGACY_LABELS[f"string_{_index}_current"] = f"DC Current PV{_index}"
     LEGACY_LABELS[f"string_{_index}_power"] = f"DC Power PV{_index}"
+for _index in range(1, 4):
+    LEGACY_LABELS[f"phase_{_index}_power"] = f"Grid Phase{_index} Power"
 
 
 def legacy_unique_id(serial: str, config_name: str, label: str) -> str:
@@ -75,7 +85,10 @@ def async_migrate_entity_ids(
     Safe to call on every poll. Inverters that were offline during the first
     poll are migrated when they appear. When a legacy row and a new row both
     exist, the legacy entity id is kept because that is the one with history,
-    and the duplicate new row is removed.
+    and the duplicate new row is removed. When the stable id is already held
+    by an earlier migrated legacy row (several inverters on one plant each had
+    their own copy of a plant counter), both rows keep their history: the
+    first one keeps the stable id and the later one is left as it is.
     """
     registry = er.async_get(hass)
     names = {legacy_name, "Solis"}
@@ -100,16 +113,26 @@ def async_migrate_entity_ids(
 
 
 def _retarget(registry: er.EntityRegistry, entity: er.RegistryEntry, new_unique_id: str) -> None:
+    """Give ``entity`` the stable id without deleting a row that has history.
+
+    A row holding the id that was itself migrated (``previous_unique_id`` is
+    set) carries legacy history, so it is kept and ``entity`` stays where it
+    is. A row created fresh under the stable id has no history and gives way.
+    """
     existing_id = registry.async_get_entity_id(entity.domain, DOMAIN, new_unique_id)
     if existing_id is not None and existing_id != entity.entity_id:
+        existing = registry.async_get(existing_id)
+        if existing is not None and existing.previous_unique_id:
+            return
         registry.async_remove(existing_id)
     registry.async_update_entity(entity.entity_id, new_unique_id=new_unique_id)
 
 
 def _match(unique_id: str, names: set[str], serials: set[str]) -> tuple[str, str] | None:
+    labels = (*LEGACY_LABELS.items(), *LEGACY_ALIASES)
     for serial in serials:
         for name in names:
-            for key, label in LEGACY_LABELS.items():
+            for key, label in labels:
                 if unique_id == legacy_unique_id(serial, name, label):
                     return serial, key
     return None

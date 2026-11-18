@@ -21,7 +21,7 @@ from . import SolisConfigEntry
 from .const import DOMAIN
 from .coordinator import SolisCoordinator
 from .entity import SolisEntity, inverter_device
-from .migration import async_migrate_entity_ids, device_for_identifier, legacy_name_from_entry
+from .migration import device_for_identifier
 from .models import InverterSnapshot
 
 PARALLEL_UPDATES = 0
@@ -32,17 +32,10 @@ ALARM = BinarySensorEntityDescription(
     device_class=BinarySensorDeviceClass.PROBLEM,
 )
 
-# Present on Home Assistant 2025.10 and newer. Guarded so an older core that
-# lacks the enum still loads the alarm sensor.
-_CHARGING_CLASS = getattr(BinarySensorDeviceClass, "BATTERY_CHARGING", None)
-CHARGING = (
-    BinarySensorEntityDescription(
-        key="battery_charging",
-        translation_key="battery_charging",
-        device_class=_CHARGING_CLASS,
-    )
-    if _CHARGING_CLASS is not None
-    else None
+CHARGING = BinarySensorEntityDescription(
+    key="battery_charging",
+    translation_key="battery_charging",
+    device_class=BinarySensorDeviceClass.BATTERY_CHARGING,
 )
 
 
@@ -50,6 +43,8 @@ class SolisAlarmBinarySensor(SolisEntity, BinarySensorEntity):
     """On when the inverter has a pending SolisCloud alarm."""
 
     entity_description = ALARM
+    # Alarm text can be long and changes with every alarm; the code is enough history.
+    _unrecorded_attributes = frozenset({"message", "advice"})
 
     def __init__(
         self,
@@ -92,7 +87,7 @@ class SolisAlarmBinarySensor(SolisEntity, BinarySensorEntity):
 class SolisBatteryChargingBinarySensor(SolisEntity, BinarySensorEntity):
     """On while battery power is positive (charging)."""
 
-    entity_description = CHARGING or ALARM
+    entity_description = CHARGING
 
     def __init__(
         self,
@@ -103,10 +98,9 @@ class SolisBatteryChargingBinarySensor(SolisEntity, BinarySensorEntity):
     ) -> None:
         """Bind the charging sensor to one hybrid inverter."""
         inverter = next(item for item in coordinator.data.inverters if item.serial == serial)
-        description = CHARGING or ALARM
         super().__init__(
             coordinator,
-            description,
+            CHARGING,
             f"{serial}_battery_charging",
             inverter_device(inverter, station_name, via_device_id),
         )
@@ -152,14 +146,8 @@ async def async_setup_entry(
     def _sync() -> None:
         if coordinator.data is None:
             return
+        # Entity id migrations run at setup and in the sensor platform.
         serials = {inverter.serial for inverter in coordinator.data.inverters}
-        async_migrate_entity_ids(
-            hass,
-            solis_entry.entry_id,
-            legacy_name_from_entry(solis_entry.data),
-            serials,
-            {inverter.serial: inverter.station_id for inverter in coordinator.data.inverters},
-        )
         names = {station.station_id: station.name for station in coordinator.data.stations}
         fresh: list[SolisAlarmBinarySensor | SolisBatteryChargingBinarySensor] = []
         for inverter in coordinator.data.inverters:
@@ -174,11 +162,7 @@ async def async_setup_entry(
                 entity = SolisAlarmBinarySensor(coordinator, inverter.serial, station_name, via)
                 added_alarms[inverter.serial] = entity
                 fresh.append(entity)
-            if (
-                CHARGING is not None
-                and inverter.has_battery
-                and inverter.serial not in added_charging
-            ):
+            if inverter.has_battery and inverter.serial not in added_charging:
                 charging = SolisBatteryChargingBinarySensor(
                     coordinator, inverter.serial, station_name, via
                 )

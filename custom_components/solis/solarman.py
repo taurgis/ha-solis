@@ -4,8 +4,12 @@ V5 framing follows pysolarmanv5 (MIT, jmccrohan): start ``0xA5``, little-endian
 length, control ``0x4510`` / ``0x1510``, sequence, logger serial, a 15-byte
 request prefix or 14-byte response prefix, the Modbus RTU frame, checksum
 ``sum(bytes[1:]) & 0xFF``, end ``0x15``. The stick echoes the low sequence
-byte and uses the high byte as its own counter. Control ``0x4710`` is an
-unsolicited heartbeat and is skipped. A wrong serial is silence.
+byte and uses the high byte as its own counter. The first sequence number is
+random, as in pysolarmanv5. Unsolicited frames (handshake ``0x4110``, data
+``0x4210``, info ``0x4310``, heartbeat ``0x4710``, report ``0x4810``) get the
+time response pysolarmanv5 sends and are otherwise skipped. A V5 response
+with no Modbus frame inside is the stick saying the inverter did not answer
+on RS485. A wrong serial is silence.
 
 Some DLS-L sticks answer plain Modbus TCP (MBAP, no V5 wrapper) on the same
 port 8899, or on 30003. The reader tries V5 first and remembers which
@@ -23,9 +27,12 @@ from dataclasses import dataclass
 import errno
 import ipaddress
 import logging
+import random
 import struct
+import time
 import weakref
 
+from .const import REASON_CLOSED, REASON_TIMEOUT
 from .errors import SolisLoggerBusy, SolisLoggerOffline
 
 _LOGGER = logging.getLogger(__name__)
@@ -34,12 +41,19 @@ _START = 0xA5
 _END = 0x15
 _REQ_CONTROL = 0x4510
 _RSP_CONTROL = 0x1510
+# Low byte of every V5 control word; the high byte is the code.
+_CONTROL_SUFFIX = 0x10
+# Codes the stick may send on its own. pysolarmanv5 answers each with a time
+# frame whose code is the request code minus 0x30.
+_UNSOLICITED = frozenset({0x41, 0x42, 0x43, 0x47, 0x48})
+# Modbus exceptions from a gateway: path unavailable, target did not answer.
+GATEWAY_EXCEPTIONS = frozenset({0x0A, 0x0B})
 _DISCOVERY_PORT = 48899
 _DISCOVERY_PROBES = (b"WIFIKIT-214028-READ", b"HF-A11ASSISTHREAD")
 _HEADER = struct.Struct("<BHHHI")
 _MAX_PAYLOAD = 512
 _MBAP = struct.Struct(">HHH")
-_IO_ERRORS = (TimeoutError, ConnectionError, OSError, asyncio.IncompleteReadError, ValueError)
+IO_ERRORS = (TimeoutError, ConnectionError, OSError, asyncio.IncompleteReadError, ValueError)
 
 _BUSY_ERRNOS = frozenset(
     {
@@ -79,6 +93,21 @@ class ModbusException(Exception):
         self.code = code
 
 
+def no_rs485_answer(err: ModbusException) -> SolisLoggerOffline | None:
+    """Exceptions 0x0A and 0x0B are a gateway whose RS485 side got no reply.
+
+    That is the same as a timeout behind the stick (the inverter is dark or
+    the slave id is wrong), not a register the inverter rejected.
+    """
+    if err.code not in GATEWAY_EXCEPTIONS:
+        return None
+    return SolisLoggerOffline(
+        f"gateway returned Modbus exception {err.code}: the inverter did not answer",
+        connected=True,
+        reason=REASON_TIMEOUT,
+    )
+
+
 def crc16(data: bytes) -> int:
     """Return the Modbus RTU CRC16 of ``data``."""
     crc = 0xFFFF
@@ -109,6 +138,27 @@ def build_response(logger_serial: int, sequence: int, modbus: bytes) -> bytes:
     prefix = bytes((0x02, 0x01)) + bytes(12)
     payload = prefix + modbus
     header = _HEADER.pack(_START, len(payload), _RSP_CONTROL, sequence & 0xFFFF, logger_serial)
+    body = header + payload
+    return body + bytes((sum(body[1:]) & 0xFF, _END))
+
+
+def build_time_response(logger_serial: int, frame: bytes, now: float | None = None) -> bytes:
+    """Answer an unsolicited V5 frame the way pysolarmanv5 does.
+
+    The code is the request code minus 0x30 (``0x4710`` becomes ``0x1710``),
+    the sequence is the request's with the low byte plus one, and the payload
+    is ``0x0100``, the Unix time and a zero offset.
+    """
+    code = (frame[4] - 0x30) & 0xFF
+    sequence = bytes((((frame[5] + 1) & 0xFF), frame[6]))
+    payload = struct.pack("<HII", 0x0100, int(time.time() if now is None else now), 0)
+    header = (
+        bytes((_START,))
+        + struct.pack("<H", len(payload))
+        + bytes((_CONTROL_SUFFIX, code))
+        + sequence
+        + struct.pack("<I", logger_serial & 0xFFFFFFFF)
+    )
     body = header + payload
     return body + bytes((sum(body[1:]) & 0xFF, _END))
 
@@ -175,6 +225,15 @@ def modbus_from_frame(frame: bytes) -> bytes:
     if payload_len < 14:
         raise ValueError("solarman payload has no modbus frame")
     return frame[25:-2]
+
+
+def _modbus_matches(modbus: bytes, slave: int, count: int) -> bool:
+    """A reply for this request: same slave, function 4, and the byte count asked for."""
+    if len(modbus) < 3 or modbus[0] != (slave & 0xFF):
+        return False
+    if modbus[1] == 0x84:
+        return True
+    return modbus[1] == 0x04 and modbus[2] == count * 2
 
 
 def logger_serial_of(frame: bytes) -> int:
@@ -397,6 +456,16 @@ class _PacedClient:
         self._sent = False
         _LIVE.add(self)
 
+    @property
+    def port(self) -> int:
+        """TCP port this client connects to."""
+        return self._port
+
+    @property
+    def connected(self) -> bool:
+        """True while a socket from an earlier read is open."""
+        return self._writer is not None
+
     async def close(self) -> None:
         """Close the socket if it is open."""
         writer = self._writer
@@ -448,14 +517,14 @@ async def _release_other_sockets(client: _PacedClient) -> None:
     others = [
         item
         for item in list(_LIVE)
-        if item is not client and item.host == client.host and item._port == client._port
+        if item is not client and item.host == client.host and item.port == client.port
     ]
     for item in others:
         await item.close()
 
 
 class SolarmanClient(_PacedClient):
-    """One V5 session. Heartbeats are ignored. One request is in flight."""
+    """One V5 session. Unsolicited frames are answered and skipped. One request is in flight."""
 
     def __init__(
         self,
@@ -469,7 +538,9 @@ class SolarmanClient(_PacedClient):
         """Store the logger address. The socket opens on the first read."""
         super().__init__(host, port=port, timeout=timeout, gap=gap)
         self.serial = int(logger_serial)
-        self._sequence = 1
+        # pysolarmanv5 starts at a random byte, so a stick that still holds the
+        # previous session's last sequence does not take a stale reply as ours.
+        self._sequence = random.randrange(0x01, 0xFF)
         self._buffer = b""
 
     async def close(self) -> None:
@@ -478,65 +549,124 @@ class SolarmanClient(_PacedClient):
         await super().close()
 
     async def read_input(self, slave: int, address: int, count: int) -> list[int]:
-        """Read input registers. A reset becomes ``SolisLoggerBusy``."""
+        """Read input registers. A reset becomes ``SolisLoggerBusy``.
+
+        A socket kept from an earlier poll that fails on its first exchange
+        (the stick dropped an idle session) is reopened once before the
+        failure counts.
+        """
         async with host_gate(self.host, self._port), self._lock:
             await self._pace()
-            reader, writer = await self._ensure()
-            sequence = self._sequence & 0xFFFF
-            self._sequence = (self._sequence + 1) & 0xFFFF
-            request = build_request(self.serial, sequence, rtu_read(slave, address, count))
+            reused = self.connected
             try:
-                await self._send(writer, request)
-                frame = await self._read_matching(reader, sequence)
-                words = decode_read(modbus_from_frame(frame))
-                if len(words) != count:
-                    raise ValueError("solarman register count does not match")
-            except (SolisLoggerBusy, SolisLoggerOffline):
-                await self.close()
+                words = await self._exchange(slave, address, count)
+            except (SolisLoggerBusy, SolisLoggerOffline) as err:
+                if not reused or not _stale_socket(err):
+                    raise
+                _LOGGER.debug("V5 socket to %s was stale; reconnecting once", self.host)
+                words = await self._exchange(slave, address, count)
+            except ModbusException as err:
+                gateway = no_rs485_answer(err)
+                if gateway is not None:
+                    raise gateway from err
                 raise
-            except _IO_ERRORS as err:
-                await self.close()
-                raise classify_io(err, connected=True) from err
             return words
 
-    async def _read_matching(self, reader: asyncio.StreamReader, sequence: int) -> bytes:
-        for _ in range(8):
-            frame = await self._read_one(reader)
+    async def _exchange(self, slave: int, address: int, count: int) -> list[int]:
+        reader, writer = await self._ensure()
+        sequence = self._sequence & 0xFFFF
+        self._sequence = (self._sequence + 1) & 0xFFFF
+        request = build_request(self.serial, sequence, rtu_read(slave, address, count))
+        try:
+            await self._send(writer, request)
+            modbus = await self._read_matching(reader, writer, sequence, slave, count)
+            words = decode_read(modbus)
+            if len(words) != count:
+                raise ValueError("solarman register count does not match")
+        except (SolisLoggerBusy, SolisLoggerOffline):
+            await self.close()
+            raise
+        except ModbusException:
+            raise
+        except IO_ERRORS as err:
+            await self.close()
+            raise classify_io(err, connected=True) from err
+        return words
+
+    async def _read_matching(
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+        sequence: int,
+        slave: int,
+        count: int,
+    ) -> bytes:
+        """Return the Modbus frame that answers this request.
+
+        One deadline covers every frame read, so a stick that keeps sending
+        heartbeats cannot stretch the wait. Frames for another sequence,
+        logger, slave or register count are skipped.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self._timeout
+        while True:
+            frame = await self._read_one(reader, deadline)
             control = int.from_bytes(frame[3:5], "little")
+            if frame[3] == _CONTROL_SUFFIX and frame[4] in _UNSOLICITED:
+                await self._answer_unsolicited(writer, frame)
+                continue
             if control != _RSP_CONTROL or not sequence_matches(frame, sequence):
                 continue
             if logger_serial_of(frame) != self.serial:
                 continue
             if (sum(frame[1:-2]) & 0xFF) != frame[-2]:
                 raise ValueError("solarman checksum mismatch")
-            return frame
-        raise SolisLoggerOffline(
-            "logger sent no matching response", connected=True, reason="timeout"
-        )
+            modbus = frame[25:-2]
+            if len(modbus) < 5:
+                # The stick wrapped no Modbus reply: nothing came back on RS485.
+                raise SolisLoggerOffline(
+                    "logger answered but the inverter did not",
+                    connected=True,
+                    reason=REASON_TIMEOUT,
+                )
+            if not _modbus_matches(modbus, slave, count):
+                continue
+            return modbus
 
-    async def _read_one(self, reader: asyncio.StreamReader) -> bytes:
-        # A peer that keeps sending junk would reset a per-chunk timeout for ever.
-        deadline = asyncio.get_running_loop().time() + 2 * self._timeout
+    async def _answer_unsolicited(self, writer: asyncio.StreamWriter, frame: bytes) -> None:
+        _LOGGER.debug("V5 control 0x%02x%02x from %s answered", frame[4], frame[3], self.host)
+        try:
+            writer.write(build_time_response(self.serial, frame))
+        except (ConnectionError, OSError, RuntimeError) as err:
+            raise classify_io(err, connected=True) from err
+
+    async def _read_one(self, reader: asyncio.StreamReader, deadline: float) -> bytes:
+        loop = asyncio.get_running_loop()
         while True:
             frame, self._buffer = take_frame(self._buffer)
             if frame is not None:
                 return frame
-            remaining = deadline - asyncio.get_running_loop().time()
+            remaining = deadline - loop.time()
             try:
                 if remaining <= 0:
                     raise TimeoutError
-                chunk = await asyncio.wait_for(
-                    reader.read(512), timeout=min(self._timeout, remaining)
-                )
+                chunk = await asyncio.wait_for(reader.read(512), timeout=remaining)
             except (TimeoutError, ConnectionError, OSError) as err:
                 raise classify_io(err, connected=True) from err
             if not chunk:
                 raise SolisLoggerOffline(
-                    "logger closed the connection", connected=True, reason="closed"
+                    "logger closed the connection", connected=True, reason=REASON_CLOSED
                 )
             if len(self._buffer) > _MAX_PAYLOAD:
                 self._buffer = self._buffer[-_MAX_PAYLOAD:]
             self._buffer += chunk
+
+
+def _stale_socket(err: SolisLoggerBusy | SolisLoggerOffline) -> bool:
+    """An idle socket the stick already dropped: EOF or a reset on the first send."""
+    if isinstance(err, SolisLoggerBusy):
+        return not err.waiting
+    return err.connected and err.reason == REASON_CLOSED
 
 
 class ModbusTcpClient(_PacedClient):
@@ -568,14 +698,20 @@ class ModbusTcpClient(_PacedClient):
         async with host_gate(self.host, self._port), self._lock:
             await self._pace()
             try:
-                return await self._exchange(slave, address, count)
+                try:
+                    return await self._exchange(slave, address, count)
+                except ModbusException as err:
+                    if err.code != 1 or self._fallback == 0 or self.function == self._fallback:
+                        raise
+                    self.function = self._fallback
+                    self._fallback = 0
+                    await self._pace()
+                    return await self._exchange(slave, address, count)
             except ModbusException as err:
-                if err.code != 1 or self._fallback == 0 or self.function == self._fallback:
-                    raise
-                self.function = self._fallback
-                self._fallback = 0
-                await self._pace()
-                return await self._exchange(slave, address, count)
+                gateway = no_rs485_answer(err)
+                if gateway is not None:
+                    raise gateway from err
+                raise
 
     async def _exchange(self, slave: int, address: int, count: int) -> list[int]:
         reader, writer = await self._ensure()
@@ -588,7 +724,7 @@ class ModbusTcpClient(_PacedClient):
         except (SolisLoggerBusy, SolisLoggerOffline):
             await self.close()
             raise
-        except _IO_ERRORS as err:
+        except IO_ERRORS as err:
             await self.close()
             raise classify_io(err, connected=True) from err
         if int.from_bytes(frame[:2], "big") != transaction:

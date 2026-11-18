@@ -1,177 +1,205 @@
 {
   "config": {
+    "flow_title": "{name}",
     "step": {
       "user": {
+        "title": "Hoe leest Home Assistant je omvormer uit?",
+        "description": "SolisCloud werkt overal vandaan. Een lokale stick is sneller en werkt zonder internet, maar antwoordt alleen terwijl de omvormer produceert.",
+        "menu_options": {
+          "cloud": "Alleen SolisCloud",
+          "local": "Alleen lokale stick",
+          "both": "Lokale stick met SolisCloud als reserve"
+        }
+      },
+      "cloud": {
         "title": "Verbinden met SolisCloud",
-        "description": "Kies cloud, een lokale datalogger, of lokaal eerst met SolisCloud als reserve. Lokaal zoeken werkt alleen terwijl de omvormer produceert, want de stick krijgt stroom van de omvormer en is 's nachts uit.",
+        "description": "Maak een API-sleutel aan in SolisCloud onder Account, Basisinstellingen, API-beheer.",
         "data": {
-          "source": "Verbinding",
           "api_url": "API-URL",
-          "key_id": "API-sleutel-id",
+          "key_id": "API-sleutel-ID",
           "key_secret": "API-sleutelgeheim"
         },
         "data_description": {
-          "source": "Alleen cloud, een lokale logger op je netwerk, of lokaal eerst met SolisCloud als reserve. Lokaal zoeken werkt alleen terwijl de omvormer produceert.",
-          "api_url": "Gebruik de host die de sleutel uitgaf, inclusief de poort. De internationale dienst luistert op poort 13333. Laat dit leeg bij een opstelling die alleen lokaal is.",
-          "key_id": "De sleutel-id uit SolisCloud API-beheer. Dit is niet de gebruikersnaam van het portaal. Laat leeg voor alleen lokaal.",
-          "key_secret": "Eenmalig zichtbaar bij het aanmaken van de sleutel. Opgeslagen in het config-item en verborgen in diagnostiek."
-        }
-      },
-      "logger": {
-        "title": "Lokale logger",
-        "description": "Gevonden Solarman-loggers: {found}. Automatisch detecteren probeert poort 502, daarna poort 8899. Een Solis-registermap op 502 is alleen een S2-WL-ST als poort 80 de Solis-loggerpagina noemt. Een gatewaypagina wordt opgeslagen als Modbus TCP-gateway. Als de pagina het apparaat niet noemt, kies je zelf, met S2-WL-ST voorgeselecteerd. S5-WiFi-ST is experimenteel: Solis ondersteunt lokale toegang niet officieel, en nieuwere firmware sluit poort 502. De omvormer moet produceren. Reserveer het adres in de router.",
-        "data": {
-          "logger_kind": "Logger",
-          "logger_host": "Logger-IP",
-          "logger_port": "Poort",
-          "logger_serial": "Loggerserienummer",
-          "slave_id": "Modbus-slave",
-          "inverter_serial": "Omvormerserienummer",
-          "logger_preset": "RTU-gatewaymodel",
-          "logger_password": "Webwachtwoord van de stick"
-        },
-        "data_description": {
-          "logger_kind": "Automatisch detecteren probeert poort 502, daarna 8899. Poort 502 is alleen een S2-WL-ST als de webpagina van het apparaat dat zegt. S5-WiFi-ST is experimenteel: Solis ondersteunt lokale toegang niet officieel, en een firmware-update sluit poort 502 vaak. Modbus RTU over TCP is experimenteel en gebruikt het gatewaymodel voor de fabriekspoort.",
-          "logger_host": "Huidig adres. Reserveer een stick in de router. Een Solarman-stick wordt opnieuw gevonden via het serienummer. Een S2-WL-ST, S5 en een gateway niet. 10.10.100.254 is het installatieadres van een stick of een Elfin, niet het adres op het thuisnetwerk.",
-          "logger_port": "Laat leeg voor 502 op een S2, S5 of Modbus TCP-gateway. Voor RTU over TCP: laat leeg om het gatewaymodel te gebruiken: 8899 Elfin, 4196 Waveshare, 26 USR RS485, 6638 ESPHome. Een ingevulde poort wint altijd. 23 is de USR RS232-socket.",
-          "logger_serial": "Solarman: het numerieke serienummer van het label of van de zoekactie. S2 en S5: het serienummer in de wifi-naam D_ of Solis_, niet het omvormerserienummer. Gateway en RTU: een label naar keuze, of leeg laten om het omvormerserienummer te gebruiken.",
-          "slave_id": "Laat leeg om slave 1 te proberen, daarna 2 en 3. De Solis-standaard is 1.",
-          "inverter_serial": "Optioneel. Het SolisCloud-omvormerserienummer, bijvoorbeeld 110E40182280017. Laat leeg om het van de stick te lezen als dat bereik antwoordt, of van SolisCloud in de modus lokaal-en-cloud. Dit is de entiteit-id. Op een S2-WL-ST is het ook de unieke config-id als het stickserienummer leeg is.",
-          "logger_preset": "Alleen voor Modbus RTU over TCP, en alleen als Poort leeg is. Elfin EW11/EE11 staat af fabriek op 8899. Waveshare RS485 TO ETH luistert op 4196 tot je dat wijzigt. USR-TCP232 gebruikt 26 op de RS485-socket en 23 op de RS232-socket. De stream server van ESPHome gebruikt vaak 6638.",
-          "logger_password": "Alleen voor Solis webpagina. Leeg laten voor het fabriekswachtwoord 123456789. Sommige firmware vervangt het door het wifi-wachtwoord."
-        }
-      },
-      "logger_choice": {
-        "title": "Welk apparaat zit op poort 502?",
-        "description": "{note} Solis documenteert Modbus TCP op de S2-WL-ST. Een Waveshare, Elfin of USR in Modbus-modus geeft dezelfde omvormerregisters terug. S5-WiFi-ST staat hier niet: die is experimenteel en nieuwere firmware sluit poort 502.",
-        "data": {
-          "logger_kind": "Apparaat"
-        },
-        "data_description": {
-          "logger_kind": "S2-WL-ST als dit de Solis-stick is. Modbus TCP-gateway als een Waveshare, Elfin of USR de omzetting doet."
+          "api_url": "Laat de standaardwaarde staan, tenzij je sleutel door een andere SolisCloud-host is uitgegeven. Vermeld de poort; de internationale dienst gebruikt 13333.",
+          "key_id": "De sleutel-ID uit SolisCloud API-beheer. Dit is niet je portalgebruikersnaam.",
+          "key_secret": "Wordt eenmalig getoond bij het aanmaken van de sleutel."
         }
       },
       "stations": {
-        "title": "Kies installaties",
-        "description": "Selecteer de SolisCloud-installaties die dit item volgt.",
+        "title": "Installaties kiezen",
+        "description": "Kies de SolisCloud-installaties die je wilt toevoegen.",
         "data": {
           "station_ids": "Installaties"
         },
         "data_description": {
-          "station_ids": "Alleen de gekozen installaties worden uitgelezen. Wijzig de set later via herconfigureren."
+          "station_ids": "Alleen de gekozen installaties worden uitgelezen."
+        }
+      },
+      "logger": {
+        "title": "Lokale stick",
+        "description": "Kies de stick uit de lijst of typ het IP-adres. De stick krijgt stroom van de omvormer, dus de omvormer moet tijdens het instellen produceren. Reserveer het adres in je router.",
+        "data": {
+          "logger_kind": "Type logger",
+          "logger_host": "IP-adres",
+          "inverter_serial": "Omvormerserienummer"
+        },
+        "data_description": {
+          "logger_kind": "Automatisch detecteren werkt voor de meeste sticks. Kies het type zelf als detectie mislukt.",
+          "logger_host": "Sticks die op je netwerk gevonden zijn, staan in de lijst. Staat de jouwe er niet bij, typ dan het adres. 10.10.100.254 is het eigen installatienetwerk van de stick, niet je thuisnetwerk.",
+          "inverter_serial": "Optioneel. Het serienummer op het label van de omvormer of in SolisCloud, bijvoorbeeld 1031000000000001. Laat leeg om het uit de stick te lezen, of uit SolisCloud als dat de reserve is."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Geavanceerde opties",
+            "description": "Alleen nodig als automatisch detecteren de stick niet vindt, of voor een gateway op een afwijkende poort.",
+            "data": {
+              "logger_serial": "Loggerserienummer",
+              "logger_port": "Poort",
+              "slave_id": "Modbus-slave",
+              "logger_preset": "RS485-gatewaymodel"
+            },
+            "data_description": {
+              "logger_serial": "Solarman-stick: het nummer op het label. Het wordt ingevuld via detectie als de stick antwoordt. S2-WL-ST en S5: het serienummer in de wifinaam (D_ of Solis_). Gateway: een zelfgekozen naam, of laat leeg.",
+              "logger_port": "Laat leeg voor de gebruikelijke poort van de gekozen logger. Een ingevulde poort gaat altijd voor.",
+              "slave_id": "Laat leeg om slave 1, 2 en 3 te proberen. Solis-omvormers gebruiken standaard 1.",
+              "logger_preset": "Alleen voor een RS485-gateway in transparante modus met een lege poort. Kiest de fabriekspoort van dat model."
+            }
+          }
+        }
+      },
+      "logger_password": {
+        "title": "Webwachtwoord van de stick",
+        "description": "De stick op {host} heeft alleen een statuswebpagina en vraagt om een wachtwoord. De gebruiker is admin.",
+        "data": {
+          "logger_password": "Webwachtwoord"
+        },
+        "data_description": {
+          "logger_password": "Laat leeg voor het fabriekswachtwoord 123456789. Sommige firmware gebruikt in plaats daarvan je wifiwachtwoord."
+        }
+      },
+      "logger_choice": {
+        "title": "Welk apparaat is dit?",
+        "description": "Het apparaat antwoordde met gegevens van een Solis-omvormer, maar de webpagina zegt niet of het een Solis-stick of een RS485-gateway is.",
+        "data": {
+          "logger_kind": "Apparaat"
+        },
+        "data_description": {
+          "logger_kind": "Kies de Solis S2-WL-ST als de stick in de omvormer zit. Kies de gateway als een Waveshare-, Elfin- of USR-kastje op de RS485-poort van de omvormer is aangesloten."
+        }
+      },
+      "discovery_confirm": {
+        "title": "Solarman-stick gevonden",
+        "description": "Solarman-stick {serial} gevonden op {host}. Hoe moet Home Assistant hem uitlezen?",
+        "menu_options": {
+          "local": "Alleen lokale stick",
+          "both": "Lokale stick met SolisCloud als reserve"
+        }
+      },
+      "reauth": {
+        "title": "Opnieuw aanmelden",
+        "description": "Welke aanmelding is geweigerd?",
+        "menu_options": {
+          "reauth_web": "Webwachtwoord van de stick",
+          "reauth_confirm": "SolisCloud-API-sleutel"
         }
       },
       "reauth_confirm": {
         "title": "SolisCloud-gegevens vernieuwen",
-        "description": "De API-sleutel is geweigerd. Vul een actuele sleutel-id en geheim in.",
+        "description": "De API-sleutel is geweigerd. Vul een geldige sleutel-ID en geheim in.",
         "data": {
-          "key_id": "API-sleutel-id",
+          "key_id": "API-sleutel-ID",
           "key_secret": "API-sleutelgeheim"
         },
         "data_description": {
-          "key_id": "De sleutel-id uit SolisCloud API-beheer. Dit is niet de gebruikersnaam van het portaal.",
-          "key_secret": "Eenmalig zichtbaar bij het aanmaken van de sleutel. Opgeslagen in het config-item en verborgen in diagnostiek."
+          "key_id": "De sleutel-ID uit SolisCloud API-beheer. Dit is niet je portalgebruikersnaam.",
+          "key_secret": "Wordt eenmalig getoond bij het aanmaken van de sleutel."
+        }
+      },
+      "reauth_web": {
+        "title": "Webwachtwoord van de stick",
+        "description": "De stick op {host} heeft het webwachtwoord geweigerd. De gebruiker is admin.",
+        "data": {
+          "logger_password": "Webwachtwoord"
+        },
+        "data_description": {
+          "logger_password": "Laat leeg voor het fabriekswachtwoord 123456789. Sommige firmware gebruikt in plaats daarvan je wifiwachtwoord."
         }
       },
       "reconfigure": {
-        "title": "Solis herconfigureren",
-        "description": "Werk de API-host, de installaties, het pollen, de tijdzone en de verbinding bij. Voeg een lokale logger toe door Verbinding op lokaal of lokaal met cloud te zetten en het logger-IP in te vullen (plus het logger-serienummer; een webpagina-stick heeft alleen het IP nodig). Kies alleen SolisCloud om de logger niet meer te gebruiken; de opgeslagen logger-velden blijven bewaard.",
+        "title": "Solis opnieuw configureren",
+        "description": "Wat wil je wijzigen? Polling en de tijdzone staan onder Configureren.",
+        "menu_options": {
+          "reconfigure_cloud": "SolisCloud-account",
+          "stations": "Installaties",
+          "logger": "Lokale stick",
+          "connection": "Verbinding"
+        }
+      },
+      "reconfigure_cloud": {
+        "title": "SolisCloud-account",
+        "description": "Wijzig de API-host of de sleutel. Bij een lokale configuratie voegt dit SolisCloud toe als reserve.",
         "data": {
-          "source": "Verbinding",
-          "logger_kind": "Logger",
-          "logger_host": "Logger-IP",
-          "logger_port": "Poort",
-          "logger_serial": "Loggerserienummer",
-          "slave_id": "Modbus-slave",
-          "inverter_serial": "Omvormerserienummer",
-          "logger_preset": "RTU-gatewaymodel",
           "api_url": "API-URL",
-          "station_ids": "Installaties",
-          "scan_interval": "Uitleesinterval (seconden)",
-          "request_timeout": "Time-out van een verzoek (seconden)",
-          "endpoint_interval": "Minimale pauze per endpoint (seconden)",
-          "time_zone": "Tijdzone van de installatie",
-          "logger_password": "Webwachtwoord van de stick"
+          "key_id": "API-sleutel-ID",
+          "key_secret": "API-sleutelgeheim"
         },
         "data_description": {
-          "time_zone": "Laat leeg om Home Assistant te volgen als die binnen een uur van de offset van de installatie zit. Gebruik een IANA-naam zoals Europe/Amsterdam om er een af te dwingen, of plant om de numerieke offset van Solis te houden.",
-          "scan_interval": "Seconden tussen uitlezingen. Cloud-samples komen ongeveer elke vijf minuten, dus een item dat alleen cloud is blijft op 60 of langzamer (standaard 300). Een lokale logger is standaard 60 en kan niet sneller dan 30.",
-          "request_timeout": "Seconden wachten op één HTTP-aanroep. Standaard 30.",
-          "endpoint_interval": "Minimale seconden tussen aanroepen van hetzelfde API-pad. Standaard 2, onder de gepubliceerde limiet van twee aanroepen per seconde.",
-          "source": "Alleen cloud, alleen lokaal, of lokaal met SolisCloud als reserve.",
-          "logger_kind": "Automatisch detecteren, Solarman V5, Solis S2-WL-ST, een Modbus TCP-gateway, experimentele S5-WiFi-ST (Solis ondersteunt lokale toegang niet officieel; firmware sluit poort 502 vaak), of experimentele Modbus RTU over TCP. Wijzigen behoudt dezelfde entiteiten.",
-          "logger_preset": "Alleen voor Modbus RTU over TCP als Poort leeg is. Elfin-fabriekspoort is 8899. Waveshare RS485 TO ETH is 4196. USR RS485 is 26. ESPHome stream server is vaak 6638.",
-          "logger_host": "Huidig adres van de logger of gateway. Laat leeg om het opgeslagen adres te houden.",
-          "logger_port": "Laat leeg voor de standaardpoort van de gekozen logger.",
-          "logger_serial": "Loggerserienummer of een label voor een gateway. Vul dit samen met het IP in om een stick aan een bestaand cloud-item te koppelen. Bij een S2-WL-ST of S5 is dit het serienummer in de wifi-naam.",
-          "slave_id": "Laat leeg om slave 1 te proberen, daarna 2 en 3.",
-          "inverter_serial": "Optioneel SolisCloud-omvormerserienummer. Zet het zodat lokale en cloud-entiteiten hetzelfde apparaat blijven.",
-          "api_url": "Gebruik de host die de sleutel uitgaf, inclusief de poort. De internationale dienst luistert op poort 13333.",
-          "station_ids": "Alleen de gekozen installaties worden uitgelezen. Wijzig de set later via herconfigureren.",
-          "logger_password": "Wachtwoord van de webpagina van de stick. Laat leeg om het opgeslagen wachtwoord te houden. Typ 123456789 voor het fabriekswachtwoord. Sommige firmware vervangt het door het wifi-wachtwoord."
+          "api_url": "Laat de standaardwaarde staan, tenzij je sleutel door een andere SolisCloud-host is uitgegeven. Vermeld de poort; de internationale dienst gebruikt 13333.",
+          "key_id": "De sleutel-ID uit SolisCloud API-beheer. Dit is niet je portalgebruikersnaam.",
+          "key_secret": "Laat leeg om het opgeslagen geheim te houden. Verplicht voor een nieuwe sleutel."
+        }
+      },
+      "connection": {
+        "title": "Verbinding",
+        "description": "Kies welke bron Home Assistant uitleest. De opgeslagen instellingen van de andere bron blijven bewaard.",
+        "data": {
+          "source": "Verbinding"
         }
       }
     },
     "error": {
-      "invalid_auth": "SolisCloud heeft de API-sleutel-id of het geheim geweigerd.",
-      "invalid_timezone": "Vul een IANA-tijdzone in zoals Europe/Amsterdam, of plant om de Solis-offset te houden.",
-      "clock_skew": "SolisCloud heeft de verzoektijd geweigerd. De klok moet binnen 15 minuten van UTC zitten.",
-      "timeout": "SolisCloud antwoordde niet voor de time-out.",
-      "cannot_connect": "SolisCloud is niet bereikbaar.",
-      "no_stations": "Het account gaf geen installaties terug. Controleer de API-sleutel en of de installatie een id heeft, of selecteer minstens één installatie.",
-      "unknown": "Onverwachte SolisCloud-fout.",
-      "logger_asleep": "Geen route naar de logger, of een time-out. 's Nachts zet de omvormer de stick uit. Probeer opnieuw terwijl hij produceert.",
-      "logger_busy": "De logger heeft de lokale sessie gereset of geweigerd. Uploaden naar SolisCloud kan nog doorgaan. Wacht minstens 10 seconden en probeer één keer. Probeer niet in een strakke lus.",
-      "logger_tcp_disabled": "Poort 502 is dicht. De S2-WL-ST biedt Modbus TCP vanaf firmware 100101B4. Sommige latere updates sluiten de poort, en TCP aanzetten op oudere firmware verbreekt SolisCloud. Vraag Solis om een build die poort 502 openhoudt, zoals 100121cf of een 100141dx-release, en zet Modbus aan in de stick of de SolisCloud-app.",
-      "logger_modbus_silent": "De stick accepteerde TCP op poort 502 en stuurde geen Modbus-antwoord. Vaak is er maar één client toegestaan. Op oudere firmware is die client SolisCloud of deze integratie, niet allebei. Verbreek de andere Modbus-client, of vraag Solis om firmware 100121cf, 100121d0 of 100141dx, waarvan wordt gemeld dat beide tegelijk mogen.",
-      "logger_identity": "Deze logger gaf geen stabiele id. Vul het loggerserienummer van het label of de wifi-naam in, of het omvormerserienummer.",
-      "logger_gateway": "Niets accepteerde TCP op dat adres en die poort. Controleer het gateway-IP en de poort (502 voor Modbus TCP, 8899, 26 of 23 voor een transparante tunnel). Een gateway met eigen voeding gaat niet uit met de omvormer.",
-      "logger_wrong_protocol": "Het apparaat accepteerde TCP en de bytes waren niet de gekozen framing. Gebruik Modbus TCP-gateway als het apparaat omzet naar Modbus TCP. Gebruik Modbus RTU over TCP bij een transparante seriële tunnel. Een waarde die een factor 256 scheelt wijst meestal op de andere modus.",
-      "logger_wrong_slave": "Een Modbus-antwoord kwam van een andere slave. De Solis-standaard is 1. Stel de slave in die de omvormer gebruikt.",
-      "logger_unsupported_map": "Modbus antwoordde, en noch de Solis 3000-stringmap noch de 33000-hybride map is aanwezig. Dit is geen Solis-omvormer op die slave, of de gateway wijst naar de verkeerde seriële poort.",
-      "logger_timeout": "TCP verbond en er kwam geen Solis-frame. De omvormer kan uit zijn, de baud kan niet 9600 8N1 zijn, of een transparante gateway kreeg de optie Modbus TCP. Probeer opnieuw terwijl de omvormer produceert.",
-      "logger_choice": "Poort 502 gaf een Solis-map en de webpagina noemde het apparaat niet. Zet Logger in dit formulier op Solis S2-WL-ST of Modbus TCP-gateway, niet op Automatisch detecteren.",
-      "invalid_logger": "De poort moet 1 tot 65535 zijn, de slave 1 tot 247, en een Solarman-serienummer moet het nummer op de stick zijn.",
-      "logger_web_password": "De stick weigerde het webwachtwoord. De gebruiker is admin en het fabriekswachtwoord is 123456789. Sommige firmware vervangt het door je wifi-wachtwoord. Vul het wachtwoordveld in en probeer opnieuw.",
-      "logger_web_page": "De stick antwoordde op poort 80 en de pagina was niet de Solis-omvormerpagina, of er kwam geen pagina terug. Open het adres van de stick in een browser en controleer of de omvormerstatus verschijnt.",
-      "already_configured": "Deze account of logger is al ingesteld.",
-      "key_required": "Vul de API-sleutel-ID en het geheim in voor cloud of lokaal met cloud. Alleen bij alleen lokaal mogen ze leeg blijven.",
-      "logger_host_required": "Vul het IP-adres van de logger in, of kies Alleen SolisCloud."
+      "invalid_auth": "SolisCloud heeft de API-sleutel-ID of het geheim geweigerd.",
+      "clock_skew": "SolisCloud heeft het tijdstip van het verzoek geweigerd. De klok van Home Assistant mag niet meer dan 15 minuten van UTC afwijken.",
+      "timeout": "SolisCloud antwoordde niet op tijd. Probeer het later opnieuw.",
+      "cannot_connect": "SolisCloud is niet bereikbaar. Controleer de API-URL, inclusief de poort (:13333), en of Home Assistant het internet kan bereiken.",
+      "no_stations": "Dit SolisCloud-account heeft geen installaties. Controleer of de API-sleutel hoort bij het account dat eigenaar is van de installatie.",
+      "select_station": "Kies minstens één installatie.",
+      "key_required": "Vul de API-sleutel-ID en het geheim in.",
+      "logger_asleep": "Geen antwoord van de stick. 's Nachts schakelt de omvormer de stick uit. Controleer het adres en probeer het opnieuw terwijl de omvormer produceert.",
+      "logger_busy": "De stick heeft de verbinding verbroken of geweigerd. Mogelijk is hij aan het uploaden naar SolisCloud. Wacht minstens 10 seconden en probeer het nog één keer.",
+      "logger_tcp_disabled": "Poort 502 van de stick is gesloten. Zet Modbus TCP aan in de stick of in de SolisCloud-app. Sommige firmware sluit de poort; zie {docs_url} voor versies die hem open houden.",
+      "logger_modbus_silent": "De stick accepteerde de verbinding maar stuurde geen gegevens. Vaak staat hij maar één Modbus-client toe, dus koppel andere clients los. Zie {docs_url} voor firmware die er meer toestaat.",
+      "logger_identity": "De stick gaf geen vaste ID door. Vul het omvormerserienummer in, of het loggerserienummer onder Geavanceerde opties.",
+      "logger_gateway": "Niets antwoordde op dat adres en die poort. Controleer het IP-adres en de poort van de gateway (502 voor Modbus TCP, 8899, 26 of 23 voor transparante modus).",
+      "logger_wrong_protocol": "Het apparaat antwoordde in een ander formaat. Kies de gateway in Modbus TCP-modus als hij naar Modbus TCP omzet, of transparante modus als hij de seriële gegevens doorgeeft.",
+      "logger_wrong_slave": "Er antwoordde een andere Modbus-slave. Stel onder Geavanceerde opties de slave van de omvormer in (Solis-standaard: 1).",
+      "logger_unsupported_map": "Het apparaat antwoordde, maar niet met gegevens van een Solis-omvormer. Controleer de slave, en of de gateway op de RS485-poort van de omvormer is aangesloten.",
+      "logger_timeout": "De verbinding werd geopend maar er kwamen geen Solis-gegevens. De omvormer staat mogelijk uit, of de gatewaymodus klopt niet. Probeer het opnieuw terwijl de omvormer produceert.",
+      "invalid_logger": "Een Solarman-stick heeft het nummer op het label nodig. Vul het onder Geavanceerde opties in als loggerserienummer.",
+      "logger_web_password": "De stick heeft het webwachtwoord geweigerd.",
+      "logger_web_page": "De webpagina van de stick is niet de Solis-statuspagina, of er kwam geen pagina terug. Open het adres van de stick in een browser en controleer of de omvormerstatus zichtbaar is."
     },
     "abort": {
-      "already_configured": "Deze account of logger is al ingesteld.",
-      "reauth_successful": "Authenticatie vernieuwd.",
+      "already_configured": "Dit SolisCloud-account of deze stick is al geconfigureerd.",
+      "reauth_successful": "Aanmelding vernieuwd.",
       "reconfigure_successful": "Configuratie bijgewerkt.",
-      "cannot_connect": "SolisCloud was niet bereikbaar om installaties te laden.",
-      "not_solis_logger": "Dat apparaat is geen Solarman-logger.",
-      "logger_not_setup": "Nog geen Solis-item gebruikt deze logger.",
+      "cannot_connect": "SolisCloud is niet bereikbaar om de installaties te laden. Controleer of Home Assistant het internet kan bereiken en probeer het opnieuw.",
+      "not_solis_logger": "Dat apparaat is geen Solarman-stick.",
       "wrong_account": "Die API-sleutel hoort bij een ander account."
     }
   },
   "issues": {
-    "invalid_auth": {
-      "title": "SolisCloud heeft de API-sleutel geweigerd",
-      "description": "Werk de sleutel-id en het geheim bij. Uitlezen gebruikt alleen de API-sleutel; het portaalwachtwoord wordt niet gebruikt."
-    },
     "clock_skew": {
       "title": "De klok van Home Assistant valt buiten het SolisCloud-venster",
       "description": "SolisCloud weigert verzoeken waarvan de Date-header meer dan 15 minuten van UTC afwijkt. Zet de klok en tijdzone van de host goed en herlaad Solis."
     },
     "no_inverters": {
       "title": "SolisCloud gaf geen omvormers terug",
-      "description": "De installatielijst of omvormerlijst was leeg. Een installatie zonder id, of Solis-fout 'abnormal data', ziet er zo uit. De laatste geslaagde omvormerlijst blijft een paar uitlezingen bewaard."
-    },
-    "abnormal_data": {
-      "title": "SolisCloud gaf abnormale gegevens terug",
-      "description": "Het platform antwoordde met code 1 (vaak het Chinese bericht voor abnormale gegevens). Dit is een fout aan de accountkant. De API-sleutel uit- en opnieuw aanzetten, of een ticket bij Solis, is wat het oplost."
+      "description": "De installatielijst of omvormerlijst was leeg. Controleer in SolisCloud dat de installatie nog bestaat, nog een omvormer heeft en zichtbaar is voor het account waarvan de API-sleutel is. Gebruik Herconfigureren op het Solis-item om de installaties opnieuw te kiezen. Solis-fout 'abnormal data' kan er ook zo uitzien. De laatste geslaagde omvormerlijst blijft een paar uitlezingen bewaard, en deze melding verdwijnt zodra er weer omvormers terugkomen."
     },
     "legacy_control": {
       "title": "Omvormerbesturing is niet gemigreerd",
       "description": "De vorige Solis-integratie had de besturings-API aan. Deze versie stuurt geen /v2/api/control of /v2/api/atRead, omdat uitlezen van die aanroepen de cloudsessie van de datalogger zou laten vallen. Batterijschema's op de omvormer blijven zoals ze zijn."
-    },
-    "cloud_outage": {
-      "title": "SolisCloud is onbereikbaar",
-      "description": "SolisCloud is lang genoeg onbereikbaar dat live metingen verborgen zijn, zodat een oud vermogen niet als actueel wordt getoond. Energietotalen blijven op de laatste goede waarde en gaan niet terug. Deze melding verdwijnt als een uitlezing slaagt."
     },
     "logger_locked": {
       "title": "De lokale logger pauzeert het uitlezen",
@@ -199,7 +227,7 @@
     },
     "logger_web": {
       "title": "Solis-webpaginastick geeft geen omvormerdata",
-      "description": "De webpagina van de stick weigerde het wachtwoord of gaf de Solis-omvormerpagina niet terug. Gebruik Herconfigureren op de Solis-invoer en controleer het webwachtwoord (gebruiker admin, fabriekswachtwoord 123456789; sommige firmware gebruikt je wifi-wachtwoord). Een stick die 's nachts met de omvormer uitgaat is niet deze fout. Deze melding verdwijnt als een uitlezing slaagt."
+      "description": "De webpagina van de stick antwoordde, maar niet met de Solis-omvormerpagina. Open het adres van de stick in een browser en controleer of de statuspagina van de omvormer laadt. Een stick die 's nachts met de omvormer uitgaat is niet deze fout, en bij een geweigerd wachtwoord vraagt Home Assistant je opnieuw te verifiëren. Deze melding verdwijnt als een uitlezing slaagt."
     }
   },
   "entity": {
@@ -321,6 +349,15 @@
       },
       "power": {
         "name": "Vermogen"
+      },
+      "grid_import_total": {
+        "name": "Netimport totaal"
+      },
+      "grid_export_total": {
+        "name": "Netexport totaal"
+      },
+      "load_total": {
+        "name": "Verbruik totaal"
       }
     },
     "binary_sensor": {
@@ -374,30 +411,32 @@
     },
     "no_source": {
       "message": "Er is geen SolisCloud-account of lokale logger ingesteld."
+    },
+    "update_logger_web_auth": {
+      "message": "De webpagina van de stick weigerde het wachtwoord. Vul het huidige webwachtwoord in om opnieuw te verifiëren."
     }
   },
   "selector": {
     "logger_kind": {
       "options": {
         "auto": "Automatisch detecteren",
-        "solarman": "Solarman V5 (DLS-W, DLS-L, LSW)",
-        "s2_wl_st": "Solis S2-WL-ST (Modbus TCP 502)",
-        "modbus_tcp": "Modbus TCP-gateway (Waveshare, Elfin, USR)",
-        "s5_wifi_st": "Solis S5-WiFi-ST (experimenteel, firmware kan poort 502 sluiten)",
-        "rtu_tcp": "Modbus RTU over TCP (experimenteel)",
-        "solis_web": "Solis webpagina (stick uit de S3-reeks, data ongeveer elke 5 minuten)"
+        "solarman": "Solarman / IGEN-wifistick (DLS-W, DLS-L, LSW) – serienummer op label",
+        "s2_wl_st": "Solis S2-WL-ST (wifi + LAN)",
+        "modbus_tcp": "RS485-gateway in Modbus TCP-modus (Waveshare, Elfin, USR)",
+        "s5_wifi_st": "Solis S5-WiFi-ST (experimenteel – firmware kan lokale toegang blokkeren)",
+        "rtu_tcp": "RS485-gateway in transparante modus (experimenteel)",
+        "solis_web": "Solis-stick met alleen een statuswebpagina (S3-reeks, gegevens ongeveer elke 5 minuten)"
       }
     },
     "logger_choice": {
       "options": {
-        "s2_wl_st": "Solis S2-WL-ST",
-        "modbus_tcp": "Modbus TCP-gateway (Waveshare, Elfin, USR)"
+        "s2_wl_st": "Solis S2-WL-ST (wifi + LAN)",
+        "modbus_tcp": "RS485-gateway in Modbus TCP-modus (Waveshare, Elfin, USR)"
       }
     },
     "logger_preset": {
       "options": {
-        "default": "Elfin / Hi-Flying af fabriek (8899)",
-        "elfin": "Elfin EW11 / EE11 (8899)",
+        "elfin": "Elfin EW11 / EE11, Hi-Flying (8899)",
         "waveshare": "Waveshare RS485 TO ETH (4196)",
         "usr": "USR-TCP232 RS485-socket (26)",
         "esp": "ESPHome stream server (6638)"
@@ -406,8 +445,14 @@
     "source": {
       "options": {
         "cloud": "Alleen SolisCloud",
-        "local": "Alleen lokale logger",
-        "both": "Lokale logger met SolisCloud als terugval"
+        "local": "Alleen lokale stick",
+        "both": "Lokale stick met SolisCloud als reserve"
+      }
+    },
+    "time_zone": {
+      "options": {
+        "auto": "Automatisch",
+        "plant": "Offset van de installatie (Solis)"
       }
     }
   },
@@ -415,23 +460,40 @@
     "step": {
       "init": {
         "title": "Solis-opties",
-        "description": "Uitlezen en de tijdzone voor vandaag, deze maand en dit jaar. Gebruik Herconfigureren om het loggeradres, de poort of het type te wijzigen.",
+        "description": "Polling en de tijdzone voor vandaag, deze maand en dit jaar. Gebruik Opnieuw configureren om de stick of het SolisCloud-account te wijzigen.",
         "data": {
-          "scan_interval": "Uitleesinterval (seconden)",
-          "request_timeout": "Time-out van een verzoek (seconden)",
-          "endpoint_interval": "Minimale pauze per endpoint (seconden)",
+          "scan_interval": "Pollinginterval (seconden)",
           "time_zone": "Tijdzone van de installatie"
         },
         "data_description": {
-          "time_zone": "Laat leeg om Home Assistant te volgen als die binnen een uur van de offset van de installatie zit. Gebruik een IANA-naam zoals Europe/Amsterdam om er een af te dwingen, of plant om de numerieke offset van Solis te houden.",
-          "scan_interval": "Seconden tussen uitlezingen. Cloud-samples komen ongeveer elke vijf minuten, dus een item dat alleen cloud is blijft op 60 of langzamer (standaard 300). Een lokale logger is standaard 60 en kan niet sneller dan 30.",
-          "request_timeout": "Seconden wachten op één HTTP-aanroep. Standaard 30.",
-          "endpoint_interval": "Minimale seconden tussen aanroepen van hetzelfde API-pad. Standaard 2, onder de gepubliceerde limiet van twee aanroepen per seconde."
+          "scan_interval": "Cloudgegevens veranderen ongeveer elke vijf minuten, dus SolisCloud wordt hooguit elke 60 seconden uitgelezen (standaard 300). Een lokale stick gebruikt standaard 60 en kan tot 30 omlaag.",
+          "time_zone": "Automatisch gebruikt de tijdzone van Home Assistant als die binnen een uur van de Solis-offset van de installatie ligt. Offset van de installatie gebruikt altijd de Solis-offset. Je kunt ook een tijdzone typen, zoals Europe/Amsterdam."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Geavanceerde opties",
+            "data": {
+              "request_timeout": "Time-out per verzoek (seconden)",
+              "endpoint_interval": "Minimale tussentijd per endpoint (seconden)"
+            },
+            "data_description": {
+              "request_timeout": "Hoe lang op één SolisCloud-verzoek wordt gewacht. Standaard 30.",
+              "endpoint_interval": "Minimaal aantal seconden tussen verzoeken naar hetzelfde API-pad. De standaardwaarde 2 blijft onder de limiet van SolisCloud."
+            }
+          }
         }
       }
     },
     "error": {
-      "invalid_timezone": "Vul een IANA-tijdzone in zoals Europe/Amsterdam, of plant om de Solis-offset te houden."
+      "invalid_timezone": "Onbekende tijdzone. Gebruik een naam zoals Europe/Amsterdam, of kies een optie uit de lijst."
+    }
+  },
+  "device": {
+    "logger": {
+      "name": "Logger {serial}"
+    },
+    "epm": {
+      "name": "EPM {serial}"
     }
   }
 }

@@ -5,16 +5,18 @@
 - The published limit is 2 calls per second per endpoint. This client defaults
   to one call every two seconds per endpoint because faster traffic is a
   common cause of HTTP 502.
-- The plant timezone from the API is a fixed numeric offset, not an IANA
-  zone. By default, Home Assistant's timezone is used for "today" when it is
-  within an hour of that offset, so daylight saving is followed for a plant
-  in the same region. A plant several hours away keeps the Solis offset.
-  Set the plant timezone option to an IANA name or to `plant` to override
-  that. The integration cannot invent energy the cloud has already moved
-  into the next day; it holds the previous reading until the boundary it was
-  configured to use.
-- Lifetime grid import and export are not in the polled endpoints. Daily
-  plant sensors are what the energy dashboard can use for those.
+- SolisCloud gives the plant timezone as a numeric offset, and sometimes
+  also as a zone name. **Automatic** uses the plant's zone name when it
+  matches the offset, otherwise Home Assistant's zone when it is within an
+  hour of the offset, so daylight saving is followed. A plant several hours
+  away keeps the Solis offset. Pick a zone or **Plant offset from Solis** in
+  the options to override that. The integration cannot invent energy the
+  cloud has already moved into the next day; it holds the previous reading
+  until the boundary it was configured to use.
+- Lifetime grid import, grid export and load totals come from SolisCloud
+  only. A local-only entry, or a plant without a meter, does not have them.
+  Grid power is not read locally from a hybrid either: the register there
+  is the inverter's AC port, not the meter.
 - Control writes (`/v2/api/control`, `/v2/api/atRead`) are not implemented.
   Polling them has been reported to drop the logger's cloud session.
 - `device_class: energy_storage` is not used. The 2024 developer portal lists
@@ -37,8 +39,9 @@
   Solis S2-WL-ST or an S5-WiFi-ST whose firmware still listens, Modbus TCP
   to an RS485 gateway, or experimental Modbus RTU over TCP for a
   transparent tunnel. A stick that only has a status web page is read from
-  that page (power, temperature, energy today and total, firmware, alarm,
-  refreshed by the stick about every five minutes); SolisCloud fills the rest.
+  that page (`inverter.cgi` or `status.html`: power, temperature, energy
+  today and total, firmware, alarm, refreshed by the stick about every five
+  minutes); SolisCloud fills the rest.
   S4-WIFI-ST, S6 USB sticks, other S3 firmware and 4G/GPRS
   sticks have no local listener; use cloud, or a gateway on the inverter
   RS485 port. See [dongles](research/dongles.md),
@@ -52,8 +55,11 @@
   minutes, a repair opens. A gateway that accepts TCP and gets no Modbus
   answer is the inverter being off, and live power goes to 0. A gateway
   powered from the inverter USB port looks like a down gateway at night.
-- Registers 3060-3063 (inverter serial) did not answer on the stick this map
-  was checked against. When that read is silent, the device serial is the
+- Only Solarman / IGEN sticks are discovered automatically. An S2-WL-ST, an
+  S5, a web-page stick and RS485 gateways need their address typed, and
+  should get a DHCP reservation.
+- Registers 3060-3063 (inverter serial) did not answer on the stick the
+  3000-range map was checked against. When that read is silent, the device serial is the
   one learned at setup, or `L` plus the logger serial. That can differ from
   the SolisCloud inverter serial, so a local-only entity id will not match
   an older cloud entity for the same inverter.

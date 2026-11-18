@@ -1,177 +1,205 @@
 {
   "config": {
+    "flow_title": "{name}",
     "step": {
       "user": {
+        "title": "How does Home Assistant read your inverter?",
+        "description": "SolisCloud works from anywhere. A local stick is faster and keeps working without internet, but it only answers while the inverter is producing.",
+        "menu_options": {
+          "cloud": "SolisCloud only",
+          "local": "Local stick only",
+          "both": "Local stick with SolisCloud backup"
+        }
+      },
+      "cloud": {
         "title": "Connect to SolisCloud",
-        "description": "Choose cloud, a local data logger, or local first with SolisCloud as a fallback. Local discovery only works while the inverter is producing, because the stick is powered by the inverter and is off at night.",
+        "description": "Create an API key in SolisCloud under Account, Basic settings, API management.",
         "data": {
-          "source": "Connection",
           "api_url": "API URL",
           "key_id": "API key ID",
           "key_secret": "API key secret"
         },
         "data_description": {
-          "source": "Cloud only, a local logger on your network, or local first with SolisCloud as a fallback. Local discovery only works while the inverter is producing.",
-          "api_url": "Use the host that issued the key, including the port. The international service listens on port 13333. Leave this unused for a local-only setup.",
-          "key_id": "The key id from SolisCloud API management. This is not the portal username. Leave it empty for local only.",
-          "key_secret": "Shown once when the key is created. Stored in the config entry and redacted from diagnostics."
-        }
-      },
-      "logger": {
-        "title": "Local logger",
-        "description": "Discovered Solarman loggers: {found}. Auto-detect tries port 502, then port 8899. A Solis register map on 502 is an S2-WL-ST only when port 80 names the Solis logger page. A gateway page is stored as a Modbus TCP gateway. If the page does not name the device, you choose, with S2-WL-ST pre-selected. S5-WiFi-ST is experimental: Solis does not officially support local access, and newer firmware closes port 502. The inverter must be producing. Reserve the address in the router.",
-        "data": {
-          "logger_kind": "Logger",
-          "logger_host": "Logger IP",
-          "logger_port": "Port",
-          "logger_serial": "Logger serial",
-          "slave_id": "Modbus slave",
-          "inverter_serial": "Inverter serial",
-          "logger_preset": "RTU gateway model",
-          "logger_password": "Stick web password"
-        },
-        "data_description": {
-          "logger_kind": "Auto-detect probes port 502, then 8899. Port 502 is an S2-WL-ST only when the device web page says so. S5-WiFi-ST is experimental: Solis does not officially support local access, and a firmware update often closes port 502. Modbus RTU over TCP is experimental and uses the gateway model for its factory port.",
-          "logger_host": "Current address. Reserve a stick in the router. A Solarman stick is found again by serial. An S2-WL-ST, S5 and a gateway are not. 10.10.100.254 is the setup address of a stick or an Elfin, not the address on the house LAN.",
-          "logger_port": "Leave empty for 502 on an S2, S5 or Modbus TCP gateway. For RTU over TCP, leave empty to use the gateway model: 8899 Elfin, 4196 Waveshare, 26 USR RS485, 6638 ESPHome. A typed port always wins. 23 is the USR RS232 socket.",
-          "logger_serial": "Solarman: the numeric serial from the label or from discovery. S2 and S5: the serial in the Wi-Fi name D_ or Solis_, not the inverter serial. Gateway and RTU: any label you choose, or leave empty to use the inverter serial.",
-          "slave_id": "Leave empty to try slave 1, then 2, then 3. The Solis default is 1.",
-          "inverter_serial": "Optional. The SolisCloud inverter serial, for example 110E40182280017. Leave empty to read it from the stick when that range answers, or from SolisCloud in local-and-cloud mode. This is the entity id. On an S2-WL-ST it is also the config unique id when the stick serial is empty.",
-          "logger_preset": "Used only for Modbus RTU over TCP, and only when Port is empty. Elfin EW11/EE11 leave the factory on 8899. Waveshare RS485 TO ETH listens on 4196 until you change it. USR-TCP232 uses 26 on the RS485 socket and 23 on the RS232 socket. ESPHome's stream server commonly uses 6638.",
-          "logger_password": "Only for Solis web page. Leave empty for the factory password 123456789. Some firmware replaces it with the Wi-Fi password."
-        }
-      },
-      "logger_choice": {
-        "title": "Which device is on port 502?",
-        "description": "{note} Solis documents Modbus TCP on the S2-WL-ST. A Waveshare, Elfin or USR in Modbus mode returns the same inverter registers. S5-WiFi-ST is not offered here: it is experimental and newer firmware closes port 502.",
-        "data": {
-          "logger_kind": "Device"
-        },
-        "data_description": {
-          "logger_kind": "S2-WL-ST if this is the Solis stick. Modbus TCP gateway if a Waveshare, Elfin or USR is doing the conversion."
+          "api_url": "Keep the default unless your key was issued by another SolisCloud host. Include the port; the international service uses 13333.",
+          "key_id": "The key ID from SolisCloud API management. This is not your portal username.",
+          "key_secret": "Shown once when the key is created."
         }
       },
       "stations": {
         "title": "Choose plants",
-        "description": "Select the SolisCloud plants this entry should follow.",
+        "description": "Select the SolisCloud plants to add.",
         "data": {
           "station_ids": "Plants"
         },
         "data_description": {
-          "station_ids": "Only the selected plants are polled. Change the set later with reconfigure."
+          "station_ids": "Only the selected plants are read."
+        }
+      },
+      "logger": {
+        "title": "Local stick",
+        "description": "Pick the stick from the list or type its IP address. The stick is powered by the inverter, so the inverter must be producing during setup. Reserve the address in your router.",
+        "data": {
+          "logger_kind": "Logger type",
+          "logger_host": "IP address",
+          "inverter_serial": "Inverter serial"
+        },
+        "data_description": {
+          "logger_kind": "Auto-detect works for most sticks. Choose the type yourself if detection fails.",
+          "logger_host": "Sticks found on your network are listed. If yours is missing, type its address. 10.10.100.254 is the stick's own setup network, not your home network.",
+          "inverter_serial": "Optional. The serial on the inverter label or in SolisCloud, for example 1031000000000001. Leave empty to read it from the stick, or from SolisCloud when that is the fallback."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Advanced options",
+            "description": "Only needed when auto-detect cannot find the stick, or for a gateway on a non-standard port.",
+            "data": {
+              "logger_serial": "Logger serial",
+              "logger_port": "Port",
+              "slave_id": "Modbus slave",
+              "logger_preset": "RS485 gateway model"
+            },
+            "data_description": {
+              "logger_serial": "Solarman stick: the number on the label. It is filled in from discovery when the stick answers. S2-WL-ST and S5: the serial in the Wi-Fi name (D_ or Solis_). Gateway: any label you like, or leave empty.",
+              "logger_port": "Leave empty for the usual port of the selected logger. A typed port always wins.",
+              "slave_id": "Leave empty to try slave 1, 2 and 3. Solis inverters use 1 by default.",
+              "logger_preset": "Only for an RS485 gateway in transparent mode with an empty Port. Sets the factory port of that model."
+            }
+          }
+        }
+      },
+      "logger_password": {
+        "title": "Stick web password",
+        "description": "The stick at {host} only serves a status web page, and it asked for a password. The user is admin.",
+        "data": {
+          "logger_password": "Web password"
+        },
+        "data_description": {
+          "logger_password": "Leave empty for the factory password 123456789. Some firmware uses your Wi-Fi password instead."
+        }
+      },
+      "logger_choice": {
+        "title": "Which device is this?",
+        "description": "The device answered with Solis inverter data, but its web page did not say whether it is a Solis stick or an RS485 gateway.",
+        "data": {
+          "logger_kind": "Device"
+        },
+        "data_description": {
+          "logger_kind": "Choose the Solis S2-WL-ST if the stick is plugged into the inverter. Choose the gateway if a Waveshare, Elfin or USR box is wired to the inverter's RS485 port."
+        }
+      },
+      "discovery_confirm": {
+        "title": "Solarman stick found",
+        "description": "Found Solarman stick {serial} at {host}. How should Home Assistant read it?",
+        "menu_options": {
+          "local": "Local stick only",
+          "both": "Local stick with SolisCloud backup"
+        }
+      },
+      "reauth": {
+        "title": "Sign in again",
+        "description": "Which login was rejected?",
+        "menu_options": {
+          "reauth_web": "Stick web password",
+          "reauth_confirm": "SolisCloud API key"
         }
       },
       "reauth_confirm": {
         "title": "Refresh SolisCloud credentials",
-        "description": "The API key was rejected. Enter a current key id and secret.",
+        "description": "The API key was rejected. Enter a current key ID and secret.",
         "data": {
           "key_id": "API key ID",
           "key_secret": "API key secret"
         },
         "data_description": {
-          "key_id": "The key id from SolisCloud API management. This is not the portal username.",
-          "key_secret": "Shown once when the key is created. Stored in the config entry and redacted from diagnostics."
+          "key_id": "The key ID from SolisCloud API management. This is not your portal username.",
+          "key_secret": "Shown once when the key is created."
+        }
+      },
+      "reauth_web": {
+        "title": "Stick web password",
+        "description": "The stick at {host} rejected its web password. The user is admin.",
+        "data": {
+          "logger_password": "Web password"
+        },
+        "data_description": {
+          "logger_password": "Leave empty for the factory password 123456789. Some firmware uses your Wi-Fi password instead."
         }
       },
       "reconfigure": {
         "title": "Reconfigure Solis",
-        "description": "Update the API host, plants, polling, timezone and Connection. To add a local logger, set Connection to a local option and fill in Logger IP and Logger serial (a web-page stick needs only the IP). Set Connection to SolisCloud only to stop using the logger; the saved logger fields stay.",
+        "description": "What do you want to change? Polling and the timezone are under Configure.",
+        "menu_options": {
+          "reconfigure_cloud": "SolisCloud account",
+          "stations": "Plants",
+          "logger": "Local stick",
+          "connection": "Connection"
+        }
+      },
+      "reconfigure_cloud": {
+        "title": "SolisCloud account",
+        "description": "Change the API host or key. On a local entry this adds SolisCloud as a backup.",
         "data": {
-          "source": "Connection",
-          "logger_kind": "Logger",
-          "logger_host": "Logger IP",
-          "logger_port": "Port",
-          "logger_serial": "Logger serial",
-          "slave_id": "Modbus slave",
-          "inverter_serial": "Inverter serial",
-          "logger_preset": "RTU gateway model",
           "api_url": "API URL",
-          "station_ids": "Plants",
-          "scan_interval": "Poll interval (seconds)",
-          "request_timeout": "Request timeout (seconds)",
-          "endpoint_interval": "Minimum gap per endpoint (seconds)",
-          "time_zone": "Plant timezone",
-          "logger_password": "Stick web password"
+          "key_id": "API key ID",
+          "key_secret": "API key secret"
         },
         "data_description": {
-          "time_zone": "Leave empty to follow Home Assistant when it is within an hour of the plant offset. Use an IANA name such as Europe/London to force one, or plant to keep the numeric offset from Solis.",
-          "scan_interval": "Seconds between polls. Cloud samples arrive about every five minutes, so a cloud-only entry stays at 60 or slower (default 300). A local logger defaults to 60 and cannot be faster than 30.",
-          "request_timeout": "Seconds to wait for one HTTP call. Default 30.",
-          "endpoint_interval": "Minimum seconds between calls to the same API path. Default 2, which stays under the published limit of two calls per second.",
-          "source": "Cloud only, local only, or local with SolisCloud fallback.",
-          "logger_kind": "Auto-detect, Solarman V5, Solis S2-WL-ST, a Modbus TCP gateway, experimental S5-WiFi-ST (Solis does not officially support local access; firmware often closes port 502), or experimental Modbus RTU over TCP. Changing this keeps the same entities.",
-          "logger_preset": "Used only for Modbus RTU over TCP when Port is empty. Elfin factory port is 8899. Waveshare RS485 TO ETH is 4196. USR RS485 is 26. ESPHome stream server is commonly 6638.",
-          "logger_host": "Current logger or gateway address. Leave empty to keep the saved address.",
-          "logger_port": "Leave empty for the default port of the selected logger.",
-          "logger_serial": "Logger serial or a label for a gateway. Fill this together with the IP to attach a stick to an existing cloud entry. For an S2-WL-ST or S5 this is the serial in the Wi-Fi name.",
-          "slave_id": "Leave empty to try slave 1, then 2, then 3.",
-          "inverter_serial": "Optional SolisCloud inverter serial. Set it so local and cloud entities stay the same device.",
-          "api_url": "Use the host that issued the key, including the port. The international service listens on port 13333.",
-          "station_ids": "Only the selected plants are polled. Change the set later with reconfigure.",
-          "logger_password": "Web password of the stick page. Leave empty to keep the saved password. Type 123456789 for the factory password. Some firmware replaces it with the Wi-Fi password."
+          "api_url": "Keep the default unless your key was issued by another SolisCloud host. Include the port; the international service uses 13333.",
+          "key_id": "The key ID from SolisCloud API management. This is not your portal username.",
+          "key_secret": "Leave empty to keep the saved secret. Required for a new key."
+        }
+      },
+      "connection": {
+        "title": "Connection",
+        "description": "Choose which source Home Assistant reads. Saved settings of the other source are kept.",
+        "data": {
+          "source": "Connection"
         }
       }
     },
     "error": {
-      "invalid_auth": "SolisCloud rejected the API key id or secret.",
-      "invalid_timezone": "Enter an IANA timezone such as Europe/London, or plant to keep the Solis offset.",
-      "clock_skew": "SolisCloud rejected the request time. The clock must be within 15 minutes of UTC.",
-      "timeout": "SolisCloud did not answer before the timeout.",
-      "cannot_connect": "Could not reach SolisCloud.",
-      "no_stations": "The account returned no plants. Check the API key and that the plant has an id, or select at least one plant.",
-      "unknown": "Unexpected SolisCloud error.",
-      "logger_asleep": "No route to the logger, or it timed out. At night the inverter powers the stick off. Try again while it is producing.",
-      "logger_busy": "The logger reset or refused the local session. It can still be uploading to SolisCloud. Wait at least 10 seconds and try once. Do not retry in a tight loop.",
-      "logger_tcp_disabled": "Port 502 is closed. The S2-WL-ST serves Modbus TCP from firmware 100101B4. Some later updates close the port, and enabling TCP on older firmware disconnects SolisCloud. Ask Solis for a build that keeps port 502 open, such as 100121cf or a 100141dx release, and enable Modbus in the stick or the SolisCloud app.",
-      "logger_modbus_silent": "The stick accepted TCP on port 502 and sent no Modbus reply. It often allows only one client. On older firmware that client is SolisCloud or this integration, not both. Disconnect the other Modbus client, or ask Solis for firmware 100121cf, 100121d0 or 100141dx, which are reported to allow both.",
-      "logger_identity": "This logger did not yield a stable id. Type the logger serial from the label or Wi-Fi name, or the inverter serial.",
-      "logger_gateway": "Nothing accepted TCP on that address and port. Check the gateway IP and the port (502 for Modbus TCP, 8899, 26 or 23 for a transparent tunnel). A gateway that is powered independently does not switch off with the inverter.",
-      "logger_wrong_protocol": "The device accepted TCP and the bytes were not the framing you selected. Use Modbus TCP gateway when the device converts to Modbus TCP. Use Modbus RTU over TCP when it is a transparent serial tunnel. A value off by 256 usually means the other mode.",
-      "logger_wrong_slave": "A Modbus reply came back from a different slave. The Solis default is 1. Set the slave that the inverter is using.",
-      "logger_unsupported_map": "Modbus answered, and neither the Solis 3000 string map nor the 33000 hybrid map is present. This is not a Solis inverter on that slave, or the gateway is pointed at the wrong serial port.",
-      "logger_timeout": "TCP connected and no Solis frame arrived. The inverter may be off, the baud may not be 9600 8N1, or a transparent gateway was given the Modbus TCP option. Try again while the inverter is producing.",
-      "logger_choice": "Port 502 returned a Solis map and the web page did not name the device. In this form, set Logger to Solis S2-WL-ST or Modbus TCP gateway instead of Auto-detect.",
-      "invalid_logger": "The port must be 1 to 65535, the slave 1 to 247, and a Solarman serial must be the number printed on the stick.",
-      "logger_web_password": "The stick rejected the web password. The user is admin and the factory password is 123456789. Some firmware replaces it with your Wi-Fi password. Fill the password field and try again.",
-      "logger_web_page": "The stick answered on port 80 and the page was not the Solis inverter page, or no page came back. Open the stick address in a browser and check that it shows the inverter status.",
-      "already_configured": "This account or logger is already configured.",
-      "key_required": "Enter the API key id and secret for cloud or local with cloud. Leave them empty only for local only.",
-      "logger_host_required": "Enter the logger IP, or set Connection to SolisCloud only."
+      "invalid_auth": "SolisCloud rejected the API key ID or secret.",
+      "clock_skew": "SolisCloud rejected the request time. The Home Assistant clock must be within 15 minutes of UTC.",
+      "timeout": "SolisCloud did not answer in time. Try again later.",
+      "cannot_connect": "Could not reach SolisCloud. Check the API URL, including the port (:13333), and that Home Assistant can reach the internet.",
+      "no_stations": "This SolisCloud account has no plants. Check that the API key belongs to the account that owns the plant.",
+      "select_station": "Select at least one plant.",
+      "key_required": "Enter the API key ID and secret.",
+      "logger_asleep": "No answer from the stick. At night the inverter switches the stick off. Check the address and try again while the inverter is producing.",
+      "logger_busy": "The stick reset or refused the connection. It may be uploading to SolisCloud. Wait at least 10 seconds and try once more.",
+      "logger_tcp_disabled": "Port 502 on the stick is closed. Enable Modbus TCP in the stick or in the SolisCloud app. Some firmware closes the port; see {docs_url} for versions that keep it open.",
+      "logger_modbus_silent": "The stick accepted the connection but sent no data. It often allows only one Modbus client, so disconnect any other one. See {docs_url} for firmware that allows more.",
+      "logger_identity": "The stick did not report a stable ID. Enter the inverter serial, or the logger serial under Advanced options.",
+      "logger_gateway": "Nothing answered on that address and port. Check the gateway IP and port (502 for Modbus TCP, 8899, 26 or 23 for transparent mode).",
+      "logger_wrong_protocol": "The device answered in a different format. Choose the gateway in Modbus TCP mode if it converts to Modbus TCP, or transparent mode if it passes the serial data through.",
+      "logger_wrong_slave": "A different Modbus slave answered. Set the slave the inverter uses under Advanced options (Solis default: 1).",
+      "logger_unsupported_map": "The device answered, but not with Solis inverter data. Check the slave, and that the gateway is wired to the inverter's RS485 port.",
+      "logger_timeout": "The connection opened but no Solis data arrived. The inverter may be off, or the gateway mode does not match. Try again while the inverter is producing.",
+      "invalid_logger": "A Solarman stick needs the number on its label. Enter it under Advanced options as Logger serial.",
+      "logger_web_password": "The stick rejected the web password.",
+      "logger_web_page": "The stick's web page is not the Solis status page, or no page came back. Open the stick's address in a browser and check that it shows the inverter status."
     },
     "abort": {
-      "already_configured": "This account or logger is already configured.",
+      "already_configured": "This SolisCloud account or stick is already configured.",
       "reauth_successful": "Authentication refreshed.",
       "reconfigure_successful": "Configuration updated.",
-      "cannot_connect": "Could not reach SolisCloud to load plants.",
-      "not_solis_logger": "That device is not a Solarman logger.",
-      "logger_not_setup": "No Solis entry is using this logger yet.",
+      "cannot_connect": "Could not reach SolisCloud to load the plants. Check that Home Assistant can reach the internet and try again.",
+      "not_solis_logger": "That device is not a Solarman stick.",
       "wrong_account": "That API key belongs to a different account."
     }
   },
   "issues": {
-    "invalid_auth": {
-      "title": "SolisCloud rejected the API key",
-      "description": "Update the key id and secret. Reads use the API key only; the portal password is not used."
-    },
     "clock_skew": {
       "title": "Home Assistant clock is outside the SolisCloud window",
       "description": "SolisCloud refuses requests whose Date header is more than 15 minutes from UTC. Set the host clock and time zone, then reload Solis."
     },
     "no_inverters": {
       "title": "SolisCloud returned no inverters",
-      "description": "The plant list or inverter list was empty. A plant without an id, or Solis error 'abnormal data', looks like this. The last successful inverter list is kept for a few polls."
-    },
-    "abnormal_data": {
-      "title": "SolisCloud returned abnormal data",
-      "description": "The platform answered with code 1 (often the Chinese message for abnormal data). This is an account-side fault. Disabling and recreating the API key, or opening a Solis ticket, is what clears it."
+      "description": "The plant list or inverter list was empty. Check in SolisCloud that the plant still exists, still has an inverter, and is visible to the account that owns the API key. Use Reconfigure on the Solis entry to choose the plants again. Solis error 'abnormal data' can look like this too. The last successful inverter list is kept for a few polls, and this notice clears when inverters are returned."
     },
     "legacy_control": {
       "title": "Inverter control was not migrated",
       "description": "The previous Solis integration had the control API enabled. This version does not send /v2/api/control or /v2/api/atRead, because polling those calls has been reported to drop the data logger's cloud session. Battery schedules are unchanged on the inverter."
-    },
-    "cloud_outage": {
-      "title": "SolisCloud is unreachable",
-      "description": "SolisCloud has been unreachable long enough that live readings are hidden, so an old power sample is not shown as current. Energy totals stay at the last good value and will not move backwards. This notice clears itself when a poll succeeds."
     },
     "logger_locked": {
       "title": "Local logger is pausing reads",
@@ -199,7 +227,7 @@
     },
     "logger_web": {
       "title": "Solis web page stick is not returning inverter data",
-      "description": "The stick web page rejected the password or did not return the Solis inverter page. Use Reconfigure on the Solis entry and check the web password (user admin, factory password 123456789; some firmware uses your Wi-Fi password). A stick that is switched off with the inverter at night is not this fault. This notice clears when a read succeeds."
+      "description": "The stick web page answered, but not with the Solis inverter page. Open the stick address in a browser and check that the inverter status page loads. A stick that is switched off with the inverter at night is not this fault, and a rejected password asks you to reauthenticate instead. This notice clears when a read succeeds."
     }
   },
   "entity": {
@@ -321,6 +349,15 @@
       },
       "power": {
         "name": "Power"
+      },
+      "grid_import_total": {
+        "name": "Grid import total"
+      },
+      "grid_export_total": {
+        "name": "Grid export total"
+      },
+      "load_total": {
+        "name": "Load total"
       }
     },
     "binary_sensor": {
@@ -374,30 +411,32 @@
     },
     "no_source": {
       "message": "Solis has no cloud account or local logger."
+    },
+    "update_logger_web_auth": {
+      "message": "The stick web page rejected the password. Enter the current web password to reauthenticate."
     }
   },
   "selector": {
     "logger_kind": {
       "options": {
         "auto": "Auto-detect",
-        "solarman": "Solarman V5 (DLS-W, DLS-L, LSW)",
-        "s2_wl_st": "Solis S2-WL-ST (Modbus TCP 502)",
-        "modbus_tcp": "Modbus TCP gateway (Waveshare, Elfin, USR)",
-        "s5_wifi_st": "Solis S5-WiFi-ST (experimental, firmware may close port 502)",
-        "rtu_tcp": "Modbus RTU over TCP (experimental)",
-        "solis_web": "Solis web page (S3-class stick, data about every 5 minutes)"
+        "solarman": "Solarman / IGEN Wi-Fi stick (DLS-W, DLS-L, LSW) – serial on label",
+        "s2_wl_st": "Solis S2-WL-ST (Wi-Fi + LAN)",
+        "modbus_tcp": "RS485 gateway in Modbus TCP mode (Waveshare, Elfin, USR)",
+        "s5_wifi_st": "Solis S5-WiFi-ST (experimental – firmware may block local access)",
+        "rtu_tcp": "RS485 gateway in transparent mode (experimental)",
+        "solis_web": "Solis stick with only a status web page (S3-class, data every ~5 minutes)"
       }
     },
     "logger_choice": {
       "options": {
-        "s2_wl_st": "Solis S2-WL-ST",
-        "modbus_tcp": "Modbus TCP gateway (Waveshare, Elfin, USR)"
+        "s2_wl_st": "Solis S2-WL-ST (Wi-Fi + LAN)",
+        "modbus_tcp": "RS485 gateway in Modbus TCP mode (Waveshare, Elfin, USR)"
       }
     },
     "logger_preset": {
       "options": {
-        "default": "Elfin / Hi-Flying factory (8899)",
-        "elfin": "Elfin EW11 / EE11 (8899)",
+        "elfin": "Elfin EW11 / EE11, Hi-Flying (8899)",
         "waveshare": "Waveshare RS485 TO ETH (4196)",
         "usr": "USR-TCP232 RS485 socket (26)",
         "esp": "ESPHome stream server (6638)"
@@ -406,8 +445,14 @@
     "source": {
       "options": {
         "cloud": "SolisCloud only",
-        "local": "Local logger only",
-        "both": "Local logger with SolisCloud fallback"
+        "local": "Local stick only",
+        "both": "Local stick with SolisCloud backup"
+      }
+    },
+    "time_zone": {
+      "options": {
+        "auto": "Automatic",
+        "plant": "Plant offset from Solis"
       }
     }
   },
@@ -415,23 +460,40 @@
     "step": {
       "init": {
         "title": "Solis options",
-        "description": "Polling and the timezone used for today, this month and this year. To change the logger address, port or type, use Reconfigure.",
+        "description": "Polling and the timezone used for today, this month and this year. To change the stick or the SolisCloud account, use Reconfigure.",
         "data": {
           "scan_interval": "Poll interval (seconds)",
-          "request_timeout": "Request timeout (seconds)",
-          "endpoint_interval": "Minimum gap per endpoint (seconds)",
           "time_zone": "Plant timezone"
         },
         "data_description": {
-          "time_zone": "Leave empty to follow Home Assistant when it is within an hour of the plant offset. Use an IANA name such as Europe/London to force one, or plant to keep the numeric offset from Solis.",
-          "scan_interval": "Seconds between polls. Cloud samples arrive about every five minutes, so a cloud-only entry stays at 60 or slower (default 300). A local logger defaults to 60 and cannot be faster than 30.",
-          "request_timeout": "Seconds to wait for one HTTP call. Default 30.",
-          "endpoint_interval": "Minimum seconds between calls to the same API path. Default 2, which stays under the published limit of two calls per second."
+          "scan_interval": "Cloud data changes about every five minutes, so SolisCloud only polls every 60 seconds or slower (default 300). A local stick defaults to 60 and can go down to 30.",
+          "time_zone": "Automatic uses the Home Assistant timezone when it is within an hour of the plant offset from Solis. Plant offset always uses the Solis offset. You can also type a timezone such as Europe/London."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Advanced options",
+            "data": {
+              "request_timeout": "Request timeout (seconds)",
+              "endpoint_interval": "Minimum gap per endpoint (seconds)"
+            },
+            "data_description": {
+              "request_timeout": "How long to wait for one SolisCloud call. Default 30.",
+              "endpoint_interval": "Minimum seconds between calls to the same API path. The default of 2 stays under the SolisCloud rate limit."
+            }
+          }
         }
       }
     },
     "error": {
-      "invalid_timezone": "Enter an IANA timezone such as Europe/London, or plant to keep the Solis offset."
+      "invalid_timezone": "Unknown timezone. Use a name such as Europe/London, or pick an option from the list."
+    }
+  },
+  "device": {
+    "logger": {
+      "name": "Logger {serial}"
+    },
+    "epm": {
+      "name": "EPM {serial}"
     }
   }
 }

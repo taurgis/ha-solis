@@ -1,19 +1,33 @@
 # Installation
 
-Home Assistant 2025.10.0 or newer. That is the same floor used by
-`has-marstek-local-api`. The integration uses `runtime_data`, the current
-options-flow style and `async_update_reload_and_abort`, which that release
-already provides. It does not depend on a 2026-only API.
+Requires Home Assistant 2025.10.0 or newer.
 
-## API key
+## HACS
+
+1. In HACS, add `https://github.com/taurgis/ha-solis` as a custom
+   repository, category Integration.
+2. Download Solis and restart Home Assistant.
+3. Go to Settings → Devices & services → Add integration → Solis.
+
+## Manual
+
+Copy `custom_components/solis` into `config/custom_components/solis` and
+restart Home Assistant.
+
+## Before you add the integration
+
+### SolisCloud API key
+
+Needed for **SolisCloud only** and **Local stick with SolisCloud backup**.
 
 1. Sign in to SolisCloud.
-2. Open Account → API management.
-3. Create a key and copy the key id and the secret.
+2. Open Account → Basic settings → API management.
+3. Create a key and copy the key ID and the secret. The secret is shown
+   only once.
 
-Solis has required a support ticket before that page is shown. The key id and
-secret are the whole read credential. The portal username and password are
-not sent.
+Solis has sometimes required a support ticket before that page is shown.
+The key ID and secret are the whole read credential. Your portal username
+and password are not used.
 
 Use the host that issued the key, including the port:
 
@@ -22,29 +36,32 @@ Use the host that issued the key, including the port:
 | International | `https://www.soliscloud.com:13333` |
 | Older keys pinned to v3 | `https://v3.soliscloud.com:13333` |
 
-The config flow offers the international URL. A migrated entry keeps the host
-it already had. A public `http://` URL is stored as `https://`.
+The setup form offers the international URL. A migrated entry keeps the
+host it already had.
 
-A Solarman stick on the same LAN can be added on that first step. Discovery
-only works while the inverter is producing. Details are in
-[Configuration](configuration.md).
+### Local stick
 
-## HACS
+Needed for **Local stick only** and **Local stick with SolisCloud backup**.
 
-Add `https://github.com/taurgis/ha-solis` as a custom repository, category
-Integration. Download Solis, restart, then Settings → Devices & services →
-Add integration → Solis.
+- Set it up during the day. The stick is powered by the inverter and is off
+  at night, so it cannot be found or tested then.
+- Find the stick's IP address in the SolisCloud app (the data logger
+  details) or in your router, and reserve it in the router's DHCP settings.
+- Solarman / IGEN sticks are found automatically and can also show up under
+  Discovered in Settings → Devices & services. Other sticks need their
+  address typed.
+- An S2-WL-ST needs firmware with Modbus TCP enabled first. See
+  [S2-WL-ST local reads](research/s2-wl-st.md).
 
-## Manual
-
-Copy `custom_components/solis` into `config/custom_components/solis` and
-restart.
+Then add the integration and pick the connection on the first screen. The
+forms are described in [Configuration](configuration.md).
 
 ## Replacing hultenvp/solis-sensor
 
 Both integrations use the domain `solis` and the same folder. Remove the
-upstream copy before installing this one. Restart, and the existing config
-entry migrates. Unique ids are rewritten when the old registry rows are still
-present. See the migration section in the README.
+old copy, install this one and restart. The existing config entry migrates,
+and entity IDs are kept when the old registry rows are still present. See
+the migration section in the [README](https://github.com/taurgis/ha-solis#migrating-from-hultenvpsolis-sensor).
 
-Do not run both at once. A second domain would not keep recorder history.
+Do not run both at once. Installing this under another domain would not
+keep recorder history.
