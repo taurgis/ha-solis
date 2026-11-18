@@ -216,7 +216,7 @@ async def test_unload_keeps_a_repair_and_removal_deletes_it(
     hass: HomeAssistant, solis_server: tuple[Any, str]
 ) -> None:
     """A repair stays while its condition may still hold; removing the entry deletes it."""
-    _state_, url = solis_server
+    _, url = solis_server
     entry = await _setup(hass, url)
     from homeassistant.helpers import issue_registry as ir
 

@@ -20,7 +20,13 @@ is `docs/entities.md`; this spec holds the rules behind it.
 - Devices: plant `station:{id}`, inverter `inverter:{serial}`, logger
   `collector:{serial}`, EPM `epm:{serial}`. Inverters, loggers and EPMs hang
   off their plant (`via_device`, or `via_device_id` from HA 2026.8 — both
-  are supported).
+  are supported). The local placeholder plant (`station:local`) gets no
+  device, so a local inverter has no parent; setup detaches the shared one
+  older releases created.
+- A local entry's logger device carries the stored stick MAC as a
+  `CONNECTION_NETWORK_MAC` connection. Logger and EPM names are translated
+  (`Logger {serial}`, `EPM {serial}`) unless the serial already starts with
+  that word.
 - Entity unique ids are `{serial}_{key}`; `has_entity_name` is on.
 - Legacy ids are migrated by `legacy-migration` before entities are added.
 
@@ -37,13 +43,28 @@ is `docs/entities.md`; this spec holds the rules behind it.
   a fresh sample, and `unavailable` when the sample is older than 15 min or
   that inverter's detail failed; status then reads `stale`. Energy totals
   keep their last value through both.
-- **Appearing and disappearing.** Battery, phase and PV-string entities are
-  created once their fields appear and kept if a later poll omits them. A
+- **Appearing and disappearing.** Battery, lifetime grid/load
+  (`grid_import_total`, `grid_export_total`, `load_total`, from SolisCloud
+  `gridPurchasedTotalEnergy`, `gridSellTotalEnergy`, `homeLoadTotalEnergy`),
+  phase and PV-string entities are created once their fields appear and kept
+  if a later poll omits them. Phase entities of a single-phase inverter
+  (`acOutputType` 0) are disabled by default. A
   device missing from a *complete* poll is removed; a partial poll or an
   unconfirmed empty inverter list keeps it.
 - **No invented data.** No integration-derived energy sensors (HA can derive
   them from power sensors) and no `energy_storage` device class — see the
   goal's non-goals.
+- **Signs.** Grid power is SolisCloud `psum`: positive exporting, negative
+  importing (the reverse of Home Assistant's grid convention; documented,
+  not flipped, so existing history keeps its meaning). Battery power is
+  positive charging, negative discharging.
+- **Precision.** Lifetime energy counters suggest one decimal; period
+  counters two.
+- **Energy value per poll.** The guarded energy value is computed once per
+  coordinator update (and once when added), not on every state read.
+- **Icons** come from `icons.json` translation keys (status states, battery
+  power by sign, SOH and SOC settings, alarm state); everything else uses
+  its device-class icon.
 - `PARALLEL_UPDATES = 0`: entities never poll on their own.
 
 ## Boundary

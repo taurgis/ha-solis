@@ -16,8 +16,8 @@ rules:
     comment: >-
       icon.png and logo.png are the files already published at
       home-assistant/brands custom_integrations/solis, copied here unchanged.
-      icon@2x.png (512x512) and logo@2x.png are exact 2x scales, because
-      that repository has no high-DPI files. Home Assistant 2026.3+ loads
+      No @2x files ship: there are no high-DPI originals, and the brands
+      guidelines reject upscaled images. Home Assistant 2026.3+ loads
       custom_components/solis/brand/ locally. Older cores use the brands CDN,
       which serves the same icon and logo. core_integrations/solis does not
       exist; this domain is a custom integration.
@@ -29,9 +29,14 @@ rules:
   config-flow:
     status: done
     comment: >-
-      User, plant selection, reauth, and reconfigure steps. Field context
-      is in data_description. Credentials and plant ids live in entry data.
-      Polling and the timezone live in options.
+      The user step is a menu (SolisCloud only, local stick, local stick
+      with SolisCloud backup). Then the SolisCloud form and plant selection,
+      and the logger form with a collapsed Advanced section. A web password
+      step and a stick-or-gateway choice appear only when needed. DHCP
+      discovery, reauth (API key or stick web password) and a reconfigure
+      menu are separate steps. Field context is in data_description.
+      Credentials and plant ids live in entry data. Polling, the timezone
+      and the request limits live in options (OptionsFlowWithReload).
   config-flow-test-coverage:
     status: done
     comment: >-
@@ -51,20 +56,22 @@ rules:
   docs-high-level-description:
     status: done
     comment: >-
-      README and docs/index.md describe SolisCloud plants and inverters,
-      the optional Solarman logger, read-only access, and the relationship
-      to hultenvp/solis-sensor.
+      README and docs/index.md describe SolisCloud and local stick access,
+      read-only behaviour, the Energy dashboard sensors, a connection
+      decision table by stick model, and the relationship to
+      hultenvp/solis-sensor.
   docs-installation-instructions:
     status: done
     comment: >-
-      README and docs/installation.md cover the API key prerequisite, HACS,
-      manual install, and the minimum Home Assistant version.
+      README and docs/installation.md cover the API key and local stick
+      prerequisites, HACS, manual install, and the minimum Home Assistant
+      version.
   docs-removal-instructions:
     status: done
     comment: >-
-      README and docs/removal.md cover deleting the config entry, what
-      happens to history, uninstalling the component, and the API key
-      staying on SolisCloud.
+      README and docs/removal.md cover deleting the config entry, what is
+      removed with it, uninstalling the component, and the API key staying
+      valid on SolisCloud.
   docs-triggers:
     status: exempt
     comment: The integration provides no trigger platform.
@@ -79,7 +86,14 @@ rules:
   runtime-data: done
   test-before-configure: done
   test-before-setup: done
-  unique-config-entry: done
+  unique-config-entry:
+    status: done
+    comment: >-
+      A SolisCloud-only entry is keyed by the API key id, and a key already
+      used by another entry aborts unless both are local entries with
+      SolisCloud backup (each has its own stick). An entry with a stick is
+      keyed by the stick (Solarman serial, s2:, tcp: or rtu: id). Reconfigure
+      aborts when the new stick id belongs to another entry.
 
   # Silver
   action-exceptions:
@@ -90,12 +104,14 @@ rules:
     status: done
     comment: >-
       docs/configuration.md lists every options-flow field, including the
-      plant timezone, with the default and the allowed range.
+      plant timezone choices and the Advanced section, with the default and
+      the allowed range.
   docs-installation-parameters:
     status: done
     comment: >-
-      docs/configuration.md and docs/installation.md describe the API URL,
-      key id, secret, and plant selection asked for during setup.
+      docs/configuration.md and docs/installation.md describe the first-step
+      menu, the SolisCloud form and plant selection, the local stick form
+      and its Advanced section, and the web password step.
   entity-unavailable:
     status: done
     comment: >-
@@ -109,8 +125,10 @@ rules:
   log-when-unavailable:
     status: done
     comment: >-
-      A sustained outage logs one warning when its repair opens, and one
-      info line when the cloud returns. Polls in between are not logged.
+      A sustained cloud outage logs one warning when live readings are
+      hidden, and one info line when the cloud returns. A local fault logs
+      one info line, and one warning when its repair opens after 10 minutes.
+      Polls in between are not logged.
       UpdateFailed is used when there is no snapshot to hold, and
       DataUpdateCoordinator logs that first failure and the recovery once.
   parallel-updates:
@@ -118,7 +136,14 @@ rules:
     comment: >-
       sensor.py and binary_sensor.py set PARALLEL_UPDATES = 0. Every value
       comes from the shared coordinator.
-  reauthentication-flow: done
+  reauthentication-flow:
+    status: done
+    comment: >-
+      A rejected API key raises ConfigEntryAuthFailed (or starts reauth from
+      a local entry whose SolisCloud backup was rejected). reauth_confirm
+      replaces the key and refuses a key from another account. A web-page
+      stick that rejects its password starts reauth_web for the stick
+      password; an entry with both asks which login failed.
   test-coverage:
     status: done
     comment: >-
@@ -131,29 +156,39 @@ rules:
     comment: >-
       Plants, inverters, data loggers, and export meters are devices.
       Inverters carry manufacturer, model, serial number, and HMI firmware.
+      A local logger device carries the stick MAC as a network connection.
+      A local-only entry has no placeholder plant device (older shared ones
+      are detached on setup). Logger and EPM names are translated.
       Subdevices link to the plant with via_device_id on Home Assistant
       2026.8 and newer, and with via_device on 2025.10.
-  diagnostics: done
+  diagnostics:
+    status: done
+    comment: >-
+      Entry and device diagnostics run through async_redact_data: API key id
+      and secret, stick password, host, MAC, serials, plant ids, names, the
+      entry title, location, device identifiers and connections, and DHCP
+      discovery keys. The entry unique id is replaced too.
   discovery:
     status: done
     comment: >-
-      Solarman loggers are found with the IGEN UDP 48899 broadcast
-      (WIFIKIT-214028-READ and HF-A11ASSISTHREAD). DHCP watches the
-      BC:54:F9 OUI and updates an existing entry's address. Elfin and
-      USR hostnames (ew11, elfin, usr-tcp, usr-w610, usr-dr) are also
-      matched. A hostname match stores the MAC on the entry that already
-      uses that IP, and a later lease updates the host. No gateway OUI
-      is claimed. Auto-detect probes TCP 502, then 8899. Port 502 is an
-      S2-WL-ST only when port 80 names the Solis page, a gateway when
-      port 80 names the vendor, and a question to the user otherwise.
+      DHCP matches the IGEN OUIs E8:FD:F8 and BC:54:F9 and registered
+      devices. A new Solarman stick at a private address that answers the
+      UDP 48899 probe gets its serial as unique id and a discovery_confirm
+      step (local only, or local with SolisCloud backup), which continues
+      into the logger form. The logger form also lists sticks found by the
+      IGEN broadcast. No gateway OUI or hostname is claimed. Auto-detect
+      probes TCP 502, then 8899, then a Solis web page on port 80.
   discovery-update-info:
     status: done
     comment: >-
       A Solarman logger is identified by its serial and MAC. An S2-WL-ST
       uses the stick serial, or the inverter serial read from registers
-      when the stick serial was not typed. UDP discovery and DHCP both
-      write the current IP into the config entry and reload it. The change
-      is logged once at info.
+      when the stick serial was not typed. DHCP for a stored MAC writes the
+      new IP into the entry and reloads it; an entry at that IP without a
+      MAC gains the MAC. A web-page stick is never moved by DHCP because it
+      sends a password to its host. A Solarman stick that moves is also
+      found again by serial over UDP and the new IP is saved. The change is
+      logged once at info.
   docs-data-update: done
   docs-examples: done
   docs-known-limitations: done
@@ -174,15 +209,22 @@ rules:
     status: done
     comment: >-
       Sensor and binary sensor platforms listen to the coordinator and add
-      entities when a new inverter, string, logger, or export meter appears.
+      entities when a new inverter, string, battery, lifetime counter,
+      logger, or export meter appears.
   entity-category: done
-  entity-device-class: done
+  entity-device-class:
+    status: done
+    comment: >-
+      Power, energy, voltage, current, frequency, temperature, battery
+      (state of charge only), signal strength, timestamp and enum (status,
+      data source) device classes are set. State of health and the force-charge SOC settings are
+      percentages without a device class, since they are not a charge level.
   entity-disabled-by-default:
     status: done
     comment: >-
       Measurement time, battery state of health, force-charge and
-      overdischarge SOC, string power, and logger RSSI are disabled by
-      default.
+      overdischarge SOC, string power, logger RSSI, and the phase sensors of
+      a single-phase inverter are disabled by default.
   entity-translations: done
   exception-translations:
     status: done
@@ -193,21 +235,26 @@ rules:
   icon-translations:
     status: done
     comment: >-
-      icons.json covers entity translation keys, including status state
-      icons. Device-class icons are left to the device class.
+      icons.json holds the icons for translation keys without a fitting
+      device-class icon: status states, battery power by sign (range),
+      state of health, the SOC settings, and the alarm on/off state. No
+      entity sets an icon in code; the rest use their device-class icon.
   reconfiguration-flow: done
   repair-issues:
     status: done
     comment: >-
-      Auth, clock, abnormal data, an empty plant, legacy control, a
-      sustained SolisCloud outage, a local logger that keeps resetting for
-      10 minutes, an S2-WL-ST whose port 502 is closed, an S2-WL-ST
-      that accepts TCP without a Modbus reply, a Modbus gateway that is
-      not accepting connections, and a gateway speaking the wrong framing
-      open repairs. The logger repair does not treat a steady red stick LED
-      as a fault. Outage and logger repairs clear when a poll succeeds.
-      Unloading the entry removes the poll repairs. Night on a stick powered
-      by the inverter does not open a repair.
+      Repairs are only for conditions the user must act on outside Home
+      Assistant: clock skew, an empty plant or inverter list, legacy
+      control (persistent), and, after 10 minutes, a local logger that keeps
+      resetting, an S2-WL-ST with port 502 closed or silent, a gateway that
+      refuses connections, wrong framing, a closed S5 port, and a web page
+      that is not the Solis page. None is fixable; the gateway, framing, S5
+      and legacy-control repairs carry a learn_more_url to the matching
+      troubleshooting section. A rejected key or stick password uses reauth
+      instead, and outages and abnormal data are logged, not repairs. Poll
+      repairs clear when a poll succeeds, stay across unload, and are
+      deleted with the entry. Night on a stick powered by the inverter does
+      not open a repair.
   stale-devices:
     status: done
     comment: >-
@@ -219,13 +266,19 @@ rules:
   async-dependency:
     status: done
     comment: >-
-      The SolisCloud client uses aiohttp on the Home Assistant session.
-      There is no synchronous HTTP library.
+      The SolisCloud client uses aiohttp on the Home Assistant session. The
+      local transports use asyncio streams. There is no synchronous I/O
+      library.
   inject-websession:
     status: done
     comment: >-
-      SolisCloudClient takes the session from async_get_clientsession. It
-      does not create its own ClientSession inside the integration.
+      SolisCloudClient takes the session from async_get_clientsession, in
+      setup and in the config flow. No ClientSession is created inside the
+      integration. The local transports (Solarman V5, Modbus TCP and RTU,
+      and the web-page stick) use asyncio streams, not aiohttp: the web
+      stick client is a small hand-written HTTP/1.0 client because old stick
+      firmware pads replies with NUL bytes, omits Content-Length and handles
+      one socket at a time, so it has no session to inject.
   strict-typing:
     status: done
     comment: >-

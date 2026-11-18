@@ -64,8 +64,8 @@ from mock_soliscloud.web_stick import WebStickEmulator
 
 PAGE = "1031000000000001;0F000F;E4;38.4;382;2.800000;21986;NO;"
 COLLECTOR = (
-    "\x00" * 33 + ";2;7A122C096F409F31;10010106;Disabled;null;null;Disabled;null;null;"
-    "192.168.0.112;B8:D6:1A:58:A7:0B;Connected;null;"
+    "\x00" * 33 + ";2;7A00000000000001;10010106;Disabled;null;null;Disabled;null;null;"
+    "192.168.0.112;B8:D6:1A:00:00:01;Connected;null;"
 )
 
 
@@ -79,7 +79,7 @@ def _cloud_snapshot() -> SolisSnapshot:
     inverter = decode_string(
         captured_registers(),
         serial="1031000000000001",
-        logger_serial="7A122C096F409F31",
+        logger_serial="7A00000000000001",
         now=datetime.now(UTC),
     )
     return SolisSnapshot(
@@ -124,11 +124,11 @@ def test_parse_inverter_and_collector() -> None:
             parse_inverter(bad)
     collector = parse_collector(COLLECTOR)
     assert collector is not None
-    assert (collector.serial, collector.version) == ("7A122C096F409F31", "10010106")
-    assert collector.mac == "B8:D6:1A:58:A7:0B"
-    assert parse_collector(COLLECTOR.replace("B8:D6:1A:58:A7:0B", "null")).mac == ""  # type: ignore[union-attr]
+    assert (collector.serial, collector.version) == ("7A00000000000001", "10010106")
+    assert collector.mac == "B8:D6:1A:00:00:01"
+    assert parse_collector(COLLECTOR.replace("B8:D6:1A:00:00:01", "null")).mac == ""  # type: ignore[union-attr]
     assert parse_collector("short") is None
-    assert parse_collector(COLLECTOR.replace("7A122C096F409F31", "")) is None
+    assert parse_collector(COLLECTOR.replace("7A00000000000001", "")) is None
 
 
 def test_banner_check_needs_the_solis_realm() -> None:
@@ -144,7 +144,7 @@ async def test_client_reads_both_pages(stick: WebStickEmulator) -> None:
     assert (await client.read_inverter()).power_w == 382.0
     collector = await client.read_collector()
     assert collector is not None
-    assert collector.serial == "7A122C096F409F31"
+    assert collector.serial == "7A00000000000001"
     await client.close()
     assert stick.state.requests == ["/inverter.cgi", "/moniter.cgi"]
 
@@ -311,8 +311,8 @@ async def test_probe_reads_the_stick_page_and_collector(stick: WebStickEmulator)
     probe = await probe_web(request, auto=False)
     assert probe.kind == LOGGER_WEB
     assert probe.inverter_serial == "1031000000000001"
-    assert probe.stick_serial == "7A122C096F409F31"
-    assert probe.mac == "B8:D6:1A:58:A7:0B"
+    assert probe.stick_serial == "7A00000000000001"
+    assert probe.mac == "B8:D6:1A:00:00:01"
     named = await probe_web(
         LoggerRequest(
             "127.0.0.1",
@@ -415,12 +415,12 @@ def test_form_setup_and_identity_helpers() -> None:
         kind=LOGGER_WEB,
         port=80,
         function=0,
-        stick_serial="7A122C096F409F31",
+        stick_serial="7A00000000000001",
     )
-    fields, unique = logger_setup(request, probe, mac="B8:D6:1A:58:A7:0B", source=SOURCE_LOCAL)
+    fields, unique = logger_setup(request, probe, mac="B8:D6:1A:00:00:01", source=SOURCE_LOCAL)
     assert unique == "web:1031000000000001"
     assert fields["logger_password"] == "secret"
-    assert fields["logger_serial"] == "7A122C096F409F31"
+    assert fields["logger_serial"] == "7A00000000000001"
     assert fields["logger_port"] == 80
     assert fields["logger_detect"] == "manual_solis_web"
     assert not needs_stable_id(probe, "", "")
@@ -567,8 +567,8 @@ async def test_flow_creates_a_web_entry_and_names_a_wrong_password(
     data = created["result"].data
     assert data["logger_kind"] == LOGGER_WEB
     assert data["logger_password"] == "123456789"
-    assert data["logger_serial"] == "7A122C096F409F31"
-    assert data["logger_mac"] == "B8:D6:1A:58:A7:0B"
+    assert data["logger_serial"] == "7A00000000000001"
+    assert data["logger_mac"] == "B8:D6:1A:00:00:01"
     assert data["inverter_serial"] == "1031000000000001"
     assert created["result"].options["scan_interval"] == 60
 
@@ -603,7 +603,7 @@ async def test_entry_publishes_the_stick_and_hides_the_password(
             "logger_kind": LOGGER_WEB,
             "logger_host": "127.0.0.1",
             "logger_port": stick.port,
-            "logger_serial": "7A122C096F409F31",
+            "logger_serial": "7A00000000000001",
             "logger_password": "123456789",
             "inverter_serial": "1031000000000001",
             "logger_detect": "manual_solis_web",

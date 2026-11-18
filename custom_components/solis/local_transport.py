@@ -79,7 +79,6 @@ from .errors import (
     SolisAuthError,
     SolisClockError,
     SolisCloudError,
-    SolisLoggerAuthError,
     SolisLoggerBusy,
     SolisLoggerOffline,
 )
@@ -709,10 +708,10 @@ class SolisPriorityTransport:
             return _tagged(await _read_cloud(self._cloud), "cloud")
         try:
             local = await self._local.async_read()
-        except SolisLoggerAuthError:
-            # A rejected stick password needs the user (reauth), not a held sample.
-            raise
         except SolisLoggerBusy:
+            # A rejected web password (SolisLoggerAuthError) also lands here: the
+            # cloud keeps the entry live and the coordinator starts reauth from
+            # the degraded reason.
             return await self._when_busy()
         except SolisLoggerOffline:
             local = None

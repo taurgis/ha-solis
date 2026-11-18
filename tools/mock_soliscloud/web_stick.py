@@ -53,8 +53,8 @@ class WebStickState:
     night_value: str | None = None
     realm: str = REALM
     chunked: bool = False
-    mid: str = "7A122C096F409F31"
-    mac: str = "B8:D6:1A:58:A7:0B"
+    mid: str = "7A00000000000001"
+    mac: str = "B8:D6:1A:00:00:01"
     # ok, garbage (200 with another body), error (500), silent (accept, send nothing),
     # redirect (302), nopage (200 with a non-HTTP reply), hang (accept, never answer),
     # reset (TCP reset).

@@ -5,8 +5,8 @@ The default image is the ``homeassistant`` field in ``hacs.json``. Pass a
 version argument to boot another tag, such as the current stable release.
 
 The check fails unless the config entry loads, AC power matches the mock,
-a short 502 keeps that power, a sustained 502 hides it and opens a repair
-that clears on recovery, one inverter can fail on its own, bad bodies do not
+a short 502 keeps that power, a sustained 502 hides it without opening a
+repair, power returns on recovery, one inverter can fail on its own, bad bodies do not
 start reauthentication, and a null, zero, reset or spike does not move the
 lifetime total backwards. It then starts the Solarman stick emulator, adds a
 local entry, checks the captured string map, sleeps the stick, and brings it
@@ -335,17 +335,25 @@ def _reconfigure(base: str, token: str, entry_id: str) -> None:
         raise CheckError(f"reconfigure failed: {json.dumps(current)[:1500]}")
 
 
-def _finish_reauth(base: str, token: str) -> None:
+def _reauth_flow_id(base: str, token: str) -> str:
+    """Return the flow id of a Solis reauthentication in progress, or ""."""
     progress = _ws(base, token, {"type": "config_entries/flow/progress"})
     if not isinstance(progress, list):
         raise CheckError(f"reauth progress was not a list: {progress}")
-    flow_id = ""
     for flow in progress:
-        if isinstance(flow, dict) and flow.get("handler") == "solis":
-            flow_id = str(flow.get("flow_id") or "")
-            break
+        if (
+            isinstance(flow, dict)
+            and flow.get("handler") == "solis"
+            and (flow.get("context") or {}).get("source") == "reauth"
+        ):
+            return str(flow.get("flow_id") or "")
+    return ""
+
+
+def _finish_reauth(base: str, token: str) -> None:
+    flow_id = _reauth_flow_id(base, token)
     if not flow_id:
-        raise CheckError(f"reauth flow was not in progress: {progress}")
+        raise CheckError("reauth flow was not in progress")
     current = _advance(
         base,
         token,
@@ -442,16 +450,16 @@ def _cloud_faults(
         timeout=150,
     )
     _require_energy(base, token, total_id, held)
-    if "cloud_outage" not in json.dumps(_issues(base, token)):
-        raise CheckError("sustained outage did not open a repair")
-    _log("Sustained 502 hid live power, held energy, and opened a repair")
+    if "cloud_outage" in json.dumps(_issues(base, token)):
+        raise CheckError("sustained outage opened a repair the user cannot act on")
+    _log("Sustained 502 hid live power and held energy without a repair")
     _mock_control({"fault": "ok"})
     _refresh(base, token, power_id)
     _wait_state(base, token, power_id, lambda item: _number(item) == north_power, timeout=150)
     _require_energy(base, token, total_id, held)
     if "cloud_outage" in json.dumps(_issues(base, token)):
         raise CheckError("outage repair was still open after recovery")
-    _log("Power recovered to the mock value and the repair cleared")
+    _log("Power recovered to the mock value")
     _mock_control({"fault": "partial"})
     _refresh(base, token, power_id)
     _wait_state(
@@ -484,7 +492,7 @@ def _cloud_faults(
             timeout=150,
         )
         _require_energy(base, token, total_id, held)
-        if "invalid_auth" in json.dumps(_issues(base, token)):
+        if _reauth_flow_id(base, token):
             raise CheckError(f"{fault} started reauthentication")
         _mock_control({"fault": "ok"})
         _refresh(base, token, power_id)
@@ -971,8 +979,8 @@ def _assert_cloud_recovery(
     _mock_control({"mode": "auth_error"})
     _refresh(base, token, power_id)
     _wait_state(base, token, power_id, lambda item: item.get("state") == "unavailable")
-    if "invalid_auth" not in json.dumps(_issues(base, token)):
-        raise CheckError("reauth repair was not opened")
+    if not _reauth_flow_id(base, token):
+        raise CheckError("reauthentication was not started")
     _mock_control({"mode": "ok"})
     _finish_reauth(base, token)
     _refresh(base, token, power_id)

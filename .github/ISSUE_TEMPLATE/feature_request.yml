@@ -1,0 +1,26 @@
+name: Feature request
+description: Something this integration does not do yet
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What you want
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: >-
+        What it would let you do in Home Assistant. Inverter control is
+        intentionally not supported; see the limitations page.
+  - type: dropdown
+    id: connection
+    attributes:
+      label: Connection
+      options:
+        - SolisCloud only
+        - Local stick only
+        - Local stick with SolisCloud backup
+        - Not relevant

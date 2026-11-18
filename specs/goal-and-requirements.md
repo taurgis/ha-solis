@@ -57,14 +57,19 @@ hultenvp/solis-sensor. Installed through HACS or by copying
   or failed poll reads `unavailable`; a logger powered down at night reads as
   `asleep` and keeps totals.
 - **Resilience and repairs.** Retries, backoff and circuit-breaking for cloud
-  outages; repairs for faults a person can act on (credentials, clock, closed
-  port, down gateway) and none for night.
+  outages; reauthentication for a rejected API key or stick password;
+  non-fixable repairs, with a troubleshooting link where one helps, only for
+  faults a person can act on outside Home Assistant (clock, empty plant,
+  closed port, down gateway, wrong framing); none for night, an outage or
+  abnormal cloud data.
 - **Migration from hultenvp/solis-sensor.** Config entries and legacy entity
   and device ids are rewritten on startup so history carries over.
-- **Discovery and moving addresses.** Solarman sticks and known gateways are
-  matched over DHCP; a logger is identified by serial/MAC, never by IP.
-- **Diagnostics** with secrets, location, host, MAC and the logger serial redacted. Inverter and plant ids stay so a device
-  report can be matched to its rows.
+- **Discovery and moving addresses.** Solarman / IGEN sticks are matched over
+  DHCP (IGEN OUIs) and UDP; a new one is offered as a discovered entry with a
+  confirm step, and a known logger is followed to its new address. A logger
+  is identified by serial/MAC, never by IP.
+- **Diagnostics** with secrets, location, host, MAC, serials, plant ids and
+  names redacted.
 - **Translations**: English and Dutch.
 
 ## Non-goals
@@ -97,7 +102,8 @@ hultenvp/solis-sensor. Installed through HACS or by copying
   registers 3060-3063 hold eight characters, so the 15-character SolisCloud
   inverter serial is unknown unless the user types it.
 - SolisCloud samples refresh about every five minutes; faster polling repeats
-  the same sample. Lifetime grid import/export is not in the polled endpoints.
+  the same sample. Lifetime grid import, export and load totals come from
+  SolisCloud inverter detail only, so a local-only entry has none.
 
 ## Principles
 

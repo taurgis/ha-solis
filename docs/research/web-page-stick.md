@@ -3,7 +3,7 @@
 Input note, not a spec node. Read from a real stick on 2025: collector
 firmware `10010106`, web version `2.2.0`, inverter model code `E4`
 (Solis-mini, firmware `0F000F`), SolisCloud collector serial
-`7A122C096F409F31`, Wi-Fi module on Espressif OUI `B8:D6:1A`.
+`7A00000000000001`, Wi-Fi module on Espressif OUI `B8:D6:1A`.
 
 ## What it exposes
 

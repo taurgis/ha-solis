@@ -16,7 +16,7 @@ SolisCloud account and/or one local logger. Each entry owns one
 
 ```mermaid
 flowchart LR
-  setup[integration-setup<br/>__init__, config_flow,<br/>repairs, diagnostics]
+  setup[integration-setup<br/>__init__, config_flow,<br/>diagnostics]
   coord[coordinator]
   ent[entities<br/>sensor, binary_sensor]
   cloud[cloud-transport]
@@ -36,8 +36,8 @@ flowchart LR
 
 | Module | Owns |
 | --- | --- |
-| `integration-setup` | Entry lifecycle, transport assembly, config/options/reconfigure/reauth/DHCP flows, repair fix-flows, diagnostics. |
-| `coordinator` | Poll loop, outage/sleep/lock handling, poll-interval backoff, repairs raised by polling, snapshot persistence. |
+| `integration-setup` | Entry lifecycle, transport assembly, config/options/reconfigure/reauth/DHCP flows, diagnostics. |
+| `coordinator` | Poll loop, outage/sleep/lock handling, poll-interval backoff, repairs raised by polling (all non-fixable), snapshot persistence. |
 | `cloud-transport` | SolisCloud Platform API v2: signing, pacing, retries, parsing, unit conversion. |
 | `local-transport` | Logger framings, register maps, the web-page transport and its cloud fill, logger-kind registry and detection, the local-first router. |
 | `entities` | Devices and entities built from a snapshot; monotonic energy. |

@@ -22,7 +22,7 @@ The upstream id formats and why the domain stays `solis` are in
   `portal_key_id`, `portal_secret`, `portal_plant_id`, `refresh_ok`,
   `request_timeout`) becomes version 2; the portal password is dropped on
   purpose. Version 3 adds `source` (cloud for migrated entries). An entry
-  that had the control API enabled gets the fixable `legacy_control` repair
+  that had the control API enabled gets the non-fixable `legacy_control` repair (with a learn-more link)
   explaining that control is not carried over; schedules already on the
   inverter are left alone.
 - **Entity ids.** Unique ids `{serial}{config name} {sensor label}` (spaces

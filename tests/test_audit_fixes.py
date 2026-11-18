@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 import time
@@ -104,20 +105,19 @@ def test_a_night_snapshot_clears_voltages_and_temperature() -> None:
 async def test_the_cloud_is_read_once_while_the_stick_is_paused(
     stick: WebStickEmulator,
 ) -> None:
-    """A wrong password reaches the coordinator (reauth) and is not hidden by the cloud."""
-    from custom_components.solis.errors import SolisLoggerAuthError, SolisLoggerBusy
+    """A wrong password is degraded on the cloud, read once; the coordinator starts reauth."""
+    from custom_components.solis.errors import SolisLoggerBusy
     from custom_components.solis.web_transport import SolisWebTransport
 
     cloud = _Cloud()
     wrong = SolisWebTransport("127.0.0.1", "nope", port=stick.port, timeout=2)
     transport = SolisPriorityTransport(SOURCE_BOTH, wrong, cloud)
-    with pytest.raises(SolisLoggerAuthError):
-        await transport.async_read()
+    first = await transport.async_read()
+    assert first.source == "degraded"
+    assert transport.degraded_reason == "web_auth"
     for _ in range(2):
-        try:
+        with contextlib.suppress(SolisLoggerBusy):
             await transport.async_read()
-        except SolisLoggerBusy:
-            pass
     assert cloud.reads <= 1
 
 

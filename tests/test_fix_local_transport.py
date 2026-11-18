@@ -440,7 +440,7 @@ async def test_s2_closed_right_after_setup_probe_is_a_short_wait(
 # Coordinator request: a rejected stick password reaches the coordinator.
 
 
-async def test_auth_error_is_not_held_as_degraded() -> None:
+async def test_auth_error_is_degraded_with_the_web_auth_reason() -> None:
     local = _local()
     local._last = _snapshot(_inverter())
 
@@ -449,6 +449,7 @@ async def test_auth_error_is_not_held_as_degraded() -> None:
 
     local.async_read = _rejected  # type: ignore[method-assign]
     cloud = _Cloud(_snapshot(_inverter()))
-    with pytest.raises(SolisLoggerAuthError):
-        await SolisPriorityTransport("both", local, cloud).async_read()
-    assert cloud.reads == 0
+    transport = SolisPriorityTransport("both", local, cloud)
+    snapshot = await transport.async_read()
+    # The real web transport sets degraded_reason="web_auth" (see test_web_stick).
+    assert snapshot.source == "degraded"

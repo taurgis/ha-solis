@@ -2,8 +2,9 @@
 
 Home Assistant 2026.3 and newer read ``custom_components/solis/brand/``.
 icon.png and logo.png are the files already published for this domain in
-home-assistant/brands ``custom_integrations/solis``. The @2x files are exact
-2x scales of those, because the brands repository does not publish them.
+home-assistant/brands ``custom_integrations/solis``. There are no @2x files:
+the brands repository has no high-DPI originals, and its guidelines reject
+images that are only upscaled.
 """
 
 from __future__ import annotations
@@ -29,21 +30,22 @@ def _png_header(path: Path) -> tuple[int, int, int]:
 
 
 def test_brand_images_match_the_hacs_sizes() -> None:
-    """HACS asks for a square icon and accepts a landscape logo, plus @2x."""
+    """HACS asks for a square icon and accepts a landscape logo."""
     icon_w, icon_h, icon_color = _png_header(BRAND / "icon.png")
-    hidpi_w, hidpi_h, hidpi_color = _png_header(BRAND / "icon@2x.png")
     logo_w, logo_h, logo_color = _png_header(BRAND / "logo.png")
-    logo_hidpi_w, logo_hidpi_h, logo_hidpi_color = _png_header(BRAND / "logo@2x.png")
 
     assert (icon_w, icon_h) == (256, 256)
-    assert (hidpi_w, hidpi_h) == (512, 512)
     assert logo_h == 256
     assert logo_w > logo_h
-    assert (logo_hidpi_w, logo_hidpi_h) == (logo_w * 2, logo_h * 2)
-    assert logo_hidpi_h == 512
-    for color in (icon_color, hidpi_color, logo_color, logo_hidpi_color):
+    for color in (icon_color, logo_color):
         assert color == _RGBA
-    assert (BRAND / "icon.png").read_bytes() != (BRAND / "icon@2x.png").read_bytes()
+
+
+def test_no_upscaled_hidpi_images() -> None:
+    """Upscaled @2x images are rejected by the brands guidelines, so none ship."""
+    assert not (BRAND / "icon@2x.png").exists()
+    assert not (BRAND / "logo@2x.png").exists()
+    assert sorted(path.name for path in BRAND.glob("*.png")) == ["icon.png", "logo.png"]
 
 
 def test_hacs_release_archive_includes_the_brand_folder() -> None:
