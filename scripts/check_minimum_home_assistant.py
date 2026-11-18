@@ -822,7 +822,7 @@ def _require_no_cloud_outage(base: str, token: str) -> None:
         raise CheckError(f"asleep logger opened a cloud outage repair: {blob[:1500]}")
 
 
-def _exercise_local(base: str, token: str, config: Path) -> None:
+def _exercise_local(base: str, token: str, config: Path, cloud_id: str) -> None:
     """Local setup, night, a new DHCP address, then cloud totals that must not win."""
     _stick_control({"registers": {"3005": 500}})
     entry_id = _add_logger(base, token, "local", "127.0.0.1")
@@ -885,6 +885,9 @@ def _exercise_local(base: str, token: str, config: Path) -> None:
         raise CheckError(f"expected one IP-change log line, found {moved}")
     _log(f"Logger {LOGGER_SERIAL} moved to {MORNING_HOST} and the entry was updated once")
     _delete_entry(base, token, entry_id)
+    # One SolisCloud key is read by one cloud-only entry or by local entries,
+    # never both, so the cloud-only entry goes before the local+cloud one.
+    _delete_entry(base, token, cloud_id)
     both_id = _add_logger(base, token, "both", MORNING_HOST)
     _wait_loaded(base, token, both_id)
     _require_unique(
@@ -1110,7 +1113,7 @@ def run_check(version: str) -> None:
         _log(f"Home Assistant {version} loaded Solis, recovered from 502, and completed reauth")
         _ensure_loopback_alias()
         stick = _start_stick()
-        _exercise_local(base, token, config)
+        _exercise_local(base, token, config, entry_id)
         (ROOT / "lab").mkdir(exist_ok=True)
         (ROOT / "lab" / f"states-{version}.json").write_text(
             json.dumps(_states(base, token), indent=2),
