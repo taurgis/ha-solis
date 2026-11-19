@@ -51,6 +51,18 @@ LEGACY_LABELS: dict[str, str] = {
     "grid_import_total": "Total Energy Purchased",
     "grid_export_total": "Total On-grid Energy",
     "load_total": "Total Energy Used",
+    "battery_charge_month": "Monthly Energy Charged",
+    "battery_discharge_month": "Monthly Energy Discharged",
+    "battery_charge_year": "Yearly Energy Charged",
+    "battery_discharge_year": "Yearly Energy Discharged",
+    "grid_import_month": "Monthly Grid Energy Purchased",
+    "grid_export_month": "Monthly On-grid Energy",
+    "grid_import_year": "Yearly Grid Energy Purchased",
+    "grid_export_year": "Yearly On-grid Energy",
+    "backup_power": "Backup Load Power",
+    "backup_today": "Daily Backup Energy",
+    "smart_load_power": "Smart Load Power",
+    "smart_load_today": "Daily Smart Load Energy",
 }
 
 # Further upstream labels for a key above. ``Total Consumption Energy`` was
@@ -65,8 +77,12 @@ for _index in range(1, 25):
     LEGACY_LABELS[f"string_{_index}_voltage"] = f"DC Voltage PV{_index}"
     LEGACY_LABELS[f"string_{_index}_current"] = f"DC Current PV{_index}"
     LEGACY_LABELS[f"string_{_index}_power"] = f"DC Power PV{_index}"
-for _index in range(1, 4):
+for _index, _letter in enumerate("ABC", start=1):
     LEGACY_LABELS[f"phase_{_index}_power"] = f"Grid Phase{_index} Power"
+    LEGACY_LABELS[f"phase_{_index}_apparent_power"] = f"Grid Phase{_index} Apparent Power"
+    LEGACY_LABELS[f"phase_{_index}_reactive_power"] = f"Grid Phase{_index} Reactive Power"
+    LEGACY_LABELS[f"phase_{_index}_meter_current"] = f"Meter item {_letter} current"
+    LEGACY_LABELS[f"phase_{_index}_meter_voltage"] = f"Meter item {_letter} volt"
 
 
 def legacy_unique_id(serial: str, config_name: str, label: str) -> str:

@@ -359,6 +359,54 @@
       },
       "load_total": {
         "name": "Verbruik totaal"
+      },
+      "battery_charge_month": {
+        "name": "Batterij deze maand geladen"
+      },
+      "battery_discharge_month": {
+        "name": "Batterij deze maand ontladen"
+      },
+      "battery_charge_year": {
+        "name": "Batterij dit jaar geladen"
+      },
+      "battery_discharge_year": {
+        "name": "Batterij dit jaar ontladen"
+      },
+      "grid_import_month": {
+        "name": "Netimport deze maand"
+      },
+      "grid_export_month": {
+        "name": "Netexport deze maand"
+      },
+      "grid_import_year": {
+        "name": "Netimport dit jaar"
+      },
+      "grid_export_year": {
+        "name": "Netexport dit jaar"
+      },
+      "backup_power": {
+        "name": "Back-upbelasting vermogen"
+      },
+      "backup_today": {
+        "name": "Back-upbelasting vandaag"
+      },
+      "smart_load_power": {
+        "name": "Smart load vermogen"
+      },
+      "smart_load_today": {
+        "name": "Smart load vandaag"
+      },
+      "phase_meter_voltage": {
+        "name": "Meter fase {index} spanning"
+      },
+      "phase_meter_current": {
+        "name": "Meter fase {index} stroom"
+      },
+      "phase_apparent_power": {
+        "name": "Net fase {index} schijnbaar vermogen"
+      },
+      "phase_reactive_power": {
+        "name": "Net fase {index} blindvermogen"
       }
     },
     "binary_sensor": {

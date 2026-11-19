@@ -23,7 +23,15 @@ from .models import (
     PvString,
     StationSnapshot,
 )
-from .units import as_float, is_missing, to_identity, to_kilowatt_hours, to_watts, unit_key
+from .units import (
+    as_float,
+    is_missing,
+    to_identity,
+    to_kilowatt_hours,
+    to_volt_amperes,
+    to_watts,
+    unit_key,
+)
 
 _MAX_STRINGS = 24
 
@@ -87,6 +95,11 @@ def _watts(data: dict[str, Any], *keys: str, default: str = "kw") -> float | Non
 def _kwh(data: dict[str, Any], *keys: str, default: str = "kwh") -> float | None:
     value, unit, pec = _reading(data, *keys)
     return to_kilowatt_hours(value, unit, pec, default=default)
+
+
+def _volt_amperes(data: dict[str, Any], key: str) -> float | None:
+    value, unit, pec = _reading(data, key)
+    return to_volt_amperes(value, unit, pec)
 
 
 def _ident(data: dict[str, Any], *keys: str, default: str) -> float | None:
@@ -247,13 +260,22 @@ def _phases(data: dict[str, Any]) -> tuple[Phase, ...]:
     output = as_float(first(data, "acOutputType"))
     count = 1 if output == 0 else 3
     rows: list[Phase] = []
-    for index, power_key in enumerate(("pA", "pB", "pC"), start=1):
+    for index, letter in enumerate("ABC", start=1):
         if index > count:
             break
-        voltage = _ident(data, f"uAc{index}", default="v")
-        current = _ident(data, f"iAc{index}", default="a")
-        power = _watts(data, power_key, default="w")
-        rows.append(Phase(index=index, voltage_v=voltage, current_a=current, power_w=power))
+        lower = letter.lower()
+        rows.append(
+            Phase(
+                index=index,
+                voltage_v=_ident(data, f"uAc{index}", default="v"),
+                current_a=_ident(data, f"iAc{index}", default="a"),
+                power_w=_watts(data, f"p{letter}", default="w"),
+                meter_voltage_v=_ident(data, f"u{letter}", default="v"),
+                meter_current_a=_ident(data, f"i{letter}", default="a"),
+                apparent_power_va=_volt_amperes(data, f"{lower}LookedPower"),
+                reactive_power_var=_volt_amperes(data, f"{lower}ReactivePower"),
+            )
+        )
     return tuple(rows)
 
 
@@ -348,6 +370,20 @@ def parse_inverter(
             grid_import_total_kwh=_kwh(data, "gridPurchasedTotalEnergy"),
             grid_export_total_kwh=_kwh(data, "gridSellTotalEnergy"),
             load_total_kwh=_kwh(data, "homeLoadTotalEnergy"),
+            battery_charge_month_kwh=_kwh(data, "batteryMonthChargeEnergy"),
+            battery_discharge_month_kwh=_kwh(data, "batteryMonthDischargeEnergy"),
+            battery_charge_year_kwh=_kwh(data, "batteryYearChargeEnergy"),
+            battery_discharge_year_kwh=_kwh(data, "batteryYearDischargeEnergy"),
+            grid_import_month_kwh=_kwh(data, "gridPurchasedMonthEnergy"),
+            grid_export_month_kwh=_kwh(data, "gridSellMonthEnergy"),
+            grid_import_year_kwh=_kwh(data, "gridPurchasedYearEnergy"),
+            grid_export_year_kwh=_kwh(data, "gridSellYearEnergy"),
+            # bypassLoadPower is the backup (EPS) port; backup2Power is the
+            # smart-load port on hybrids that have one.
+            backup_power_w=_watts(data, "bypassLoadPower", default="kw"),
+            backup_today_kwh=_kwh(data, "backupTodayEnergy"),
+            smart_load_power_w=_watts(data, "backup2Power", default="kw"),
+            smart_load_today_kwh=_kwh(data, "backup2TodayEnergy"),
         )
     )
 

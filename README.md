@@ -119,6 +119,13 @@ phase and PV string sensors, and the lifetime counters:
 | Total Energy Purchased | Grid import total |
 | Total On-grid Energy | Grid export total |
 | Total Energy Used (or Total Consumption Energy) | Load total |
+| Monthly / Yearly Grid Energy Purchased | Grid import this month / this year |
+| Monthly / Yearly On-grid Energy | Grid export this month / this year |
+| Monthly / Yearly Energy Charged (and Discharged) | Battery charged (discharged) this month / this year |
+| Backup Load Power, Daily Backup Energy | Backup load power, Backup load today |
+| Smart Load Power, Daily Smart Load Energy | Smart load power, Smart load today |
+| Grid Phase{n} Apparent / Reactive Power | Grid phase {n} apparent / reactive power |
+| Meter item A/B/C volt and current | Meter phase 1/2/3 voltage and current |
 
 Daily plant import, export and load move onto the plant device and keep
 their old entity id. Migration runs again when an inverter that was missing

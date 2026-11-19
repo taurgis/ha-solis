@@ -53,7 +53,7 @@ from custom_components.solis.models import (
     Phase,
     SolisSnapshot,
 )
-from custom_components.solis.sensor import _BATTERY, _INVERTER, _LIFETIME
+from custom_components.solis.sensor import _BATTERY, _INVERTER, _REPORTED
 from mock_soliscloud.catalog import NORTH_SERIAL
 
 PACKAGE = Path(__file__).parent.parent / "custom_components" / "solis"
@@ -547,7 +547,7 @@ def test_subdevice_names_are_translated_and_never_doubled() -> None:
 
 def test_soc_limits_and_health_are_not_battery_level() -> None:
     """Only the charge level is a battery device class; lifetime totals show one decimal."""
-    by_key = {item.key: item for item in (*_INVERTER, *_BATTERY, *_LIFETIME)}
+    by_key = {item.key: item for item in (*_INVERTER, *_BATTERY, *_REPORTED)}
     assert by_key["battery_soc"].device_class is SensorDeviceClass.BATTERY
     for key in ("battery_soh", "force_charge_soc", "force_discharge_soc"):
         assert by_key[key].device_class is None
@@ -645,7 +645,7 @@ def test_icons_follow_the_icon_translation_schema() -> None:
     strings = json.loads((PACKAGE / "strings.json").read_text(encoding="utf-8"))["entity"]
     classed = {
         item.key
-        for item in (*_INVERTER, *_BATTERY, *_LIFETIME)
+        for item in (*_INVERTER, *_BATTERY, *_REPORTED)
         if item.device_class not in (None, SensorDeviceClass.ENUM)
     }
     for platform, rows in icons.items():
