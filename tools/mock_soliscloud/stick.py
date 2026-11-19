@@ -167,6 +167,9 @@ class StickState:
     port_closed: bool = False
     silent: bool = False
     close_disables_port: bool = False
+    # Hold the next Modbus TCP reply this many seconds, once: a reply that
+    # arrives after the client gave up on it.
+    late_once: float = 0.0
     # Answer the 33000 range and 35000 as a hybrid, and refuse the 3000 range.
     hybrid: bool = False
     # Send an unsolicited 0x4710 heartbeat before each V5 reply.
@@ -266,6 +269,7 @@ class StickEmulator:
             "port_closed",
             "silent",
             "close_disables_port",
+            "late_once",
             "tcp_port",
             "hybrid",
             "heartbeat",
@@ -425,6 +429,9 @@ class StickEmulator:
             reply = _mbap_reply(self.state, frame)
             if reply is None:
                 continue
+            if self.state.late_once:
+                delay, self.state.late_once = self.state.late_once, 0.0
+                await asyncio.sleep(delay)
             writer.write(reply)
             await writer.drain()
 

@@ -43,7 +43,12 @@ from .const import (
 from .coordinator import SolisCoordinator
 from .energy import consider_energy, sanitize_kwh
 from .entity import SolisEntity, collector_device, epm_device, inverter_device, station_device
-from .migration import async_migrate_devices, async_migrate_entity_ids, legacy_name_from_entry
+from .migration import (
+    async_migrate_devices,
+    async_migrate_entity_ids,
+    detach_device,
+    legacy_name_from_entry,
+)
 from .models import CollectorSnapshot, InverterSnapshot, SolisSnapshot, StationSnapshot
 from .parser import plant_period_start, resolve_zone
 
@@ -987,4 +992,4 @@ def _remove_missing(
     for device in dr.async_entries_for_config_entry(registry, entry_id):
         identifier = next((item[1] for item in device.identifiers if item[0] == DOMAIN), None)
         if identifier is not None and identifier not in present:
-            registry.async_update_device(device.id, remove_config_entry_id=entry_id)
+            detach_device(registry, device.id, entry_id)

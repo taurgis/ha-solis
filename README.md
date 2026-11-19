@@ -9,10 +9,11 @@ Home Assistant integration for Solis inverters.
 - Energy dashboard ready: lifetime production, battery, grid import and
   export, and house load are `total_increasing` energy sensors.
 
-It works with any Solis inverter on a SolisCloud account: grid and hybrid,
-single phase and three phase, with or without a battery. The plant, the data
-logger and an export power manager are devices too when the account has
-them. Inverter control and the legacy Ginlong portal API are not supported.
+It works with Solis inverters read through SolisCloud or a supported local
+stick: grid and hybrid, single phase and three phase, with or without a
+battery. The plant, the data logger and an export power manager are
+devices too when the account has them. Inverter control and the legacy
+Ginlong portal API are not supported.
 
 This is a rewrite of [hultenvp/solis-sensor](https://github.com/hultenvp/solis-sensor)
 (Apache-2.0). It is not a GitHub fork. See [NOTICE](NOTICE). It uses the same
@@ -34,6 +35,7 @@ the inverter. Find your stick below.
 | Solarman / IGEN stick: DLS-W, DLS-L, LSW-3, LSE-3 | Local stick (or Local stick with SolisCloud backup) | Found automatically on your network while the inverter is producing. |
 | Solis S2-WL-ST (Wi-Fi + LAN) | Local stick, after Modbus TCP is enabled on the stick firmware | Solis's own guide says enabling Modbus TCP disconnects the stick from SolisCloud. Some firmware builds are reported to allow both. If you want to keep SolisCloud, check [the S2-WL-ST notes](docs/research/s2-wl-st.md) first. |
 | Solis S3-class Wi-Fi stick whose only local service is a status web page | Local stick, logger type **Solis stick with only a status web page** | Only what the page shows, refreshed by the stick about every five minutes. Add SolisCloud as backup for the rest. |
+| Solis S5-WiFi-ST | Local stick, logger type **Solis S5-WiFi-ST (experimental)**, or SolisCloud | Solis does not officially support local access, and newer firmware closes port 502. Add SolisCloud as backup. |
 | RS485 gateway (Waveshare, Elfin EW11, USR) wired to the inverter | Local stick, logger type **RS485 gateway** | Pick Modbus TCP mode or transparent mode to match the gateway setting. |
 | S4-WIFI-ST, S6 USB, 4G/GPRS sticks, or you are not sure | SolisCloud | These sticks have no local port. SolisCloud works with every stick. |
 

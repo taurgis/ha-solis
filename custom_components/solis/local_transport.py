@@ -560,7 +560,9 @@ class SolisLocalTransport:
                     reason=REASON_UNSUPPORTED,
                 ) from err
             except SolisLoggerOffline as err:
-                await self._drop()
+                if not getattr(client, "late_reply_pending", False):
+                    # A Modbus TCP client keeps an aligned socket after one timeout.
+                    await self._drop()
                 last_offline = err
                 if self._protocol or not err.connected:
                     raise
@@ -973,12 +975,31 @@ def _degraded_cloud(
         ),
         data_source=DATA_DEGRADED,
     )
+    if local.cloud_fill:
+        # This reader publishes the cloud plant, logger and EPM devices anyway.
+        return replace(
+            cloud,
+            inverters=(inverter,),
+            source=DATA_DEGRADED,
+            fetched_at=datetime.now(UTC),
+            # The cloud plant is not this entry's local device set, so nothing may be pruned.
+            partial=True,
+        )
+    # A Modbus or Solarman entry owns only the local placeholder plant and its stick.
+    # Publishing the cloud plant, loggers and EPMs here would create devices that the
+    # next local read removes again.
+    base = local.last_snapshot or local_snapshot(
+        replace(inverter, station_id=LOCAL_STATION), "", datetime.now(UTC)
+    )
+    if previous is None:
+        inverter = replace(inverter, station_id=LOCAL_STATION)
     return replace(
-        cloud,
+        base,
         inverters=(inverter,),
+        alarms=cloud.alarms,
+        collectors=base.collectors if local.last_snapshot else (),
         source=DATA_DEGRADED,
         fetched_at=datetime.now(UTC),
-        # The cloud plant is not this entry's local device set, so nothing may be pruned.
         partial=True,
     )
 

@@ -83,6 +83,10 @@ async def test_rate_limit_and_server_errors(solis_server: tuple[object, str]) ->
         state.mode = "abnormal"  # type: ignore[attr-defined]
         with pytest.raises(SolisDataError):
             await client.user_station_list()
+        # Code 1 "Communication error" is retried like a gateway failure.
+        state.mode = "busy"  # type: ignore[attr-defined]
+        with pytest.raises(SolisServerError):
+            await client.user_station_list()
 
 
 async def test_timeout(solis_server: tuple[object, str]) -> None:

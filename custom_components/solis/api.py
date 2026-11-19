@@ -389,8 +389,14 @@ def _raise_for_code(path: str, payload: dict[str, Any]) -> None:
     message = _message(payload) or code
     if code in _AUTH_CODES:
         raise SolisAuthError(f"{path} {code}: {message}", code=code)
-    if code == "1" or "数据异常" in message:
+    if "数据异常" in message:
         raise SolisDataError(f"{path} {code}: {message}", code=code)
+    if code == "429":
+        raise SolisRateLimitError(f"{path} rate limited: {message}", retry_after=2.0)
+    if code == "1":
+        # Solis documents code 1 as "Communication error. Please refresh and try
+        # again later": a platform hiccup, retried and held like a 5xx.
+        raise SolisServerError(f"{path} {code}: {message}", code=code)
     raise SolisCloudError(f"{path} {code}: {message}", code=code)
 
 

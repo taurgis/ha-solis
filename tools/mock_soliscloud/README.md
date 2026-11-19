@@ -8,7 +8,7 @@ PYTHONPATH=.:tools .venv/bin/python -m mock_soliscloud --port 8765
 ```
 
 `POST /__control` with `{"mode": "server_error"}` (also `auth_error`,
-`clock`, `rate_limit`, `timeout`, `abnormal`) is a test hook. `GET /__expected`
+`clock`, `rate_limit`, `timeout`, `abnormal`, `busy`) is a test hook. `GET /__expected`
 returns the watts and kilowatt-hours the integration should show.
 
 The fixture catalog covers a single-phase grid inverter, a three-phase hybrid

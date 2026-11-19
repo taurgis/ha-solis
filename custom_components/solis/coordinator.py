@@ -320,7 +320,14 @@ class SolisCoordinator(DataUpdateCoordinator[SolisSnapshot]):
         self._stick_rejections = 0
         self._stick_rejected_since: float | None = None
         self._outage_logged = False
-        self._open_issues: set[str] = set()
+        # Logger repairs survive a reload; track the ones already open so the
+        # next asleep or offline poll can still clear them.
+        issues = ir.async_get(hass)
+        self._open_issues: set[str] = {
+            issue_id
+            for key in _LOGGER_ISSUES
+            if issues.async_get_issue(DOMAIN, issue_id := f"{key}_{entry.entry_id}") is not None
+        }
         self._transient_failures = 0
         self._asleep_polls = 0
         self._degraded_since: float | None = None

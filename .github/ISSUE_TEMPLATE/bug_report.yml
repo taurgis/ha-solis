@@ -22,7 +22,7 @@ body:
     attributes:
       label: Integration version
       description: HACS shows it, or `version` in custom_components/solis/manifest.json.
-      placeholder: "0.2.0"
+      placeholder: "0.3.0"
     validations:
       required: true
   - type: dropdown
