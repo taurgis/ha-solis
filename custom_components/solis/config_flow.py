@@ -737,9 +737,20 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
                 return self.async_abort(reason="already_configured")
             base = dict(entry.data)
             base.update(logger_data)
+            options = dict(entry.options)
+            if (
+                str(entry.data.get(CONF_SOURCE, SOURCE_CLOUD)) == SOURCE_CLOUD
+                and int(options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL))
+                == DEFAULT_SCAN_INTERVAL
+            ):
+                # A cloud entry (often a migrated solis-sensor one) gaining a stick:
+                # the five-minute cloud default would leave the stick idle. A poll
+                # interval the user chose stays.
+                options[CONF_SCAN_INTERVAL] = DEFAULT_LOCAL_SCAN_INTERVAL
             return self.async_update_reload_and_abort(
                 entry,
                 data=base,
+                options=options,
                 unique_id=unique,
             )
         await self.async_set_unique_id(unique)

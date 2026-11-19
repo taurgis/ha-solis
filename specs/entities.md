@@ -50,7 +50,11 @@ is `docs/entities.md`; this spec holds the rules behind it.
   if a later poll omits them. Phase entities of a single-phase inverter
   (`acOutputType` 0) are disabled by default. A
   device missing from a *complete* poll is removed; a partial poll or an
-  unconfirmed empty inverter list keeps it.
+  unconfirmed empty inverter list keeps it. A complete *local* poll removes
+  only logger devices: plants, EPMs and other inverters are SolisCloud's to
+  report, so a cloud entry (a migrated one included) that gains a stick or
+  switches to `local` keeps them and their entities until a SolisCloud poll
+  drops them or the user deletes the device.
 - **No invented data.** No integration-derived energy sensors (HA can derive
   them from power sensors) and no `energy_storage` device class — see the
   goal's non-goals.

@@ -1200,5 +1200,12 @@ def _remove_missing(
     present.update(f"epm:{epm.serial}" for epm in data.epms)
     for device in dr.async_entries_for_config_entry(registry, entry_id):
         identifier = next((item[1] for item in device.identifiers if item[0] == DOMAIN), None)
-        if identifier is not None and identifier not in present:
-            detach_device(registry, device.id, entry_id)
+        if identifier is None or identifier in present:
+            continue
+        if data.source != "cloud" and not identifier.startswith("collector:"):
+            # A local read only sees its own inverter and logger. Plants, meters and
+            # other inverters came from SolisCloud (a cloud entry that gained a stick,
+            # or a migrated solis-sensor entry): keep them and their history until a
+            # SolisCloud read drops them or the user deletes the device.
+            continue
+        detach_device(registry, device.id, entry_id)

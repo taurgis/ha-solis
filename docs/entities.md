@@ -15,7 +15,10 @@
 
 An inverter, logger or export meter that disappears from a complete poll is
 removed. A partial poll, or an empty inverter list that has not repeated,
-keeps the previous devices. You can also delete a device yourself when the
+keeps the previous devices. A poll of the local stick only removes loggers:
+plants, export meters and other inverters only SolisCloud reports stay, with
+their history, when a SolisCloud entry gains a stick or switches to the stick
+alone. You can also delete a device yourself when the
 latest poll no longer contains it.
 
 ## Inverter

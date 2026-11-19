@@ -134,6 +134,22 @@ at startup appears later.
 The control API is not migrated. A repair explains that. Battery schedules
 already stored on the inverter are left as they are.
 
+### Moving a migrated entry to a local stick
+
+A migrated entry reads SolisCloud. To read the stick on your network
+instead, open the entry and choose **Reconfigure → Local stick**. The entry
+becomes *Local stick with SolisCloud backup*. To drop SolisCloud as well,
+choose **Reconfigure → Connection → Local stick only** afterwards. Entity IDs
+and history stay on the same entities, because local and SolisCloud readings
+share the same unique IDs. A poll interval still on the SolisCloud default of
+300 seconds moves to 60 seconds.
+
+With the stick only, sensors that just SolisCloud reports (the plant
+counters such as daily grid import, and the lifetime grid and load totals)
+stay in Home Assistant with their history but become unavailable. They come
+back if you switch the connection to SolisCloud again, or you can delete the
+plant device yourself.
+
 ## More
 
 - [Use cases](docs/use-cases.md) and [example automations](docs/examples.md)

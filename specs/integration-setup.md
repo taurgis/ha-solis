@@ -72,7 +72,8 @@ documentation for users is `docs/configuration.md`.
 - **Reconfigure** is a menu: `reconfigure_cloud` (URL, key; on a local entry
   it adds SolisCloud and becomes `both` after choosing plants), `stations`
   (not on a local entry), `logger` (the logger step prefilled; a cloud entry
-  that gains a logger becomes `both`), and `connection` when the entry has
+  that gains a logger becomes `both`, and a poll interval still on the cloud
+  default of 300 s becomes the local default of 60 s), and `connection` when the entry has
   both a key and a logger host (switch `cloud` / `local` / `both`; the
   other source's fields stay). Entities are not deleted. A logger id another
   entry already uses is refused.

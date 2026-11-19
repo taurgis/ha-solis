@@ -92,7 +92,7 @@ Reconfigure on the Solis entry opens a menu:
 | --- | --- |
 | SolisCloud account | API URL, key ID or secret. Leave the secret empty to keep the saved one. On a local-only entry this adds SolisCloud as a backup and then asks for the plants. |
 | Plants | Which plants a SolisCloud entry reads. Not shown on a local-only entry. |
-| Local stick | The stick form, filled in with the saved values. A SolisCloud-only entry that gains a stick becomes local with SolisCloud backup. An empty web password keeps the saved one, but only for the same address. |
+| Local stick | The stick form, filled in with the saved values. A SolisCloud-only entry that gains a stick becomes local with SolisCloud backup, and a poll interval still on the SolisCloud default of 300 seconds moves to the local default of 60. An empty web password keeps the saved one, but only for the same address. |
 | Connection | Switch between SolisCloud only, Local stick only and Local stick with SolisCloud backup. Shown when the entry has both a key and a stick. The settings of the source you stop using are kept. |
 
 Each change reloads the entry.

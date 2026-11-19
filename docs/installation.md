@@ -63,5 +63,10 @@ old copy, install this one and restart. The existing config entry migrates,
 and entity IDs are kept when the old registry rows are still present. See
 the migration section in the [README](https://github.com/taurgis/ha-solis#migrating-from-hultenvpsolis-sensor).
 
+The migrated entry reads SolisCloud. To move it to a local stick, with or
+without SolisCloud as a backup, use **Reconfigure → Local stick** and then,
+for the stick alone, **Reconfigure → Connection**. Entity IDs and history are
+kept. See [Reconfigure](configuration.md#reconfigure).
+
 Do not run both at once. Installing this under another domain would not
 keep recorder history.
