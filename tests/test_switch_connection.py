@@ -209,3 +209,57 @@ async def test_web_page_stick_swapped_for_a_modbus_stick(
     finally:
         await hass.config_entries.async_unload(entry.entry_id)
         await s2.close()
+
+
+async def test_both_entry_shows_the_plant_while_the_stick_is_dark(
+    hass: HomeAssistant, solis_server: tuple[Any, str]
+) -> None:
+    """A dark stick on a producing inverter publishes SolisCloud, plant included.
+
+    The next local read keeps the plant: only loggers are pruned on a local read.
+    """
+    _state, url = solis_server
+    emulator = StickEmulator(StickState(tcp_port=8899, registers=_registers()))
+    await emulator.start()
+    try:
+        created = await start_user(hass, "both")
+        form = await hass.config_entries.flow.async_configure(
+            created["flow_id"], {"api_url": url, "key_id": KEY_ID, "key_secret": SECRET}
+        )
+        form = await hass.config_entries.flow.async_configure(
+            form["flow_id"], {"station_ids": [NORTH]}
+        )
+        created = await hass.config_entries.flow.async_configure(
+            form["flow_id"],
+            logger_form(logger_kind="solarman", logger_host="127.0.0.1", logger_serial=str(SERIAL)),
+        )
+        entry = created["result"]
+        await hass.async_block_till_done()
+        coordinator = entry.runtime_data
+        assert coordinator.data.source == "local"
+        registry = er.async_get(hass)
+        plant_unique = f"{NORTH}_grid_import_today"
+
+        await emulator.apply({"night": True})
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+        assert coordinator.data.source == "degraded"
+        plant_entity = registry.async_get_entity_id("sensor", DOMAIN, plant_unique)
+        assert plant_entity is not None
+        state = hass.states.get(plant_entity)
+        assert state is not None and state.state == "1.5"
+        assert f"station:{NORTH}" in _identifiers(hass, entry)
+        # The stick stays the only logger: SolisCloud's would be pruned again.
+        assert {i for i in _identifiers(hass, entry) if i.startswith("collector:")} == {
+            f"collector:{SERIAL}"
+        }
+
+        await emulator.apply({"night": False})
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+        assert coordinator.data.source == "local"
+        assert registry.async_get_entity_id("sensor", DOMAIN, plant_unique) == plant_entity
+        assert f"station:{NORTH}" in _identifiers(hass, entry)
+    finally:
+        await hass.config_entries.async_unload(entry.entry_id)
+        await emulator.close()

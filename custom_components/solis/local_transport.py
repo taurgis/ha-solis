@@ -985,19 +985,23 @@ def _degraded_cloud(
             # The cloud plant is not this entry's local device set, so nothing may be pruned.
             partial=True,
         )
-    # A Modbus or Solarman entry owns only the local placeholder plant and its stick.
-    # Publishing the cloud plant, loggers and EPMs here would create devices that the
-    # next local read removes again.
+    # A Modbus or Solarman entry keeps its own stick: the next local read prunes
+    # loggers it does not see, so SolisCloud's loggers would come and go. A local read
+    # keeps plants and EPMs, so SolisCloud's are published and the plant day counters
+    # stay current while the stick is out.
     base = local.last_snapshot or local_snapshot(
         replace(inverter, station_id=LOCAL_STATION), "", datetime.now(UTC)
     )
     if previous is None:
         inverter = replace(inverter, station_id=LOCAL_STATION)
+    own = {station.station_id for station in base.stations}
     return replace(
         base,
+        stations=(*base.stations, *(s for s in cloud.stations if s.station_id not in own)),
         inverters=(inverter,),
         alarms=cloud.alarms,
         collectors=base.collectors if local.last_snapshot else (),
+        epms=cloud.epms,
         source=DATA_DEGRADED,
         fetched_at=datetime.now(UTC),
         partial=True,
