@@ -254,6 +254,48 @@ async def test_closing_the_session_can_shut_port_502(socket_enabled: None) -> No
     assert err.value.refused
 
 
+async def test_a_late_reply_does_not_close_the_session(socket_enabled: None) -> None:
+    """One timeout keeps the socket, so firmware 1001318c is not wedged by a close.
+
+    The late reply to the first request is skipped and the next read gets its own.
+    """
+    emulator, port = await _s2_port(
+        StickState(kind="s2", tcp_port=0, udp_port=0, close_disables_port=True)
+    )
+    client = ModbusTcpClient("127.0.0.1", port=port, timeout=0.3, gap=0)
+    try:
+        emulator.state.late_once = 0.6
+        with pytest.raises(SolisLoggerOffline):
+            await client.read_input(1, 3004, 1)
+        assert client.connected
+        assert client.late_reply_pending
+        await asyncio.sleep(0.4)
+        words = await client.read_input(1, 3004, 2)
+        assert len(words) == 2
+        assert not client.late_reply_pending
+        assert not emulator.state.port_closed
+    finally:
+        await client.close()
+        await emulator.close()
+
+
+async def test_a_second_timeout_in_a_row_closes_the_session(socket_enabled: None) -> None:
+    """A socket that never answers is half-open: drop it after the second timeout."""
+    emulator, port = await _s2_port(StickState(kind="s2", tcp_port=0, udp_port=0))
+    client = ModbusTcpClient("127.0.0.1", port=port, timeout=0.2, gap=0)
+    try:
+        emulator.state.slow = 5.0
+        with pytest.raises(SolisLoggerOffline):
+            await client.read_input(1, 3004, 1)
+        assert client.connected
+        with pytest.raises(SolisLoggerOffline):
+            await client.read_input(1, 3004, 1)
+        assert not client.connected
+    finally:
+        await client.close()
+        await emulator.close()
+
+
 async def test_closed_port_uses_cloud_without_zeroing_power(socket_enabled: None) -> None:
     """TCP disabled is degraded, not the night-time zero."""
     local = SolisLocalTransport(

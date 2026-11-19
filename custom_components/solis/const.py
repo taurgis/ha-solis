@@ -123,7 +123,9 @@ ISSUE_LOGGER_WEB = "logger_web"
 # STALE_AFTER, are a sustained outage rather than a blip.
 OUTAGE_POLLS = 3
 
-# Repairs opened by a poll. Unload deletes these. Legacy control is not one
+# Repairs opened by a poll. Removing the entry deletes these; unload keeps them.
+# ISSUE_AUTH, ISSUE_ABNORMAL and ISSUE_OUTAGE are no longer opened (no strings):
+# they are listed so repairs left by older releases are cleared. Legacy control is not one
 # of them: it records a migration choice and stays until the user dismisses it.
 POLL_REPAIRS = (
     ISSUE_AUTH,

@@ -135,7 +135,12 @@ class StationSnapshot:
 
 @dataclass(frozen=True, slots=True)
 class AlarmSnapshot:
-    """One alarm row. State ``0`` is still pending."""
+    """One alarm row.
+
+    State ``0`` is "pending": no one has handled it in SolisCloud yet. The API
+    document's own sample has a pending row with an end time, so an alarm with
+    ``alarmEndTime`` in the past has stopped even while it stays pending.
+    """
 
     alarm_id: str
     serial: str
@@ -146,11 +151,14 @@ class AlarmSnapshot:
     advice: str
     state: str
     began_at: datetime | None
+    ended_at: datetime | None = None
 
     @property
     def active(self) -> bool:
-        """Return whether Solis still marks the alarm pending."""
-        return self.state == "0"
+        """Return whether the alarm is pending and has not ended."""
+        if self.state != "0":
+            return False
+        return self.ended_at is None or self.ended_at > datetime.now(UTC)
 
 
 @dataclass(frozen=True, slots=True)

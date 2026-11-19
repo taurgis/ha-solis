@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, cast
 
+from homeassistant.const import MAJOR_VERSION, MINOR_VERSION
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 
@@ -138,6 +139,19 @@ def _match(unique_id: str, names: set[str], serials: set[str]) -> tuple[str, str
     return None
 
 
+def detach_device(registry: dr.DeviceRegistry, device_id: str, entry_id: str) -> None:
+    """Take a device away from this entry.
+
+    From 2026.8 a device belongs to one config entry and ``remove_config_entry_id``
+    is deprecated, so the device is removed. Older cores may share it with
+    another entry and only drop this one.
+    """
+    if (MAJOR_VERSION, MINOR_VERSION) >= (2026, 8):
+        registry.async_remove_device(device_id)
+        return
+    registry.async_update_device(device_id, remove_config_entry_id=entry_id)
+
+
 def device_for_identifier(
     registry: dr.DeviceRegistry,
     identifier: tuple[str, str],
@@ -182,7 +196,7 @@ def async_adopt_inverter_serial(
         return
     taken = device_for_identifier(devices, (DOMAIN, f"inverter:{new_serial}"), entry_id)
     if taken is not None and taken.id != current.id:
-        devices.async_update_device(current.id, remove_config_entry_id=entry_id)
+        detach_device(devices, current.id, entry_id)
         return
     identifiers = set(current.identifiers)
     identifiers.discard((DOMAIN, f"inverter:{old_serial}"))
@@ -217,7 +231,7 @@ def async_migrate_devices(hass: HomeAssistant, entry_id: str, serials: set[str])
             )
             continue
         if current.id != legacy.id:
-            registry.async_update_device(legacy.id, remove_config_entry_id=entry_id)
+            detach_device(registry, legacy.id, entry_id)
 
 
 def legacy_name_from_entry(data: Mapping[str, Any]) -> str:

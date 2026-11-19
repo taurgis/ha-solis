@@ -49,7 +49,7 @@ sample is stale or the poll failed. `0` means a fresh offline reading.
 
 ## Notify on an inverter alarm
 
-The alarm binary sensor turns on while SolisCloud has a pending alarm. Its
+The alarm binary sensor turns on while SolisCloud has a pending alarm that has not ended. Its
 `code`, `message` and `advice` attributes describe it. They can be missing
 when only the inverter status says "alarm", so the template has a fallback.
 

@@ -27,7 +27,7 @@
       },
       "stations": {
         "title": "Installaties kiezen",
-        "description": "Kies de SolisCloud-installaties die je wilt toevoegen.",
+        "description": "Kies de SolisCloud-installaties die je wilt uitlezen.",
         "data": {
           "station_ids": "Installaties"
         },
@@ -105,7 +105,7 @@
       },
       "reauth_confirm": {
         "title": "SolisCloud-gegevens vernieuwen",
-        "description": "De API-sleutel is geweigerd. Vul een geldige sleutel-ID en geheim in.",
+        "description": "De API-sleutel werd geweigerd. Vul het geheim opnieuw in, of een nieuwe sleutel-ID en geheim van hetzelfde SolisCloud-account.",
         "data": {
           "key_id": "API-sleutel-ID",
           "key_secret": "API-sleutelgeheim"
@@ -170,7 +170,7 @@
       "logger_tcp_disabled": "Poort 502 van de stick is gesloten. Zet Modbus TCP aan in de stick of in de SolisCloud-app. Sommige firmware sluit de poort; zie {docs_url} voor versies die hem open houden.",
       "logger_modbus_silent": "De stick accepteerde de verbinding maar stuurde geen gegevens. Vaak staat hij maar één Modbus-client toe, dus koppel andere clients los. Zie {docs_url} voor firmware die er meer toestaat.",
       "logger_identity": "De stick gaf geen vaste ID door. Vul het omvormerserienummer in, of het loggerserienummer onder Geavanceerde opties.",
-      "logger_gateway": "Niets antwoordde op dat adres en die poort. Controleer het IP-adres en de poort van de gateway (502 voor Modbus TCP, 8899, 26 of 23 voor transparante modus).",
+      "logger_gateway": "Niets antwoordde op dat adres en die poort. Controleer het IP-adres en de poort van de gateway (502 voor Modbus TCP; 8899, 4196, 26, 23 of 6638 voor transparante modus).",
       "logger_wrong_protocol": "Het apparaat antwoordde in een ander formaat. Kies de gateway in Modbus TCP-modus als hij naar Modbus TCP omzet, of transparante modus als hij de seriële gegevens doorgeeft.",
       "logger_wrong_slave": "Er antwoordde een andere Modbus-slave. Stel onder Geavanceerde opties de slave van de omvormer in (Solis-standaard: 1).",
       "logger_unsupported_map": "Het apparaat antwoordde, maar niet met gegevens van een Solis-omvormer. Controleer de slave, en of de gateway op de RS485-poort van de omvormer is aangesloten.",
@@ -181,11 +181,12 @@
     },
     "abort": {
       "already_configured": "Dit SolisCloud-account of deze stick is al geconfigureerd.",
+      "cannot_connect": "SolisCloud is niet bereikbaar om de installaties te laden. Controleer of Home Assistant het internet kan bereiken en probeer het opnieuw.",
+      "cloud_entry_exists": "Dit SolisCloud-account heeft al een item met alleen SolisCloud. Open dat item en kies Herconfigureren → Lokale stick om de stick toe te voegen.",
+      "not_solis_logger": "Dat apparaat is geen Solarman-stick.",
       "reauth_successful": "Aanmelding vernieuwd.",
       "reconfigure_successful": "Configuratie bijgewerkt.",
-      "cannot_connect": "SolisCloud is niet bereikbaar om de installaties te laden. Controleer of Home Assistant het internet kan bereiken en probeer het opnieuw.",
-      "not_solis_logger": "Dat apparaat is geen Solarman-stick.",
-      "wrong_account": "Die API-sleutel hoort bij een ander account."
+      "wrong_account": "Die API-sleutel ziet de installaties van dit item niet en hoort dus bij een ander account. Gebruik Herconfigureren om van account te wisselen."
     }
   },
   "issues": {
@@ -203,7 +204,7 @@
     },
     "logger_locked": {
       "title": "De lokale logger pauzeert het uitlezen",
-      "description": "De logger accepteert een verbinding en reset die daarna. Op een DLS-L volgt dat op te veel sessies of een uitlezing van een register dat de omvormer niet heeft. Op een S2-WL-ST staat vaak maar één Modbus-client toe, en firmware 1001318c kan poort 502 enkele minuten negeren nadat een verbinding sluit. Het trekt meestal binnen ongeveer 10 minuten bij, of na een stroomcyclus van de omvormer. SolisCloud-metingen worden gebruikt zolang er een vers cloud-sample is. De integratie probeert lokaal vanzelf opnieuw, eerst na minstens 10 seconden en daarna minder vaak, tot ongeveer 10 minuten. Een kleine ochtendmeting van het vermogen betekent dat de omvormer produceert."
+      "description": "De logger accepteert een verbinding en reset die daarna. Op een DLS-L volgt dat op te veel sessies of een uitlezing van een register dat de omvormer niet heeft. Op een S2-WL-ST staat de stick vaak maar één Modbus-client toe, en firmware 1001318c kan poort 502 enkele minuten negeren nadat een verbinding sluit. Het trekt meestal binnen ongeveer 10 minuten bij, of na een stroomcyclus van de omvormer. SolisCloud-metingen worden gebruikt zolang er een vers cloud-sample is. De integratie probeert lokaal vanzelf opnieuw, eerst na minstens 10 seconden en daarna minder vaak, tot ongeveer 10 minuten. Een kleine ochtendmeting van het vermogen betekent dat de omvormer produceert."
     },
     "logger_tcp_disabled": {
       "title": "Modbus TCP van de S2-WL-ST is uitgeschakeld",
@@ -312,7 +313,7 @@
         "name": "SOC geforceerd laden"
       },
       "force_discharge_soc": {
-        "name": "SOC onderspanning"
+        "name": "SOC overontlading"
       },
       "phase_voltage": {
         "name": "Fase {index} spanning"
@@ -321,7 +322,7 @@
         "name": "Fase {index} stroom"
       },
       "phase_power": {
-        "name": "Fase {index} vermogen"
+        "name": "Net fase {index} vermogen"
       },
       "string_voltage": {
         "name": "String {index} spanning"
@@ -467,11 +468,12 @@
         },
         "data_description": {
           "scan_interval": "Cloudgegevens veranderen ongeveer elke vijf minuten, dus SolisCloud wordt hooguit elke 60 seconden uitgelezen (standaard 300). Een lokale stick gebruikt standaard 60 en kan tot 30 omlaag.",
-          "time_zone": "Automatisch gebruikt de tijdzone van Home Assistant als die binnen een uur van de Solis-offset van de installatie ligt. Offset van de installatie gebruikt altijd de Solis-offset. Je kunt ook een tijdzone typen, zoals Europe/Amsterdam."
+          "time_zone": "Automatisch gebruikt de tijdzone van de installatie uit SolisCloud als die er een meestuurt, anders de tijdzone van Home Assistant als die binnen een uur van de offset van de installatie ligt. Offset van de installatie gebruikt altijd de Solis-offset. Je kunt ook een tijdzone typen, zoals Europe/Amsterdam."
         },
         "sections": {
           "advanced": {
             "name": "Geavanceerde opties",
+            "description": "Alleen voor SolisCloud. Een lokale stick gebruikt deze niet.",
             "data": {
               "request_timeout": "Time-out per verzoek (seconden)",
               "endpoint_interval": "Minimale tussentijd per endpoint (seconden)"

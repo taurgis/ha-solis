@@ -27,7 +27,7 @@
       },
       "stations": {
         "title": "Choose plants",
-        "description": "Select the SolisCloud plants to add.",
+        "description": "Select the SolisCloud plants to read.",
         "data": {
           "station_ids": "Plants"
         },
@@ -105,7 +105,7 @@
       },
       "reauth_confirm": {
         "title": "Refresh SolisCloud credentials",
-        "description": "The API key was rejected. Enter a current key ID and secret.",
+        "description": "The API key was rejected. Enter the secret again, or a new key ID and secret from the same SolisCloud account.",
         "data": {
           "key_id": "API key ID",
           "key_secret": "API key secret"
@@ -170,7 +170,7 @@
       "logger_tcp_disabled": "Port 502 on the stick is closed. Enable Modbus TCP in the stick or in the SolisCloud app. Some firmware closes the port; see {docs_url} for versions that keep it open.",
       "logger_modbus_silent": "The stick accepted the connection but sent no data. It often allows only one Modbus client, so disconnect any other one. See {docs_url} for firmware that allows more.",
       "logger_identity": "The stick did not report a stable ID. Enter the inverter serial, or the logger serial under Advanced options.",
-      "logger_gateway": "Nothing answered on that address and port. Check the gateway IP and port (502 for Modbus TCP, 8899, 26 or 23 for transparent mode).",
+      "logger_gateway": "Nothing answered on that address and port. Check the gateway IP and port (502 for Modbus TCP; 8899, 4196, 26, 23 or 6638 for transparent mode).",
       "logger_wrong_protocol": "The device answered in a different format. Choose the gateway in Modbus TCP mode if it converts to Modbus TCP, or transparent mode if it passes the serial data through.",
       "logger_wrong_slave": "A different Modbus slave answered. Set the slave the inverter uses under Advanced options (Solis default: 1).",
       "logger_unsupported_map": "The device answered, but not with Solis inverter data. Check the slave, and that the gateway is wired to the inverter's RS485 port.",
@@ -181,11 +181,12 @@
     },
     "abort": {
       "already_configured": "This SolisCloud account or stick is already configured.",
+      "cannot_connect": "Could not reach SolisCloud to load the plants. Check that Home Assistant can reach the internet and try again.",
+      "cloud_entry_exists": "This SolisCloud account already has a SolisCloud-only entry. Open that entry and use Reconfigure → Local stick to add the stick.",
+      "not_solis_logger": "That device is not a Solarman stick.",
       "reauth_successful": "Authentication refreshed.",
       "reconfigure_successful": "Configuration updated.",
-      "cannot_connect": "Could not reach SolisCloud to load the plants. Check that Home Assistant can reach the internet and try again.",
-      "not_solis_logger": "That device is not a Solarman stick.",
-      "wrong_account": "That API key belongs to a different account."
+      "wrong_account": "That API key cannot see the plants this entry reads, so it belongs to a different account. To switch accounts, use Reconfigure."
     }
   },
   "issues": {
@@ -321,7 +322,7 @@
         "name": "Phase {index} current"
       },
       "phase_power": {
-        "name": "Phase {index} power"
+        "name": "Grid phase {index} power"
       },
       "string_voltage": {
         "name": "String {index} voltage"
@@ -467,11 +468,12 @@
         },
         "data_description": {
           "scan_interval": "Cloud data changes about every five minutes, so SolisCloud only polls every 60 seconds or slower (default 300). A local stick defaults to 60 and can go down to 30.",
-          "time_zone": "Automatic uses the Home Assistant timezone when it is within an hour of the plant offset from Solis. Plant offset always uses the Solis offset. You can also type a timezone such as Europe/London."
+          "time_zone": "Automatic uses the plant's own timezone from SolisCloud when it reports one, otherwise the Home Assistant timezone when that is within an hour of the plant offset. Plant offset always uses the Solis offset. You can also type a timezone such as Europe/London."
         },
         "sections": {
           "advanced": {
             "name": "Advanced options",
+            "description": "SolisCloud only. A local stick does not use these.",
             "data": {
               "request_timeout": "Request timeout (seconds)",
               "endpoint_interval": "Minimum gap per endpoint (seconds)"

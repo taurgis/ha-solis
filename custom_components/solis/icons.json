@@ -18,9 +18,24 @@
           "0.001": "mdi:battery-arrow-up"
         }
       },
-      "battery_soh": { "default": "mdi:battery-heart" },
-      "force_charge_soc": { "default": "mdi:battery-arrow-up" },
-      "force_discharge_soc": { "default": "mdi:battery-arrow-down" }
+      "battery_soh": {
+        "default": "mdi:battery-heart"
+      },
+      "force_charge_soc": {
+        "default": "mdi:battery-arrow-up"
+      },
+      "force_discharge_soc": {
+        "default": "mdi:battery-arrow-down"
+      },
+      "data_source": {
+        "default": "mdi:swap-horizontal",
+        "state": {
+          "local": "mdi:lan",
+          "cloud": "mdi:cloud-outline",
+          "asleep": "mdi:weather-night",
+          "degraded": "mdi:lan-disconnect"
+        }
+      }
     },
     "binary_sensor": {
       "alarm": {

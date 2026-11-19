@@ -110,10 +110,11 @@ def parse_epoch(value: Any) -> datetime | None:
 
 
 def parse_offset_hours(value: Any) -> float | None:
-    """Parse ``8``, ``-9.0`` or ``UTC+08:00`` into hours east of UTC."""
+    """Parse ``8``, ``-9.0``, ``UTC+08:00`` or ``(UTC+10:00)`` into hours east of UTC."""
     if is_missing(value):
         return None
-    text = str(value).strip().upper()
+    # stationDetail's ``timeZoneStr`` comes in brackets, e.g. "(UTC+10:00)".
+    text = str(value).strip().strip("()").replace(" ", "").upper()
     if text.startswith("UTC"):
         rest = text[3:]
         if not rest:
@@ -462,6 +463,7 @@ def parse_alarm(row: dict[str, Any]) -> AlarmSnapshot:
         advice=str(first(row, "advice") or ""),
         state=str(first(row, "state") if first(row, "state") is not None else ""),
         began_at=parse_epoch(first(row, "alarmBeginTime", "alarmBegintime")),
+        ended_at=parse_epoch(first(row, "alarmEndTime", "alarmEndtime")),
     )
 
 

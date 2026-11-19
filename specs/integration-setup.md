@@ -63,8 +63,10 @@ documentation for users is `docs/configuration.md`.
   key on a second entry is not blocked when either entry has a logger.
   The same key or stick cannot be added twice; a duplicate updates the host.
 - **Reauth** `reauth_confirm` replaces the key id and secret and refuses a
-  key from another account. The account is told by the key id stored on the
-  entry, because the unique id of an entry with a stick is the stick's.
+  key from another account. A new key id (a rotated key) is the same account
+  when it still sees every plant the entry reads; a SolisCloud-only entry
+  then takes the new key id as its unique id. Reconfigure moves the unique id
+  of a SolisCloud-only entry with its key id the same way.
   `reauth_web` replaces the web password of a web-page stick. An entry with
   both a key and a web-page stick gets a `reauth` menu to pick which.
 - **Reconfigure** is a menu: `reconfigure_cloud` (URL, key; on a local entry

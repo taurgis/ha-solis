@@ -54,9 +54,14 @@ serial in the setup form if you want the entity ids to match SolisCloud.
 This integration therefore sends Modbus TCP function 4 (input registers) and,
 only after exception 1 (illegal function), function 3. Slave 1 is tried, then
 2, then 3, unless the form fixes the slave. The 3000-range string map is the
-one checked on the mini. Register 33022 is read only when 3004 itself returns
-exception 2. Registers at 3050 and above, including the eight-byte serial at
-3060-3063, are tried once.
+one checked on the mini. When 3004 answers, the integration also reads type
+register 35000 once on Modbus TCP and RTU links. A hybrid type (20xx) selects
+the 33000-range hybrid map, because some hybrids answer the 3000-range
+registers too. A busy or silent reply, or a string type (10xx), keeps the
+string map. Solarman V5 sticks are not asked for 35000, because a read at
+3050 or above locks the Solis-mini 4G for minutes over V5. Register 33022 is
+read only when 3004 itself returns exception 2. Registers at 3050 and above,
+including the eight-byte serial at 3060-3063, are tried once.
 
 A SolisCloud inverter serial is 15 characters (for example
 `1031000000000001`). Registers 3060-3063 are eight bytes, so they cannot hold

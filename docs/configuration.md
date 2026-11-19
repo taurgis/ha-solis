@@ -73,7 +73,7 @@ Solarman / IGEN sticks are discovered two ways:
 - While you fill in the local stick form, the integration sends the
   Solarman UDP broadcast and lists the sticks that answer.
 - Home Assistant's DHCP watcher notices a device with MAC prefix
-  `E8:FD:F8` or `BC:54:F9` (IGEN). If it answers the Solarman broadcast, a
+  `E8:FD:F8` (the Hi-Flying Wi-Fi module inside IGEN sticks) or `BC:54:F9`. If it answers the Solarman broadcast, a
   **Solarman stick found** card appears under Discovered. Opening it asks
   whether to read it as **Local stick only** or **Local stick with
   SolisCloud backup**, then continues with the forms above.
@@ -100,8 +100,10 @@ Each change reloads the entry.
 ## Reauthentication
 
 When SolisCloud rejects the key, Home Assistant shows a **Reauthenticate**
-card. Enter a current key ID and secret; a key from a different account is
-refused. When a web-page stick rejects its password, the same card asks for
+card. Enter the secret again, or a new key ID and secret from the same
+account (a rotated key gets a new key ID). A key that cannot see the plants
+the entry reads belongs to a different account and is refused; use
+Reconfigure to switch accounts. When a web-page stick rejects its password, the same card asks for
 the stick's web password instead. An entry with both asks which login was
 rejected.
 
@@ -157,5 +159,6 @@ name. Without SolisCloud those values stay empty.
 A SolisCloud-only entry is identified by its API key ID. An entry with a
 stick is identified by the stick: the Solarman serial; `s2:` plus the
 S2-WL-ST or S5 serial (or the inverter serial when no stick serial was
-typed); `tcp:` or `rtu:` plus the gateway label or inverter serial. The
-same stick cannot be added twice.
+typed); `tcp:` or `rtu:` plus the gateway label or inverter serial; `web:`
+plus the inverter serial for a stick with only a status web page. The same
+stick cannot be added twice.

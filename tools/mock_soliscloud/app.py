@@ -232,7 +232,11 @@ def _canned_mode(state: MockState) -> web.Response | None:
         "auth_error": _envelope(
             "I0012", "Incorrect account or password, please re-enter", status=403
         ),
-        "clock": web.Response(status=408, text="clock"),
+        # The real platform answers a skewed Date with a Spring-style JSON 408.
+        "clock": web.json_response(
+            {"status": 408, "error": "Request Timeout", "message": "request time out"},
+            status=408,
+        ),
         "rate_limit": web.Response(status=429, text="slow down", headers={"Retry-After": "0"}),
         "server_error": web.Response(status=502, text="bad gateway"),
         "unavailable": web.Response(status=503, text="unavailable", headers={"Retry-After": "0"}),
@@ -244,6 +248,15 @@ def _canned_mode(state: MockState) -> web.Response | None:
             status=200, text='{"code":"0","data":', content_type="application/json"
         ),
         "abnormal": _envelope("1", "数据异常 请联系管理员", data=None),
+        # Documented transient failure: HTTP 200, success true, code 1, no data.
+        "busy": web.json_response(
+            {
+                "success": True,
+                "code": "1",
+                "msg": "Communication error. Please refresh and try again later",
+                "data": None,
+            }
+        ),
     }
     return modes.get(state.mode)
 

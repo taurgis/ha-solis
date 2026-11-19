@@ -60,6 +60,7 @@ from .migration import (
     async_adopt_inverter_serial,
     async_migrate_devices,
     async_migrate_entity_ids,
+    detach_device,
     device_for_identifier,
     legacy_name_from_entry,
 )
@@ -128,7 +129,7 @@ def _drop_local_plant(hass: HomeAssistant, entry_id: str) -> None:
     for child in dr.async_entries_for_config_entry(registry, entry_id):
         if child.via_device_id == device.id:
             registry.async_update_device(child.id, via_device_id=None)
-    registry.async_update_device(device.id, remove_config_entry_id=entry_id)
+    detach_device(registry, device.id, entry_id)
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: SolisConfigEntry) -> None:

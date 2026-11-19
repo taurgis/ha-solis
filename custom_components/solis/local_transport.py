@@ -560,7 +560,9 @@ class SolisLocalTransport:
                     reason=REASON_UNSUPPORTED,
                 ) from err
             except SolisLoggerOffline as err:
-                await self._drop()
+                if not getattr(client, "late_reply_pending", False):
+                    # A Modbus TCP client keeps an aligned socket after one timeout.
+                    await self._drop()
                 last_offline = err
                 if self._protocol or not err.connected:
                     raise
@@ -973,12 +975,31 @@ def _degraded_cloud(
         ),
         data_source=DATA_DEGRADED,
     )
+    if local.cloud_fill:
+        # This reader publishes the cloud plant, logger and EPM devices anyway.
+        return replace(
+            cloud,
+            inverters=(inverter,),
+            source=DATA_DEGRADED,
+            fetched_at=datetime.now(UTC),
+            # The cloud plant is not this entry's local device set, so nothing may be pruned.
+            partial=True,
+        )
+    # A Modbus or Solarman entry owns only the local placeholder plant and its stick.
+    # Publishing the cloud plant, loggers and EPMs here would create devices that the
+    # next local read removes again.
+    base = local.last_snapshot or local_snapshot(
+        replace(inverter, station_id=LOCAL_STATION), "", datetime.now(UTC)
+    )
+    if previous is None:
+        inverter = replace(inverter, station_id=LOCAL_STATION)
     return replace(
-        cloud,
+        base,
         inverters=(inverter,),
+        alarms=cloud.alarms,
+        collectors=base.collectors if local.last_snapshot else (),
         source=DATA_DEGRADED,
         fetched_at=datetime.now(UTC),
-        # The cloud plant is not this entry's local device set, so nothing may be pruned.
         partial=True,
     )
 
@@ -1133,11 +1154,15 @@ def _client(
 async def _detect_map(client: RegisterReader, slave: int) -> str | None:
     """Return the register map this slave answers, or None.
 
-    3004 is read first: an old Solis-mini 4G resets the session on reads at
-    3050 and above, so nothing higher is read once the 3000 map answers.
-    When 3004 is an illegal address, the type register 35000 names the map
-    (hn/ginlong-solis), and 33022 is the fallback when 35000 says nothing.
-    A silent slave raises the timeout so the caller can try the next slave.
+    3004 is read first. When 3004 is an illegal address, the type register
+    35000 names the map (hn/ginlong-solis), and 33022 is the fallback when
+    35000 says nothing. A silent slave raises the timeout so the caller can
+    try the next slave.
+
+    A hybrid may answer the 3000 range too, so on Modbus TCP and RTU links
+    35000 is read after 3004 and a hybrid type wins. A Solarman V5 stick is
+    not asked: on the Solis-mini 4G behind a DLS-L, a read at 3050 or above
+    locks the local session for minutes.
     """
     try:
         await client.read_input(slave, 3004, 2)
@@ -1151,7 +1176,9 @@ async def _detect_map(client: RegisterReader, slave: int) -> str | None:
             raise
         return None
     else:
-        return REGISTER_STRING
+        if isinstance(client, SolarmanClient):
+            return REGISTER_STRING
+        return await _hybrid_too(client, slave)
     named = await _type_register(client, slave)
     if named is not None:
         return named if named == REGISTER_HYBRID else None
@@ -1166,6 +1193,16 @@ async def _detect_map(client: RegisterReader, slave: int) -> str | None:
             raise
         return None
     return REGISTER_HYBRID
+
+
+async def _hybrid_too(client: RegisterReader, slave: int) -> str:
+    """The 3000 range answered. A hybrid type in 35000 still makes it a hybrid."""
+    try:
+        named = await _type_register(client, slave)
+    except (SolisLoggerBusy, SolisLoggerOffline):
+        # The 3000 range is known to work; an odd answer to 35000 changes nothing.
+        return REGISTER_STRING
+    return REGISTER_HYBRID if named == REGISTER_HYBRID else REGISTER_STRING
 
 
 async def _type_register(client: RegisterReader, slave: int) -> str | None:

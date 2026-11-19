@@ -19,6 +19,7 @@ from custom_components.solis.coordinator import SolisCoordinator
 from custom_components.solis.energy import consider_energy, sanitize_kwh
 from custom_components.solis.errors import SolisServerError, SolisTimeoutError
 from custom_components.solis.loggers.web import parse_inverter as parse_page
+from custom_components.solis.models import CollectorSnapshot
 from custom_components.solis.parser import _plausible
 from custom_components.solis.registers import decode_hybrid, decode_string
 from custom_components.solis.units import to_watts
@@ -35,13 +36,16 @@ def _web_and_cloud() -> tuple[Any, Any]:
         battery_soc=50.0,
         grid_power_w=100.0,
         unreachable=True,
+        collector_serial="STICK-OWN",
     )
+    own = CollectorSnapshot(serial="STICK-OWN", station_id="1", model="S3", state=1, rssi=-60)
+    other = CollectorSnapshot(serial="STICK-OTHER", station_id="1", model="S3", state=1, rssi=-70)
     cloud = replace(
         cloud,
         inverters=(donor,),
         alarms=(object(),),  # type: ignore[arg-type]
         epms=(object(),),  # type: ignore[arg-type]
-        collectors=(object(),),  # type: ignore[arg-type]
+        collectors=(own, other),
         stations=(object(),),  # type: ignore[arg-type]
         partial=False,
     )
@@ -64,7 +68,12 @@ def test_cloud_fill_keeps_page_values_and_drops_stale_live_data() -> None:
     live = fill_from_cloud(web, cloud, serial=serial, fresh=True)
     assert live.inverters[0].state == 3 and live.inverters[0].battery_soc == 50.0
     assert live.alarms == cloud.alarms and live.epms == cloud.epms
-    assert live.collectors == cloud.collectors and live.stations == cloud.stations
+    # Only the logger this inverter reports through: another entry owns the other stick.
+    assert live.collectors == (cloud.collectors[0],) and live.stations == cloud.stations
+    unnamed = replace(cloud.inverters[0], collector_serial=None)
+    unnamed_cloud = replace(cloud, inverters=(unnamed,))
+    any_stick = fill_from_cloud(web, unnamed_cloud, serial=serial, fresh=True)
+    assert any_stick.collectors == cloud.collectors
     assert live.partial is False
 
 

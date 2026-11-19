@@ -97,9 +97,12 @@ config form reads `SELECTABLE_KINDS`, so the list is not copied.
   connection per host (`host_gate`). A reset after the handshake is a lock:
   one attempt, then a pause of at least 10 s doubling to about 10 min.
 - **Read discipline.** Function 4 first, function 3 only after exception 1.
-  Slaves 1, 2, 3 are tried unless the form fixes one. 33022 decides string vs
-  hybrid; once the 3000 map is known the 33000 range is not read. Registers
-  at 3050 and above are tried once and not retried after failing.
+  Slaves 1, 2, 3 are tried unless the form fixes one. 3004 answering selects
+  the string map, except that on Modbus TCP and RTU links a hybrid type in
+  35000 (read once) wins; a V5 stick is never asked 35000 after 3004. When
+  3004 is illegal, 35000 and then 33022 decide. Once the 3000 map is known
+  the 33000 range is not read. Registers at 3050 and above are tried once
+  and not retried after failing.
 - **Night is not failure.** No route or a timeout before TCP opens on an
   inverter-powered stick is `asleep`: live power 0, totals kept, no repair.
   A gateway refusing TCP is `degraded` and holds the last power; a gateway

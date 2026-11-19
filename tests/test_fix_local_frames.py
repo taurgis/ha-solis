@@ -252,6 +252,39 @@ async def test_detect_map_reads_the_type_register() -> None:
         await _detect_map(_Map({35000: odd}), 1)
 
 
+async def test_a_hybrid_that_also_answers_3004_is_still_a_hybrid() -> None:
+    """On a Modbus link a hybrid type in 35000 wins over a 3000-range answer."""
+    both = _Map({3004: [0, 0], 35000: [2005]})
+    assert await _detect_map(both, 1) == "hybrid"
+    assert await _detect_map(_Map({3004: [0, 0], 35000: [1005]}), 1) == "string"
+    # No or odd type register: the 3000 range that answered stays the map.
+    assert await _detect_map(_Map({3004: [0, 0]}), 1) == "string"
+    odd = SolisLoggerOffline("odd", connected=True, reason=REASON_WRONG_PROTOCOL)
+    assert await _detect_map(_Map({3004: [0, 0], 35000: odd}), 1) == "string"
+
+
+async def test_mbtcp_probe_finds_a_hybrid_that_serves_both_maps(socket_enabled: None) -> None:
+    """The emulated hybrid answers 3004 too; Modbus TCP detection still says hybrid."""
+    emulator, port = await _emulator(kind="s2", hybrid=True, hybrid_answers_3000=True)
+    try:
+        probed = await probe_logger(
+            "127.0.0.1", SERIAL, timeout=0.5, port=port, gap=0, protocol="mbtcp"
+        )
+    finally:
+        await emulator.close()
+    assert probed.register_map == "hybrid"
+
+
+async def test_v5_probe_does_not_read_35000_after_3004(socket_enabled: None) -> None:
+    """A Solarman stick is never asked above 3050 once the 3000 range answers."""
+    emulator, port = await _emulator()
+    try:
+        probed = await probe_logger("127.0.0.1", SERIAL, timeout=0.5, port=port, gap=0)
+    finally:
+        await emulator.close()
+    assert probed.register_map == "string"
+
+
 # Finding 4: a silent slave is the next slave id, not another framing.
 
 

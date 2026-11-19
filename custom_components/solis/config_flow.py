@@ -268,7 +268,11 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
             if not candidate[CONF_KEY_ID] or not candidate[CONF_KEY_SECRET]:
                 errors["base"] = "key_required"
             elif self._key_taken(candidate[CONF_KEY_ID], self._source, None):
-                return self.async_abort(reason="already_configured")
+                # With a stick, the clash is a SolisCloud-only entry that can gain it.
+                reason = (
+                    "cloud_entry_exists" if self._source == SOURCE_BOTH else "already_configured"
+                )
+                return self.async_abort(reason=reason)
             else:
                 errors = await self._load_stations(candidate)
                 if not errors:
@@ -330,7 +334,18 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
         if str(entry.data.get(CONF_SOURCE, SOURCE_CLOUD)) == SOURCE_LOCAL:
             # A SolisCloud account on a local entry becomes its fallback.
             updates[CONF_SOURCE] = SOURCE_BOTH
-        return self.async_update_reload_and_abort(entry, data_updates=updates)
+        key_id = str(updates.get(CONF_KEY_ID) or entry.data.get(CONF_KEY_ID) or "")
+        return self.async_update_reload_and_abort(
+            entry, unique_id=self._unique_id_after(entry, key_id), data_updates=updates
+        )
+
+    @staticmethod
+    def _unique_id_after(entry: ConfigEntry, key_id: str) -> str | None:
+        """A SolisCloud-only entry is keyed by its key id; a stick entry keeps its own."""
+        saved_key = str(entry.data.get(CONF_KEY_ID) or "")
+        if key_id and saved_key and entry.unique_id == saved_key:
+            return key_id
+        return entry.unique_id
 
     def _key_taken(self, key_id: str, source: str, entry: ConfigEntry | None) -> bool:
         """True when another entry already reads this SolisCloud account.
@@ -374,12 +389,22 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
             }
             errors = await self._load_stations(candidate)
             if not errors:
-                # The unique id is a logger id on entries with a local stick, so the key
-                # id on the entry is what tells an account apart.
-                if candidate[CONF_KEY_ID] != str(entry.data.get(CONF_KEY_ID) or ""):
+                saved_key = str(entry.data.get(CONF_KEY_ID) or "")
+                if candidate[CONF_KEY_ID] == saved_key:
+                    return self.async_update_reload_and_abort(
+                        entry, data_updates={CONF_KEY_SECRET: candidate[CONF_KEY_SECRET]}
+                    )
+                # A rotated key has a new key id. It is the same account when it
+                # still sees every plant this entry reads.
+                saved = {str(item) for item in entry.data.get(CONF_STATION_IDS, [])}
+                if not saved or not saved <= set(self._discovered):
                     return self.async_abort(reason="wrong_account")
+                source = str(entry.data.get(CONF_SOURCE, SOURCE_CLOUD))
+                if self._key_taken(candidate[CONF_KEY_ID], source, entry):
+                    return self.async_abort(reason="already_configured")
                 return self.async_update_reload_and_abort(
                     entry,
+                    unique_id=self._unique_id_after(entry, candidate[CONF_KEY_ID]),
                     data_updates={
                         CONF_KEY_ID: candidate[CONF_KEY_ID],
                         CONF_KEY_SECRET: candidate[CONF_KEY_SECRET],
@@ -473,7 +498,9 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
                     # New account, or a local entry gaining SolisCloud: choose plants.
                     self._pending_updates = candidate
                     return await self.async_step_stations()
-                return self.async_update_reload_and_abort(entry, data_updates=candidate)
+                return self.async_update_reload_and_abort(
+                    entry, unique_id=self._unique_id_after(entry, key_id), data_updates=candidate
+                )
         schema = vol.Schema(
             {
                 vol.Required(
@@ -495,6 +522,10 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
         allowed = _sources_for(entry.data)
         if user_input is not None:
             chosen = str(user_input[CONF_SOURCE])
+            key_id = str(entry.data.get(CONF_KEY_ID) or "")
+            if chosen != SOURCE_LOCAL and key_id and self._key_taken(key_id, chosen, entry):
+                # Another entry already reads this account; both would poll the same plants.
+                return self.async_abort(reason="already_configured")
             return self.async_update_reload_and_abort(entry, data_updates={CONF_SOURCE: chosen})
         current = str(entry.data.get(CONF_SOURCE, SOURCE_CLOUD))
         schema = vol.Schema(

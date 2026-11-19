@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from .models import InverterSnapshot, SolisSnapshot
+from .models import CollectorSnapshot, InverterSnapshot, SolisSnapshot
 
 
 def match_inverter(cloud: SolisSnapshot, serial: str) -> InverterSnapshot | None:
@@ -71,8 +71,16 @@ def fill_from_cloud(
         stations=cloud.stations or web.stations,
         inverters=(merged, *web.inverters[1:]),
         alarms=cloud.alarms if fresh else (),
-        collectors=cloud.collectors or web.collectors,
+        # Only this entry's stick: another entry on the same account has its own.
+        collectors=_own_collectors(cloud, donor) or web.collectors,
         epms=cloud.epms if fresh else (),
         # Without live cloud data the plant's devices are not known to be gone.
         partial=not fresh,
     )
+
+
+def _own_collectors(cloud: SolisSnapshot, donor: InverterSnapshot) -> tuple[CollectorSnapshot, ...]:
+    """The cloud logger the matched inverter reports through, when it names one."""
+    if not donor.collector_serial:
+        return cloud.collectors
+    return tuple(item for item in cloud.collectors if item.serial == donor.collector_serial)

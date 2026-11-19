@@ -80,6 +80,8 @@ async def test_options_store_auto_plant_and_a_named_zone(
             started["flow_id"], {"scan_interval": 300, "time_zone": chosen}
         )
         assert done["type"] is FlowResultType.CREATE_ENTRY
+        # Each save schedules a reload; let it finish before the next flow.
+        await hass.async_block_till_done()
         assert entry.options["time_zone"] == stored
         # The Advanced section was not opened, so the saved knobs stay.
         assert entry.options["request_timeout"] == entry_options()["request_timeout"]

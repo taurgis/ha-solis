@@ -25,6 +25,11 @@
   unit string. `batteryCapacitySoc` is a percentage. Plant `capacity` is
   nameplate kW. SoC times an assumed kWh figure would invent stored energy.
   See the research note.
+- Two **Local stick with SolisCloud backup** entries may share one
+  SolisCloud account, for example two sticks on one plant. The entry that
+  added the plant first keeps the plant and export power manager devices;
+  the other entry shows its own inverter and logger only. When the first
+  entry is removed, the other one takes the plant over on its next poll.
 - Plants stay in one config entry. Config subentries would split that entry
   and put the existing entity ids at risk. The plant picker already selects
   any number of plants under one API key.
@@ -42,8 +47,9 @@
   that page (`inverter.cgi` or `status.html`: power, temperature, energy
   today and total, firmware, alarm, refreshed by the stick about every five
   minutes); SolisCloud fills the rest.
-  S4-WIFI-ST, S6 USB sticks, other S3 firmware and 4G/GPRS
-  sticks have no local listener; use cloud, or a gateway on the inverter
+  No local listener is known on S4-WIFI-ST, S6 USB sticks, other S3
+  firmware or 4G/GPRS sticks (only the S3-WIFI-ST is confirmed by an
+  independent source); use cloud, or a gateway on the inverter
   RS485 port. See [dongles](research/dongles.md),
   [the Solarman note](research/solarman-local.md) and
   [the S2-WL-ST note](research/s2-wl-st.md). Some S2 and S5 firmware closes

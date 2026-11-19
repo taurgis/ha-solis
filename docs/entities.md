@@ -35,10 +35,11 @@ latest poll no longer contains it.
 | Measurement time | | | Diagnostic, disabled by default |
 | Grid power | W | measurement | Positive = exporting, negative = importing (see below) |
 | Consumption power | W | measurement | |
-| Phase {n} voltage / current / power | V, A, W | measurement | One phase on a single-phase inverter, three otherwise. Disabled by default on a single-phase inverter, where they repeat AC power, voltage and current |
+| Phase {n} voltage / current | V, A | measurement | Inverter AC side. One phase on a single-phase inverter, three otherwise. Disabled by default on a single-phase inverter, where they repeat AC voltage and current |
+| Grid phase {n} power | W | measurement | Per-phase power at the grid meter (SolisCloud `pA`/`pB`/`pC`). Often 0 without a meter. Disabled by default on a single-phase inverter |
 | String {n} voltage / current | V, A | measurement | |
 | String {n} power | W | measurement | Disabled by default |
-| Alarm | | | Binary sensor. On while a SolisCloud alarm is pending or the inverter reports an alarm state. Attributes `code`, `message` and `advice` while an alarm is pending |
+| Alarm | | | Binary sensor. On while a SolisCloud alarm is pending and has not ended, or the inverter reports an alarm state. Attributes `code`, `message` and `advice` while such an alarm is open. A pending alarm whose end time has passed no longer counts, even if no one has handled it in SolisCloud |
 
 Lifetime counters (Energy total, the grid and load totals, and the battery
 totals) are shown with one decimal. Daily, monthly and yearly counters are

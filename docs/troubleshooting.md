@@ -213,7 +213,9 @@ with the inverter at night is not this fault.
 
 ### S4, S6 and 4G sticks
 
-There is no local port to type. Use SolisCloud, or wire an RS485 gateway to
+No local port is known on these sticks, so there is nothing to type. If you
+find one open, please open an issue with the stick model and firmware. Use
+SolisCloud, or wire an RS485 gateway to
 the inverter and pick **RS485 gateway in Modbus TCP mode**. Details and
 sources are in [Dongles and gateways](research/dongles.md).
 

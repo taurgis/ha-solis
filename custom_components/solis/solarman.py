@@ -574,8 +574,9 @@ class SolarmanClient(_PacedClient):
 
     async def _exchange(self, slave: int, address: int, count: int) -> list[int]:
         reader, writer = await self._ensure()
-        sequence = self._sequence & 0xFFFF
-        self._sequence = (self._sequence + 1) & 0xFFFF
+        # Like pysolarmanv5: an 8-bit counter, sent with a zero high byte.
+        sequence = self._sequence & 0xFF
+        self._sequence = (self._sequence + 1) & 0xFF
         request = build_request(self.serial, sequence, rtu_read(slave, address, count))
         try:
             await self._send(writer, request)
@@ -618,6 +619,9 @@ class SolarmanClient(_PacedClient):
             if control != _RSP_CONTROL or not sequence_matches(frame, sequence):
                 continue
             if logger_serial_of(frame) != self.serial:
+                continue
+            if len(frame) > 11 and frame[11] != 0x02:
+                # Frame type 2 is the solar inverter; pysolarmanv5 rejects others.
                 continue
             if (sum(frame[1:-2]) & 0xFF) != frame[-2]:
                 raise ValueError("solarman checksum mismatch")
@@ -692,6 +696,15 @@ class ModbusTcpClient(_PacedClient):
         self.function = function if function in (3, 4) else 4
         self._fallback = fallback_function if fallback_function in (3, 4) else 0
         self._transaction = 1
+        # Transactions whose reply timed out on a socket that was kept open.
+        self._late: set[int] = set()
+        self.late_reply_pending = False
+
+    async def close(self) -> None:
+        """Close the socket and forget replies that were still owed on it."""
+        self._late.clear()
+        self.late_reply_pending = False
+        await super().close()
 
     async def read_input(self, slave: int, address: int, count: int) -> list[int]:
         """Read input registers over MBAP."""
@@ -720,13 +733,26 @@ class ModbusTcpClient(_PacedClient):
         request = build_mbap(transaction, slave, address, count, self.function)
         try:
             await self._send(writer, request)
-            frame = await self._read_response(reader)
+            frame = await self._read_reply(reader, transaction)
+        except _HeaderTimeout as err:
+            if self.late_reply_pending:
+                # Two timeouts in a row: the socket is probably half-open.
+                await self.close()
+            else:
+                # Nothing of the reply arrived, so the stream is still frame-aligned.
+                # Closing would cost a reconnect, and on an S2-WL-ST a close can
+                # wedge port 502 for minutes. A late reply is skipped next time.
+                self._late.add(transaction)
+                self.late_reply_pending = True
+            raise classify_io(TimeoutError(), connected=True) from err
         except (SolisLoggerBusy, SolisLoggerOffline):
             await self.close()
             raise
         except IO_ERRORS as err:
             await self.close()
             raise classify_io(err, connected=True) from err
+        self._late.clear()
+        self.late_reply_pending = False
         if int.from_bytes(frame[:2], "big") != transaction:
             await self.close()
             raise SolisLoggerOffline(
@@ -757,9 +783,30 @@ class ModbusTcpClient(_PacedClient):
             )
         return words
 
+    async def _read_reply(self, reader: asyncio.StreamReader, transaction: int) -> bytes:
+        """Read this transaction's reply, skipping late replies to timed-out ones."""
+        for _ in range(len(self._late) + 1):
+            frame = await self._read_response(reader)
+            received = int.from_bytes(frame[:2], "big")
+            if received == transaction or received not in self._late:
+                return frame
+            self._late.discard(received)
+        return frame
+
     async def _read_response(self, reader: asyncio.StreamReader) -> bytes:
         try:
+            # readexactly takes nothing from the buffer until all six bytes are
+            # there, so a timeout here leaves the stream on a frame boundary.
             header = await asyncio.wait_for(reader.readexactly(6), timeout=self._timeout)
+        except TimeoutError as err:
+            raise _HeaderTimeout from err
+        except asyncio.IncompleteReadError as err:
+            raise SolisLoggerOffline(
+                "logger closed the connection", connected=True, reason="closed"
+            ) from err
+        except (ConnectionError, OSError) as err:
+            raise classify_io(err, connected=True) from err
+        try:
             length = int.from_bytes(header[4:6], "big")
             if length < 2 or length > _MAX_PAYLOAD:
                 raise ValueError("mbap length is not plausible")
@@ -771,6 +818,10 @@ class ModbusTcpClient(_PacedClient):
         except (TimeoutError, ConnectionError, OSError) as err:
             raise classify_io(err, connected=True) from err
         return header + body
+
+
+class _HeaderTimeout(Exception):
+    """No byte of an MBAP reply arrived in time; the stream is still aligned."""
 
 
 def _local_target(host: str) -> bool:
