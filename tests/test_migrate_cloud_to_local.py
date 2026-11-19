@@ -184,6 +184,7 @@ async def test_migrated_cloud_entry_moves_to_both_then_local(
         # And back: SolisCloud alone still owns the same rows.
         await _switch(hass, entry, "cloud")
         assert entry.runtime_data.data.source == "cloud"
+        assert entry.options["scan_interval"] == 300
         check("cloud again")
         plant_state = hass.states.get(plant_entity)
         assert plant_state is not None

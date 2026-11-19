@@ -144,6 +144,10 @@ and history stay on the same entities, because local and SolisCloud readings
 share the same unique IDs. A poll interval still on the SolisCloud default of
 300 seconds moves to 60 seconds.
 
+The other direction, and replacing a stick (say a web-page stick with an
+S2-WL-ST), work the same way; see
+[Changing the connection or the stick](docs/configuration.md#changing-the-connection-or-the-stick).
+
 With the stick only, sensors that just SolisCloud reports (the plant
 counters such as daily grid import, and the lifetime grid and load totals)
 stay in Home Assistant with their history but become unavailable. They come
