@@ -71,11 +71,15 @@ detail call failed while the rest of the account was readable. Energy totals
 keep the last value and Status reads `stale`. A restart during an outage
 loads those totals again from the last snapshot.
 
-### Power is 0
+### Power is 0 and grid power or house consumption is unknown
 
-The inverter is offline and the sample is fresh. With a local stick that is
-also what you see at night: Data source reads `asleep`, energy totals stay,
-and no repair is opened.
+The inverter is offline (Status reads `offline`). What it produces is 0;
+what it only measures, such as grid power, house consumption, grid voltage
+and temperature, reads unknown because nothing measures it while the
+inverter is off. With a local stick that is also what you see at night:
+Data source reads `asleep`, energy totals stay, and no repair is opened.
+Automations that need a number can use the energy totals, or treat unknown
+as "no reading".
 
 ### Energy dropped to 0 in the middle of the day
 

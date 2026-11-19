@@ -106,12 +106,19 @@ class InverterSnapshot:
     smart_load_today_kwh: float | None = None
 
     def condition(self, now: datetime, stale_after: timedelta = STALE_AFTER) -> str:
-        """Return online, offline, alarm, stale, or unknown."""
+        """Return online, offline, alarm, stale, or unknown.
+
+        An inverter reported offline stays offline however old its last sample
+        is: it stopped sending data because it is off, so its output is known
+        to be zero. Any other old sample, or a failed read, is stale.
+        """
         timestamp = self.data_timestamp
-        if self.unreachable or timestamp is None or now - timestamp > stale_after:
+        if self.unreachable or timestamp is None:
             return "stale"
         if self.state == 2:
             return "offline"
+        if now - timestamp > stale_after:
+            return "stale"
         if self.state == 3:
             return "alarm"
         if self.state == 1:

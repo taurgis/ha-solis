@@ -39,10 +39,14 @@ is `docs/entities.md`; this spec holds the rules behind it.
   negative, > 10 GWh values and lifetime jumps > 100 000 kWh are dropped.
   The last total is restored across restarts (`RestoreSensor`) and held to
   the same rules.
-- **Availability.** Instant sensors read `0` when the inverter is offline in
-  a fresh sample, and `unavailable` when the sample is older than 15 min or
-  that inverter's detail failed; status then reads `stale`. Energy totals
-  keep their last value through both.
+- **Availability.** While the inverter is offline (state 2, at any sample
+  age) produced quantities read `0` (AC power, string power and current,
+  phase current, battery power and current, backup and smart-load power)
+  and measured ones read unknown (frequency, temperature, grid and
+  consumption power, battery, string and phase voltage, grid-meter phase
+  readings). Otherwise instant sensors are `unavailable` when the sample is
+  older than 15 min or that inverter's detail failed; status then reads
+  `stale`. Energy totals keep their last value through all of these.
 - **Appearing and disappearing.** Battery, lifetime grid/load
   (`grid_import_total`, `grid_export_total`, `load_total`, from SolisCloud
   `gridPurchasedTotalEnergy`, `gridSellTotalEnergy`, `homeLoadTotalEnergy`),

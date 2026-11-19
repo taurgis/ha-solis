@@ -132,7 +132,7 @@ def test_new_fields_survive_the_stored_snapshot() -> None:
 
 
 def test_phase_meter_values_follow_the_inverter_state() -> None:
-    """Meter readings hide when stale; meter powers read zero while offline."""
+    """Meter readings are unknown while offline or stale; the grid runs on without the inverter."""
     now = datetime.now(UTC)
     phase = Phase(
         index=1,
@@ -150,8 +150,10 @@ def test_phase_meter_values_follow_the_inverter_state() -> None:
     assert _phase_value(live, "phase_apparent_power", 1, now) == 1100.0
     assert _phase_value(live, "phase_reactive_power", 1, now) == -90.0
     offline = replace(live, state=2)
-    assert _phase_value(offline, "phase_reactive_power", 1, now) == 0.0
-    assert _phase_value(offline, "phase_meter_voltage", 1, now) == 231.0
+    assert _phase_value(offline, "phase_reactive_power", 1, now) is None
+    assert _phase_value(offline, "phase_meter_voltage", 1, now) is None
+    # The inverter's own output current on the phase is known: zero.
+    assert _phase_value(offline, "phase_current", 1, now) == 0.0
     stale = replace(live, data_timestamp=now - timedelta(days=1))
     assert _phase_value(stale, "phase_meter_voltage", 1, now) is None
     assert _phase_value(stale, "phase_meter_current", 1, now) is None
