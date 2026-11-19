@@ -13,7 +13,18 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from .test_fix_runtime_entities import _inverter
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
+
+from .test_fix_runtime_entities import (
+    SERIAL,
+    _inverter,
+    _local,
+    _local_entry,
+    _setup,
+    _Transport,
+)
+from custom_components.solis.const import DOMAIN
 from custom_components.solis.models import InverterSnapshot, Phase, PvString
 from custom_components.solis.sensor import _inverter_value, _phase_value, _string_value
 
@@ -84,3 +95,23 @@ def test_a_live_inverter_shows_its_readings() -> None:
     assert _inverter_value(live, "ac_power", now) == 1200.0
     assert _inverter_value(live, "consumption_power", now) == 900.0
     assert _string_value(live, "string_voltage", 1, now) == 320.0
+
+
+async def test_battery_charging_turns_off_while_offline(hass: HomeAssistant) -> None:
+    """A charging reading from before the inverter went off is not current."""
+    now = datetime.now(UTC)
+    charging = _local(battery_power_w=500.0, battery_soc=80.0)
+    offline = _local(
+        battery_power_w=500.0, battery_soc=80.0, state=2, data_timestamp=now - timedelta(hours=6)
+    )
+    entry = _local_entry(hass)
+    await _setup(hass, entry, _Transport(charging, offline))
+    entity_id = er.async_get(hass).async_get_entity_id(
+        "binary_sensor", DOMAIN, f"{SERIAL}_battery_charging"
+    )
+    assert entity_id is not None
+    assert hass.states.get(entity_id).state == "on"  # type: ignore[union-attr]
+    await entry.runtime_data.async_refresh()
+    await hass.async_block_till_done()
+    assert hass.states.get(entity_id).state == "off"  # type: ignore[union-attr]
+    await hass.config_entries.async_unload(entry.entry_id)

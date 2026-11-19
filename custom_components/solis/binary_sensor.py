@@ -122,6 +122,10 @@ class SolisBatteryChargingBinarySensor(SolisEntity, BinarySensorEntity):
         inverter = self._inverter()
         if inverter is None or inverter.battery_power_w is None:
             return None
+        if inverter.condition(dt_util.utcnow()) == "offline":
+            # Battery power reads 0 while the inverter is off, however old the
+            # last sample is, so a charging reading from before is not current.
+            return False
         return inverter.battery_power_w > 0
 
     def _inverter(self) -> InverterSnapshot | None:

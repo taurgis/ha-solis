@@ -75,7 +75,7 @@ fields.
 | Sensor | Unit | State class | Notes |
 | --- | --- | --- | --- |
 | Battery power | W | measurement | Positive = charging, negative = discharging. The icon shows the direction |
-| Battery charging | | | Binary sensor, on while battery power is positive |
+| Battery charging | | | Binary sensor, on while battery power is positive. Off while the inverter is offline |
 | Battery | % | measurement | State of charge |
 | Battery state of health | % | measurement | Diagnostic, disabled by default |
 | Battery voltage / current | V, A | measurement | |
@@ -148,8 +148,9 @@ live sensors stay available, however old the last sample is:
   phase current, battery power and current, backup and smart-load power.
 - What it only measures reads unknown, because it carries on without the
   inverter and nothing reads it: grid frequency and voltage, grid power,
-  house consumption, the grid-meter phase readings, PV and battery voltage,
-  and temperature.
+  house consumption, grid phase power, apparent and reactive power, meter
+  phase voltage and current, PV and battery voltage, and temperature.
+- Battery charging reads off.
 
 All live sensors are unavailable when the inverter is not reported offline
 but its measurement time is older than 15 minutes, or when that inverter's
