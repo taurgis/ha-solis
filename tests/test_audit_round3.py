@@ -136,3 +136,35 @@ def test_bracketed_time_zone_string() -> None:
     assert parse_offset_hours("(UTC-03:30)") == -3.5
     assert parse_offset_hours("( UTC )") == 0.0
     assert parse_offset_hours("UTC+08:00") == 8.0
+
+
+async def test_the_first_entry_keeps_a_shared_plant(hass: Any) -> None:
+    """A second backup entry on the same account leaves out what the first registered."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    from homeassistant.helpers import entity_registry as er
+
+    from custom_components.solis.const import DOMAIN
+    from custom_components.solis.sensor import _owned
+
+    cloud, _donor = _cloud()
+    station = cloud.stations[0]
+    collector = cloud.collectors[0]
+    first = MockConfigEntry(domain=DOMAIN, data={}, unique_id="first")
+    first.add_to_hass(hass)
+    second = MockConfigEntry(domain=DOMAIN, data={}, unique_id="second")
+    second.add_to_hass(hass)
+    registry = er.async_get(hass)
+    registry.async_get_or_create(
+        "sensor", DOMAIN, f"{station.station_id}_day_energy", config_entry=first
+    )
+    registry.async_get_or_create("sensor", DOMAIN, f"{collector.serial}_rssi", config_entry=first)
+
+    assert _owned(hass, first.entry_id, cloud) is cloud
+    kept = _owned(hass, second.entry_id, cloud)
+    assert kept.stations == () and kept.collectors == ()
+    assert kept.inverters == cloud.inverters
+
+    # Once the first entry is gone, the second one takes the plant over.
+    await hass.config_entries.async_remove(first.entry_id)
+    assert _owned(hass, second.entry_id, cloud) is cloud

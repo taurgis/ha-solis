@@ -172,6 +172,8 @@ class StickState:
     late_once: float = 0.0
     # Answer the 33000 range and 35000 as a hybrid, and refuse the 3000 range.
     hybrid: bool = False
+    # With ``hybrid``, also answer the 3000 range (firmware that serves both maps).
+    hybrid_answers_3000: bool = False
     # Send an unsolicited 0x4710 heartbeat before each V5 reply.
     heartbeat: bool = False
     # Slave ids on the RS485 bus. Any other id gets no reply at all.
@@ -272,6 +274,7 @@ class StickEmulator:
             "late_once",
             "tcp_port",
             "hybrid",
+            "hybrid_answers_3000",
             "heartbeat",
         )
         for key in keys:
@@ -498,7 +501,7 @@ def _heartbeat(state: StickState) -> bytes:
 def _outside_map(state: StickState, address: int) -> bool:
     """A string inverter refuses 33000 and up; a hybrid refuses the 3000 range."""
     if state.hybrid:
-        return address < 33000
+        return address < 33000 and not (state.hybrid_answers_3000 and 3000 <= address < 3100)
     return address >= 33000
 
 

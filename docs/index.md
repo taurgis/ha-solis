@@ -25,7 +25,7 @@ Technologies or Solis.
 | Solis S3-class Wi-Fi stick whose only local service is a status web page | Local stick, logger type **Solis stick with only a status web page** | Only what the page shows, refreshed by the stick about every five minutes. |
 | Solis S5-WiFi-ST | Local stick, logger type **Solis S5-WiFi-ST (experimental)**, or SolisCloud | Solis does not officially support local access, and newer firmware closes port 502. Add SolisCloud as backup. |
 | RS485 gateway (Waveshare, Elfin EW11, USR) wired to the inverter | Local stick, logger type **RS485 gateway** | Modbus TCP mode or transparent mode, to match the gateway. |
-| S4-WIFI-ST, S6 USB, 4G/GPRS sticks, or you are not sure | SolisCloud | These sticks have no local port. |
+| S4-WIFI-ST, S6 USB, 4G/GPRS sticks, or you are not sure | SolisCloud | No local port is known for these sticks. If you find one open, please [open an issue](https://github.com/taurgis/ha-solis/issues). |
 
 To find your stick model, read the label on the stick, or open the plant's
 data logger in the SolisCloud app and check the logger details.

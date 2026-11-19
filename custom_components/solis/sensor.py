@@ -17,6 +17,7 @@ from homeassistant.components.sensor import (
 from homeassistant.const import (
     PERCENTAGE,
     EntityCategory,
+    Platform,
     UnitOfElectricCurrent,
     UnitOfElectricPotential,
     UnitOfEnergy,
@@ -25,7 +26,7 @@ from homeassistant.const import (
     UnitOfTemperature,
 )
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import StateType
@@ -681,6 +682,41 @@ def _string_value(inverter: InverterSnapshot, key: str, index: int, now: datetim
     return None
 
 
+def _owned(hass: HomeAssistant, entry_id: str, data: SolisSnapshot) -> SolisSnapshot:
+    """Leave out plants, loggers and EPMs whose sensors another entry already has.
+
+    Two local entries with SolisCloud backup may share one account, and both
+    can see the same plant. Entity unique ids are global, so the entry that
+    registered a plant (or logger, or EPM) first keeps it.
+    """
+    registry = er.async_get(hass)
+
+    def foreign(unique_id: str) -> bool:
+        entity_id = registry.async_get_entity_id(Platform.SENSOR, DOMAIN, unique_id)
+        row = registry.async_get(entity_id) if entity_id else None
+        return (
+            row is not None
+            and row.config_entry_id is not None
+            and row.config_entry_id != entry_id
+            and hass.config_entries.async_get_entry(row.config_entry_id) is not None
+        )
+
+    stations = tuple(
+        station
+        for station in data.stations
+        if not any(foreign(f"{station.station_id}_{item.key}") for item in _STATION)
+    )
+    collectors = tuple(item for item in data.collectors if not foreign(f"{item.serial}_rssi"))
+    epms = tuple(item for item in data.epms if not foreign(f"{item.serial}_power"))
+    if (
+        len(stations) == len(data.stations)
+        and len(collectors) == len(data.collectors)
+        and len(epms) == len(data.epms)
+    ):
+        return data
+    return replace(data, stations=stations, collectors=collectors, epms=epms)
+
+
 def _parent_devices(hass: HomeAssistant, entry_id: str, data: SolisSnapshot) -> dict[str, str]:
     """Register plant devices and return their registry ids."""
     registry = dr.async_get(hass)
@@ -732,8 +768,8 @@ def _entities(
     coordinator: SolisCoordinator,
     parents: dict[str, str],
     seen: _Seen,
+    data: SolisSnapshot,
 ) -> list[SolisSensor]:
-    data: SolisSnapshot = coordinator.data
     entities: list[SolisSensor] = []
     names = {station.station_id: station.name for station in data.stations}
     for station in data.stations:
@@ -951,15 +987,16 @@ async def async_setup_entry(
         if not coordinator.data.partial:
             seen.drop_absent(serials)
         fresh: list[SolisSensor] = []
-        parents = _parent_devices(hass, entry.entry_id, coordinator.data)
-        wanted = _entities(coordinator, parents, seen)
+        data = _owned(hass, entry.entry_id, coordinator.data)
+        parents = _parent_devices(hass, entry.entry_id, data)
+        wanted = _entities(coordinator, parents, seen, data)
         wanted_ids = {entity.unique_id for entity in wanted if entity.unique_id}
         for entity in wanted:
             if entity.unique_id and entity.unique_id not in added:
                 added[entity.unique_id] = entity
                 fresh.append(entity)
         if not coordinator.data.partial:
-            _remove_missing(hass, entry, coordinator.data, added, wanted_ids)
+            _remove_missing(hass, entry, data, added, wanted_ids)
         if fresh:
             async_add_entities(fresh)
 

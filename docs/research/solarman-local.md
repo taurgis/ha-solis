@@ -95,8 +95,11 @@ SolisCloud uses for the same inverter. Add the cloud account on the same
 entry only for energy fields the stick left empty. It does not rename the
 local device.
 
-Auto-detect reads 3004 first; a reply selects the string map. When 3004 is
-an illegal address, the type register 35000 names the map (value // 100 is
+Auto-detect reads 3004 first; a reply selects the string map. On Modbus TCP
+and RTU links 35000 is then read once too, and a hybrid type there wins,
+because no source rules out a hybrid that also serves the 3000 range. A
+Solarman V5 stick is not asked: on the Solis-mini 4G a read at 3050 or above
+locks its local session. When 3004 is an illegal address, the type register 35000 names the map (value // 100 is
 10 for the 3000 map and 20 for the hybrid map; some firmware stores 0x10xx or
 0x20xx). When 35000 says nothing, a normal reply at 33022 selects the hybrid
 map. Slave 1 is tried, then 2, then 3. Nothing on the RS485 bus answers a
@@ -196,8 +199,8 @@ in pysolarmanv5 issue 22, StephanJoubert/home_assistant_solarman issue 523
 and davidrapan/ha-solarman issue 586. Recovery is the logger's TCP idle time,
 about 300 seconds and sometimes 600, or a power cycle of the inverter.
 
-The 3000-range map is cached. Registers 35000 and 33022 are read only when
-register 3004 itself returns Modbus exception 2. Registers at 3050 and above are tried at
+The 3000-range map is cached. On a V5 stick, registers 35000 and 33022 are
+read only when register 3004 itself returns Modbus exception 2. Registers at 3050 and above are tried at
 most once, during setup, and a failure is remembered.
 
 The first pause after a reset is at least 10 seconds. It doubles up to about
