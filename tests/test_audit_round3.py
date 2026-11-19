@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from .test_web_stick import _cloud_snapshot
 from custom_components.solis import local_transport as lt
 from custom_components.solis.const import LOCAL_STATION
+from custom_components.solis.errors import SolisLoggerBusy
 from custom_components.solis.models import SolisSnapshot
 
 
@@ -168,3 +173,58 @@ async def test_the_first_entry_keeps_a_shared_plant(hass: Any) -> None:
     # Once the first entry is gone, the second one takes the plant over.
     await hass.config_entries.async_remove(first.entry_id)
     assert _owned(hass, second.entry_id, cloud) is cloud
+
+
+async def test_v5_frames_that_are_not_inverter_data_are_skipped() -> None:
+    """A reply with frame type 1 (the logger itself) is skipped, like pysolarmanv5."""
+    from custom_components.solis.solarman import SolarmanClient, build_response, crc16
+    from mock_soliscloud.stick import SERIAL
+
+    body = bytes((1, 4, 2)) + (1234).to_bytes(2, "big")
+    modbus = body + crc16(body).to_bytes(2, "little")
+    other = bytearray(build_response(SERIAL, 7, modbus))
+    other[11] = 0x01
+    good = build_response(SERIAL, 7, modbus)
+    reader = asyncio.StreamReader()
+    reader.feed_data(bytes(other) + good)
+    client = SolarmanClient("127.0.0.1", SERIAL, timeout=1, gap=0)
+    assert await client._read_matching(reader, None, 7, 1, 1) == modbus  # type: ignore[arg-type]
+
+
+async def test_modbus_tcp_header_close_and_socket_error() -> None:
+    """EOF mid-header is a closed logger; an OSError goes through classify_io."""
+    from custom_components.solis.errors import SolisLoggerOffline
+    from custom_components.solis.solarman import ModbusTcpClient
+
+    client = ModbusTcpClient("127.0.0.1", port=502, timeout=1)
+    reader = asyncio.StreamReader()
+    reader.feed_data(b"\x00\x01\x00")
+    reader.feed_eof()
+    with pytest.raises(SolisLoggerOffline) as closed:
+        await client._read_response(reader)
+    assert closed.value.reason == "closed"
+
+    broken = MagicMock()
+    broken.readexactly = AsyncMock(side_effect=ConnectionResetError())
+    with pytest.raises((SolisLoggerOffline, SolisLoggerBusy)):
+        await client._read_response(broken)
+
+
+def test_detach_device_before_2026_8_removes_the_entry_only() -> None:
+    """Older cores keep the device and drop this entry from it."""
+    from custom_components.solis import migration
+
+    registry = MagicMock()
+    with (
+        patch.object(migration, "MAJOR_VERSION", 2026),
+        patch.object(migration, "MINOR_VERSION", 7),
+    ):
+        migration.detach_device(registry, "device-1", "entry-1")
+    registry.async_update_device.assert_called_once_with(
+        "device-1", remove_config_entry_id="entry-1"
+    )
+    registry.async_remove_device.assert_not_called()
+
+    registry = MagicMock()
+    migration.detach_device(registry, "device-1", "entry-1")
+    registry.async_remove_device.assert_called_once_with("device-1")
