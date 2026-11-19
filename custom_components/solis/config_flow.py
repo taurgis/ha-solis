@@ -147,6 +147,26 @@ def _scan_bounds(entry: ConfigEntry) -> tuple[int, int]:
     return MIN_LOCAL_SCAN_INTERVAL, DEFAULT_LOCAL_SCAN_INTERVAL
 
 
+def _options_after(entry: ConfigEntry, source: str) -> dict[str, Any]:
+    """Options for ``entry`` once it reads ``source``.
+
+    A poll interval still on the default of the connection it leaves moves to
+    the default of the new one: five minutes would leave a stick idle, and one
+    minute is SolisCloud's floor. An interval the user chose stays.
+    """
+    options = dict(entry.options)
+    before = str(entry.data.get(CONF_SOURCE, SOURCE_CLOUD)) == SOURCE_CLOUD
+    after = source == SOURCE_CLOUD
+    old, new = (
+        (DEFAULT_SCAN_INTERVAL, DEFAULT_LOCAL_SCAN_INTERVAL)
+        if before
+        else (DEFAULT_LOCAL_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
+    )
+    if before != after and int(options.get(CONF_SCAN_INTERVAL, old)) == old:
+        options[CONF_SCAN_INTERVAL] = new
+    return options
+
+
 def _shown_scan(entry: ConfigEntry) -> int:
     floor, default = _scan_bounds(entry)
     saved = int(entry.options.get(CONF_SCAN_INTERVAL, default))
@@ -526,7 +546,9 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
             if chosen != SOURCE_LOCAL and key_id and self._key_taken(key_id, chosen, entry):
                 # Another entry already reads this account; both would poll the same plants.
                 return self.async_abort(reason="already_configured")
-            return self.async_update_reload_and_abort(entry, data_updates={CONF_SOURCE: chosen})
+            return self.async_update_reload_and_abort(
+                entry, data_updates={CONF_SOURCE: chosen}, options=_options_after(entry, chosen)
+            )
         current = str(entry.data.get(CONF_SOURCE, SOURCE_CLOUD))
         schema = vol.Schema(
             {
@@ -737,9 +759,13 @@ class SolisConfigFlow(ConfigFlow, domain=DOMAIN):
                 return self.async_abort(reason="already_configured")
             base = dict(entry.data)
             base.update(logger_data)
+            if logger_data.get(CONF_LOGGER_KIND) != LOGGER_WEB:
+                # A web-page stick swapped for a Modbus one: its password has no use.
+                base.pop(CONF_LOGGER_PASSWORD, None)
             return self.async_update_reload_and_abort(
                 entry,
                 data=base,
+                options=_options_after(entry, str(base.get(CONF_SOURCE, SOURCE_CLOUD))),
                 unique_id=unique,
             )
         await self.async_set_unique_id(unique)

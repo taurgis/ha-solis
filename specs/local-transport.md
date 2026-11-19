@@ -109,7 +109,9 @@ config form reads `SELECTABLE_KINDS`, so the list is not copied.
   that accepts TCP but gets no Modbus answer is the inverter off, so
   `asleep`.
 - **Both mode.** `SolisPriorityTransport` reads local first. A local lock
-  with a fresh cloud sample yields a degraded cloud snapshot; local energy
+  with a fresh cloud sample yields a degraded cloud snapshot (it carries the
+  cloud plant and EPMs, which a local read does not prune, but keeps the
+  stick as the only logger, which it would); local energy
   counters missing a value are filled from cloud; cloud failure never drops
   a good local read; a stale cloud sample never replaces an asleep local one.
 - **Identity.** Config unique ids: Solarman uses the numeric logger serial;

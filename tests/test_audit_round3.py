@@ -14,7 +14,7 @@ from .test_web_stick import _cloud_snapshot
 from custom_components.solis import local_transport as lt
 from custom_components.solis.const import LOCAL_STATION
 from custom_components.solis.errors import SolisLoggerBusy
-from custom_components.solis.models import SolisSnapshot
+from custom_components.solis.models import EpmSnapshot, SolisSnapshot
 
 
 class _ModbusSide:
@@ -44,26 +44,32 @@ def _cloud() -> tuple[SolisSnapshot, Any]:
     return cloud, replace(donor, station_id="1298491919449")
 
 
-def test_degraded_modbus_read_keeps_the_local_device_set() -> None:
-    """A Modbus entry never gains the cloud plant devices that its next read would prune."""
+def test_degraded_modbus_read_publishes_the_cloud_plant_but_not_its_loggers() -> None:
+    """The plant keeps updating while the stick is out; the stick stays the only logger.
+
+    A local read keeps plant and EPM devices but prunes loggers it does not see, so
+    SolisCloud's loggers would come and go.
+    """
     cloud, donor = _cloud()
+    epm = EpmSnapshot(serial="EPM1", station_id="1298491919449", state=1, power_w=5)
+    cloud = replace(cloud, epms=(epm,))
     last = lt.local_snapshot(
         replace(donor, station_id=LOCAL_STATION), "1902137671", datetime.now(UTC)
     )
     merged = lt._degraded_cloud(_ModbusSide(last), cloud, donor)  # type: ignore[arg-type]
-    assert [s.station_id for s in merged.stations] == [LOCAL_STATION]
+    assert [s.station_id for s in merged.stations] == [LOCAL_STATION, "1298491919449"]
     assert [c.serial for c in merged.collectors] == ["1902137671"]
-    assert merged.epms == ()
+    assert merged.epms == (epm,)
     assert merged.inverters[0].station_id == LOCAL_STATION
     assert merged.partial is True
     assert merged.source == "degraded"
 
 
 def test_degraded_modbus_read_without_a_local_sample() -> None:
-    """Before any local read only the placeholder plant is published."""
+    """Before any local read the cloud plant is published beside the placeholder."""
     cloud, donor = _cloud()
     merged = lt._degraded_cloud(_ModbusSide(None), cloud, donor)  # type: ignore[arg-type]
-    assert [s.station_id for s in merged.stations] == [LOCAL_STATION]
+    assert [s.station_id for s in merged.stations] == [LOCAL_STATION, "1298491919449"]
     assert merged.collectors == ()
     assert merged.inverters[0].station_id == LOCAL_STATION
     assert merged.partial is True

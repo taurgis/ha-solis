@@ -47,6 +47,12 @@ The upstream id formats and why the domain stays `solis` are in
   registers supply it (`async_adopt_inverter_serial`).
 - **Late inverters.** Migration runs again when an inverter missing at
   startup appears later.
+- **Moving to a stick.** A migrated entry is a cloud entry, so Reconfigure →
+  Logger makes it `both` and Connection can then make it `local`. Entity ids
+  are `{serial}_{key}` for either source, so the stick drives the same rows
+  when it reports the inverter serial SolisCloud uses. A local poll does not
+  prune plant, EPM or other inverter devices (see `entities`), so the plant
+  counters that migration moved onto the plant device keep their rows.
 
 ## Boundary
 
