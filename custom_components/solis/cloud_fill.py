@@ -63,6 +63,8 @@ def fill_from_cloud(
             battery_current_a=None,
             grid_power_w=None,
             consumption_power_w=None,
+            backup_power_w=None,
+            smart_load_power_w=None,
             phases=(),
             strings=(),
         )

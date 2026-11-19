@@ -12,6 +12,17 @@ import math
 from typing import Any
 
 _POWER_TO_W = {"w": 1.0, "kw": 1_000.0, "mw": 1_000_000.0}
+# Apparent (VA) and reactive (var) power. The V2.0 sample has no unit field on
+# the meter's per-phase values, so they are read as VA and var. A ``kW``-style
+# label is scaled the same way as a power field.
+_VOLT_AMPERE = {
+    "va": 1.0,
+    "var": 1.0,
+    "w": 1.0,
+    "kva": 1_000.0,
+    "kvar": 1_000.0,
+    "kw": 1_000.0,
+}
 _ENERGY_TO_KWH = {"wh": 0.001, "kwh": 1.0, "mwh": 1_000.0, "gwh": 1_000_000.0}
 # Temperature arrives as ``C``, ``°C`` or the single ``℃`` code point; the
 # inverter detail capture uses ``inverterTemperatureUnit: "℃"``.
@@ -88,6 +99,15 @@ def to_watts(value: Any, unit: Any, pec: Any = None, *, default: str = "kw") -> 
         return None
     number = apply_pec(number, pec)
     return _convert(number, unit_key(unit), _POWER_TO_W, default)
+
+
+def to_volt_amperes(value: Any, unit: Any, pec: Any = None) -> float | None:
+    """Return VA or var. Missing units mean VA or var already."""
+    number = as_float(value)
+    if number is None:
+        return None
+    number = apply_pec(number, pec)
+    return _convert(number, unit_key(unit), _VOLT_AMPERE, "va")
 
 
 def to_kilowatt_hours(

@@ -32,6 +32,12 @@ class Phase:
     voltage_v: float | None
     current_a: float | None
     power_w: float | None
+    # The grid meter's own reading of this phase (``uA``/``iA`` and so on),
+    # next to the inverter's AC side above. SolisCloud only.
+    meter_voltage_v: float | None = None
+    meter_current_a: float | None = None
+    apparent_power_va: float | None = None
+    reactive_power_var: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +90,20 @@ class InverterSnapshot:
     grid_import_total_kwh: float | None = None
     grid_export_total_kwh: float | None = None
     load_total_kwh: float | None = None
+    # Month and year counters, backup (EPS) and smart-load port readings from
+    # SolisCloud inverter detail. Local reads leave them None.
+    battery_charge_month_kwh: float | None = None
+    battery_discharge_month_kwh: float | None = None
+    battery_charge_year_kwh: float | None = None
+    battery_discharge_year_kwh: float | None = None
+    grid_import_month_kwh: float | None = None
+    grid_export_month_kwh: float | None = None
+    grid_import_year_kwh: float | None = None
+    grid_export_year_kwh: float | None = None
+    backup_power_w: float | None = None
+    backup_today_kwh: float | None = None
+    smart_load_power_w: float | None = None
+    smart_load_today_kwh: float | None = None
 
     def condition(self, now: datetime, stale_after: timedelta = STALE_AFTER) -> str:
         """Return online, offline, alarm, stale, or unknown."""
@@ -363,6 +383,18 @@ def _inverter(raw: Mapping[str, Any]) -> InverterSnapshot:
         grid_import_total_kwh=_optional_float(raw, "grid_import_total_kwh"),
         grid_export_total_kwh=_optional_float(raw, "grid_export_total_kwh"),
         load_total_kwh=_optional_float(raw, "load_total_kwh"),
+        battery_charge_month_kwh=_optional_float(raw, "battery_charge_month_kwh"),
+        battery_discharge_month_kwh=_optional_float(raw, "battery_discharge_month_kwh"),
+        battery_charge_year_kwh=_optional_float(raw, "battery_charge_year_kwh"),
+        battery_discharge_year_kwh=_optional_float(raw, "battery_discharge_year_kwh"),
+        grid_import_month_kwh=_optional_float(raw, "grid_import_month_kwh"),
+        grid_export_month_kwh=_optional_float(raw, "grid_export_month_kwh"),
+        grid_import_year_kwh=_optional_float(raw, "grid_import_year_kwh"),
+        grid_export_year_kwh=_optional_float(raw, "grid_export_year_kwh"),
+        backup_power_w=_optional_float(raw, "backup_power_w"),
+        backup_today_kwh=_optional_float(raw, "backup_today_kwh"),
+        smart_load_power_w=_optional_float(raw, "smart_load_power_w"),
+        smart_load_today_kwh=_optional_float(raw, "smart_load_today_kwh"),
     )
 
 
@@ -384,6 +416,10 @@ def _phase(raw: Mapping[str, Any]) -> Phase:
         voltage_v=_optional_float(raw, "voltage_v"),
         current_a=_optional_float(raw, "current_a"),
         power_w=_optional_float(raw, "power_w"),
+        meter_voltage_v=_optional_float(raw, "meter_voltage_v"),
+        meter_current_a=_optional_float(raw, "meter_current_a"),
+        apparent_power_va=_optional_float(raw, "apparent_power_va"),
+        reactive_power_var=_optional_float(raw, "reactive_power_var"),
     )
 
 

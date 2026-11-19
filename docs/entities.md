@@ -32,11 +32,20 @@ latest poll no longer contains it.
 | Grid import total | kWh | total_increasing | Lifetime, from SolisCloud. Only when the inverter reports it |
 | Grid export total | kWh | total_increasing | Lifetime, from SolisCloud. Only when the inverter reports it |
 | Load total | kWh | total_increasing | Lifetime house consumption, from SolisCloud. Only when the inverter reports it |
+| Grid import / export this month | kWh | total_increasing | From SolisCloud. Only when the inverter reports it |
+| Grid import / export this year | kWh | total_increasing | From SolisCloud. Only when the inverter reports it |
+| Backup load power | W | measurement | Power on the backup (EPS) port, SolisCloud `bypassLoadPower`. Only when the inverter reports it |
+| Backup load today | kWh | total_increasing | Energy through the backup port today, SolisCloud `backupTodayEnergy`. Only when the inverter reports it |
+| Smart load power | W | measurement | Smart-load port on hybrids that have one, SolisCloud `backup2Power`. Disabled by default |
+| Smart load today | kWh | total_increasing | SolisCloud `backup2TodayEnergy`. Disabled by default |
 | Measurement time | | | Diagnostic, disabled by default |
 | Grid power | W | measurement | Positive = exporting, negative = importing (see below) |
 | Consumption power | W | measurement | |
 | Phase {n} voltage / current | V, A | measurement | Inverter AC side. One phase on a single-phase inverter, three otherwise. Disabled by default on a single-phase inverter, where they repeat AC voltage and current |
 | Grid phase {n} power | W | measurement | Per-phase power at the grid meter (SolisCloud `pA`/`pB`/`pC`). Often 0 without a meter. Disabled by default on a single-phase inverter |
+| Meter phase {n} voltage / current | V, A | measurement | The grid meter's own reading (SolisCloud `uA`/`iA` and so on). Disabled by default |
+| Grid phase {n} apparent power | VA | measurement | At the grid meter (SolisCloud `aLookedPower` and so on). Disabled by default |
+| Grid phase {n} reactive power | var | measurement | At the grid meter (SolisCloud `aReactivePower` and so on). Disabled by default |
 | String {n} voltage / current | V, A | measurement | |
 | String {n} power | W | measurement | Disabled by default |
 | Alarm | | | Binary sensor. On while a SolisCloud alarm is pending and has not ended, or the inverter reports an alarm state. Attributes `code`, `message` and `advice` while such an alarm is open. A pending alarm whose end time has passed no longer counts, even if no one has handled it in SolisCloud |
@@ -47,7 +56,13 @@ shown with two.
 
 The grid import, grid export and load totals replace solis-sensor's "Total
 Energy Purchased", "Total On-grid Energy" and "Total Energy Used". Their old
-entity IDs and history are kept when you migrate.
+entity IDs and history are kept when you migrate. The same holds for the
+monthly and yearly grid and battery counters, backup load, smart load, the
+meter phase readings and the per-phase apparent and reactive power.
+
+The SolisCloud-only sensors above are added the first time an inverter
+reports the value and are kept after that. A local-only entry does not have
+them.
 
 ## Battery
 
@@ -62,6 +77,7 @@ fields.
 | Battery state of health | % | measurement | Diagnostic, disabled by default |
 | Battery voltage / current | V, A | measurement | |
 | Battery charged / discharged today | kWh | total_increasing | |
+| Battery charged / discharged this month / this year | kWh | total_increasing | From SolisCloud. Only when the inverter reports them |
 | Battery charged / discharged total | kWh | total_increasing | Lifetime. Never decreases |
 | Force charge SOC | % | measurement | Diagnostic, disabled by default |
 | Overdischarge SOC | % | measurement | Diagnostic, disabled by default |
@@ -109,8 +125,9 @@ The local readings depend on the register map of the inverter:
   the alarm word.
 
 With SolisCloud as backup, SolisCloud fills the rest. The lifetime grid and
-load totals, force-charge SOC and the plant sensors come only from
-SolisCloud.
+load totals, the monthly and yearly grid and battery counters, backup and
+smart load, the meter phase readings, force-charge SOC and the plant sensors
+come only from SolisCloud.
 
 ## Values and availability
 

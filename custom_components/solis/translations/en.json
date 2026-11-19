@@ -359,6 +359,54 @@
       },
       "load_total": {
         "name": "Load total"
+      },
+      "battery_charge_month": {
+        "name": "Battery charged this month"
+      },
+      "battery_discharge_month": {
+        "name": "Battery discharged this month"
+      },
+      "battery_charge_year": {
+        "name": "Battery charged this year"
+      },
+      "battery_discharge_year": {
+        "name": "Battery discharged this year"
+      },
+      "grid_import_month": {
+        "name": "Grid import this month"
+      },
+      "grid_export_month": {
+        "name": "Grid export this month"
+      },
+      "grid_import_year": {
+        "name": "Grid import this year"
+      },
+      "grid_export_year": {
+        "name": "Grid export this year"
+      },
+      "backup_power": {
+        "name": "Backup load power"
+      },
+      "backup_today": {
+        "name": "Backup load today"
+      },
+      "smart_load_power": {
+        "name": "Smart load power"
+      },
+      "smart_load_today": {
+        "name": "Smart load today"
+      },
+      "phase_meter_voltage": {
+        "name": "Meter phase {index} voltage"
+      },
+      "phase_meter_current": {
+        "name": "Meter phase {index} current"
+      },
+      "phase_apparent_power": {
+        "name": "Grid phase {index} apparent power"
+      },
+      "phase_reactive_power": {
+        "name": "Grid phase {index} reactive power"
       }
     },
     "binary_sensor": {

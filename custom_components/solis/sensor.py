@@ -18,11 +18,13 @@ from homeassistant.const import (
     PERCENTAGE,
     EntityCategory,
     Platform,
+    UnitOfApparentPower,
     UnitOfElectricCurrent,
     UnitOfElectricPotential,
     UnitOfEnergy,
     UnitOfFrequency,
     UnitOfPower,
+    UnitOfReactivePower,
     UnitOfTemperature,
 )
 from homeassistant.core import HomeAssistant, callback
@@ -257,6 +259,18 @@ _BATTERY: tuple[SolisSensorDescription, ...] = (
         period="day",
         precision=2,
     ),
+    *(
+        _measurement(
+            f"battery_{direction}_{period}",
+            kind="inverter",
+            device_class=SensorDeviceClass.ENERGY,
+            unit=UnitOfEnergy.KILO_WATT_HOUR,
+            period=period,
+            precision=2,
+        )
+        for period in ("month", "year")
+        for direction in ("charge", "discharge")
+    ),
     _measurement(
         "battery_charge_total",
         kind="inverter",
@@ -293,19 +307,84 @@ _BATTERY: tuple[SolisSensorDescription, ...] = (
     ),
 )
 
-# Lifetime grid and load counters from SolisCloud inverter detail. Only added
-# once an inverter reports them: a local read and a meterless plant have none.
-_LIFETIME: tuple[SolisSensorDescription, ...] = tuple(
+# Grid, load, backup and smart-load readings from SolisCloud inverter detail.
+# Each is only added once an inverter reports it: a local read, a meterless
+# plant and an inverter without a backup or smart-load port have none.
+_REPORTED: tuple[SolisSensorDescription, ...] = (
+    *(
+        _measurement(
+            key,
+            kind="inverter",
+            device_class=SensorDeviceClass.ENERGY,
+            unit=UnitOfEnergy.KILO_WATT_HOUR,
+            state_class=SensorStateClass.TOTAL_INCREASING,
+            precision=1,
+        )
+        for key in ("grid_import_total", "grid_export_total", "load_total")
+    ),
+    *(
+        _measurement(
+            f"grid_{direction}_{period}",
+            kind="inverter",
+            device_class=SensorDeviceClass.ENERGY,
+            unit=UnitOfEnergy.KILO_WATT_HOUR,
+            period=period,
+            precision=2,
+        )
+        for period in ("month", "year")
+        for direction in ("import", "export")
+    ),
     _measurement(
-        key,
+        "backup_power",
+        kind="inverter",
+        device_class=SensorDeviceClass.POWER,
+        unit=UnitOfPower.WATT,
+        instant=True,
+        precision=0,
+    ),
+    _measurement(
+        "backup_today",
         kind="inverter",
         device_class=SensorDeviceClass.ENERGY,
         unit=UnitOfEnergy.KILO_WATT_HOUR,
-        state_class=SensorStateClass.TOTAL_INCREASING,
-        precision=1,
-    )
-    for key in ("grid_import_total", "grid_export_total", "load_total")
+        period="day",
+        precision=2,
+    ),
+    # Only S6 hybrids have a smart-load port, and SolisCloud may send zeros for
+    # it on others, so these start disabled.
+    _measurement(
+        "smart_load_power",
+        kind="inverter",
+        device_class=SensorDeviceClass.POWER,
+        unit=UnitOfPower.WATT,
+        instant=True,
+        precision=0,
+        enabled_default=False,
+    ),
+    _measurement(
+        "smart_load_today",
+        kind="inverter",
+        device_class=SensorDeviceClass.ENERGY,
+        unit=UnitOfEnergy.KILO_WATT_HOUR,
+        period="day",
+        precision=2,
+        enabled_default=False,
+    ),
 )
+
+_REPORTED_ATTR = {
+    "grid_import_total": "grid_import_total_kwh",
+    "grid_export_total": "grid_export_total_kwh",
+    "load_total": "load_total_kwh",
+    "grid_import_month": "grid_import_month_kwh",
+    "grid_export_month": "grid_export_month_kwh",
+    "grid_import_year": "grid_import_year_kwh",
+    "grid_export_year": "grid_export_year_kwh",
+    "backup_power": "backup_power_w",
+    "backup_today": "backup_today_kwh",
+    "smart_load_power": "smart_load_power_w",
+    "smart_load_today": "smart_load_today_kwh",
+}
 
 _STATION: tuple[SolisSensorDescription, ...] = (
     _measurement(
@@ -367,6 +446,54 @@ _PHASE = {
         instant=True,
         precision=0,
     ),
+}
+
+# The grid meter's own per-phase readings. Added per phase once reported, and
+# disabled at first: most installs only need the phase sensors above.
+_PHASE_METER = {
+    "meter_voltage": _measurement(
+        "phase_meter_voltage",
+        kind="phase",
+        device_class=SensorDeviceClass.VOLTAGE,
+        unit=UnitOfElectricPotential.VOLT,
+        instant=True,
+        precision=1,
+        enabled_default=False,
+    ),
+    "meter_current": _measurement(
+        "phase_meter_current",
+        kind="phase",
+        device_class=SensorDeviceClass.CURRENT,
+        unit=UnitOfElectricCurrent.AMPERE,
+        instant=True,
+        precision=2,
+        enabled_default=False,
+    ),
+    "apparent_power": _measurement(
+        "phase_apparent_power",
+        kind="phase",
+        device_class=SensorDeviceClass.APPARENT_POWER,
+        unit=UnitOfApparentPower.VOLT_AMPERE,
+        instant=True,
+        precision=0,
+        enabled_default=False,
+    ),
+    "reactive_power": _measurement(
+        "phase_reactive_power",
+        kind="phase",
+        device_class=SensorDeviceClass.REACTIVE_POWER,
+        unit=UnitOfReactivePower.VOLT_AMPERE_REACTIVE,
+        instant=True,
+        precision=0,
+        enabled_default=False,
+    ),
+}
+
+_PHASE_METER_ATTR = {
+    "meter_voltage": "meter_voltage_v",
+    "meter_current": "meter_current_a",
+    "apparent_power": "apparent_power_va",
+    "reactive_power": "reactive_power_var",
 }
 
 _STRING = {
@@ -431,11 +558,23 @@ def _inverter_value(inverter: InverterSnapshot, key: str, now: datetime) -> Stat
         "battery_discharge_today": inverter.battery_discharge_today_kwh,
         "battery_charge_total": inverter.battery_charge_total_kwh,
         "battery_discharge_total": inverter.battery_discharge_total_kwh,
+        "battery_charge_month": inverter.battery_charge_month_kwh,
+        "battery_discharge_month": inverter.battery_discharge_month_kwh,
+        "battery_charge_year": inverter.battery_charge_year_kwh,
+        "battery_discharge_year": inverter.battery_discharge_year_kwh,
         "force_charge_soc": inverter.force_charge_soc,
         "force_discharge_soc": inverter.force_discharge_soc,
         "grid_import_total": inverter.grid_import_total_kwh,
         "grid_export_total": inverter.grid_export_total_kwh,
         "load_total": inverter.load_total_kwh,
+        "grid_import_month": inverter.grid_import_month_kwh,
+        "grid_export_month": inverter.grid_export_month_kwh,
+        "grid_import_year": inverter.grid_import_year_kwh,
+        "grid_export_year": inverter.grid_export_year_kwh,
+        "backup_power": _power(inverter.backup_power_w, condition),
+        "backup_today": inverter.backup_today_kwh,
+        "smart_load_power": _power(inverter.smart_load_power_w, condition),
+        "smart_load_today": inverter.smart_load_today_kwh,
     }
     return values.get(key)
 
@@ -665,6 +804,14 @@ def _phase_value(inverter: InverterSnapshot, key: str, index: int, now: datetime
             return None if condition == "stale" else phase.voltage_v
         if key == "phase_current":
             return None if condition == "stale" else phase.current_a
+        if key == "phase_meter_voltage":
+            return None if condition == "stale" else phase.meter_voltage_v
+        if key == "phase_meter_current":
+            return None if condition == "stale" else phase.meter_current_a
+        if key == "phase_apparent_power":
+            return _power(phase.apparent_power_va, condition)
+        if key == "phase_reactive_power":
+            return _power(phase.reactive_power_var, condition)
         return _power(phase.power_w, condition)
     return None
 
@@ -744,6 +891,8 @@ class _Seen:
     battery_keys: dict[str, set[str]] = field(default_factory=dict)
     lifetime_keys: dict[str, set[str]] = field(default_factory=dict)
     phases: dict[str, set[int]] = field(default_factory=dict)
+    # (phase index, meter metric) pairs that have reported a value.
+    phase_meter: dict[str, set[tuple[int, str]]] = field(default_factory=dict)
     strings: dict[str, set[int]] = field(default_factory=dict)
 
     def retain(self, bucket: dict[str, set[int]], serial: str, current: set[int]) -> set[int]:
@@ -761,6 +910,7 @@ class _Seen:
             key: value for key, value in self.lifetime_keys.items() if key in serials
         }
         self.phases = {key: value for key, value in self.phases.items() if key in serials}
+        self.phase_meter = {key: value for key, value in self.phase_meter.items() if key in serials}
         self.strings = {key: value for key, value in self.strings.items() if key in serials}
 
 
@@ -888,8 +1038,8 @@ def _inverter_entities(
                 )
             )
     lifetime = seen.lifetime_keys.setdefault(inverter.serial, set())
-    for description in _LIFETIME:
-        if getattr(inverter, f"{description.key}_kwh") is not None:
+    for description in _REPORTED:
+        if getattr(inverter, _REPORTED_ATTR[description.key]) is not None:
             lifetime.add(description.key)
         if description.key in lifetime:
             rows.append(
@@ -921,6 +1071,24 @@ def _inverter_entities(
                     index=index,
                 )
             )
+    meter = seen.phase_meter.setdefault(inverter.serial, set())
+    for phase in inverter.phases:
+        meter.update(
+            (phase.index, metric)
+            for metric, attr in _PHASE_METER_ATTR.items()
+            if getattr(phase, attr) is not None
+        )
+    for index, metric in sorted(meter):
+        rows.append(
+            SolisSensor(
+                coordinator,
+                _PHASE_METER[metric],
+                f"{inverter.serial}_phase_{index}_{metric}",
+                device,
+                serial=inverter.serial,
+                index=index,
+            )
+        )
     string_indexes = seen.retain(
         seen.strings,
         inverter.serial,
@@ -951,6 +1119,10 @@ _BATTERY_ATTR = {
     "battery_discharge_today": "battery_discharge_today_kwh",
     "battery_charge_total": "battery_charge_total_kwh",
     "battery_discharge_total": "battery_discharge_total_kwh",
+    "battery_charge_month": "battery_charge_month_kwh",
+    "battery_discharge_month": "battery_discharge_month_kwh",
+    "battery_charge_year": "battery_charge_year_kwh",
+    "battery_discharge_year": "battery_discharge_year_kwh",
     "force_charge_soc": "force_charge_soc",
     "force_discharge_soc": "force_discharge_soc",
 }
