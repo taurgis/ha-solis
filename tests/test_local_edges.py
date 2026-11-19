@@ -212,7 +212,7 @@ def test_degraded_overlay_keeps_a_higher_total() -> None:
     assert marked.inverters[0].ac_power_w == 60
     asleep = asleep_snapshot(previous)
     assert asleep.inverters[0].ac_power_w == 0
-    assert asleep.inverters[0].grid_power_w == 0
+    assert asleep.inverters[0].grid_power_w is None
     donor = _inverter(
         serial="CLOUD",
         model="Solis-mini-2500-4G",

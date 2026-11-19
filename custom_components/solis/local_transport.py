@@ -229,7 +229,7 @@ def placeholder_serial(serial: str, logger_serial: int) -> bool:
 
 
 def asleep_snapshot(previous: SolisSnapshot) -> SolisSnapshot:
-    """Keep energy totals and publish zero live power while the stick is off."""
+    """Keep energy totals, zero what the inverter produces, drop what it measures."""
     now = datetime.now(UTC)
     inverters = tuple(_asleep_inverter(inverter, now) for inverter in previous.inverters)
     return replace(previous, inverters=inverters, fetched_at=now, partial=True, source="asleep")
@@ -263,8 +263,9 @@ def _asleep_inverter(inverter: InverterSnapshot, now: datetime) -> InverterSnaps
         state=2,
         data_timestamp=now,
         ac_power_w=0.0,
-        grid_power_w=0.0 if inverter.grid_power_w is not None else None,
-        consumption_power_w=0.0 if inverter.consumption_power_w is not None else None,
+        # Grid and house carry on without the inverter: nothing measures them now.
+        grid_power_w=None,
+        consumption_power_w=None,
         battery_power_w=0.0 if inverter.battery_power_w is not None else None,
         frequency_hz=None,
         temperature_c=None,

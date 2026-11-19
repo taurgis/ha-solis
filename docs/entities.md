@@ -27,7 +27,7 @@ latest poll no longer contains it.
 | --- | --- | --- | --- |
 | Status | | | online, offline, alarm, stale, unknown |
 | Data source | | | Diagnostic. `local`, `cloud`, `asleep`, or `degraded` (the local stick is paused; last values held, or SolisCloud used) |
-| AC power | W | measurement | 0 when freshly offline |
+| AC power | W | measurement | 0 while the inverter is offline |
 | Frequency | Hz | measurement | |
 | Temperature | °C | measurement | |
 | Energy today / this month / this year | kWh | total_increasing | Resets at the plant's local day, month and year boundary |
@@ -75,7 +75,7 @@ fields.
 | Sensor | Unit | State class | Notes |
 | --- | --- | --- | --- |
 | Battery power | W | measurement | Positive = charging, negative = discharging. The icon shows the direction |
-| Battery charging | | | Binary sensor, on while battery power is positive |
+| Battery charging | | | Binary sensor, on while battery power is positive. Off while the inverter is offline |
 | Battery | % | measurement | State of charge |
 | Battery state of health | % | measurement | Diagnostic, disabled by default |
 | Battery voltage / current | V, A | measurement | |
@@ -141,10 +141,21 @@ reading. A daily, monthly or yearly counter may fall only when that period
 rolls over. Lifetime totals also ignore a jump of more than 100 000 kWh.
 This holds across a restart, which restores the last total.
 
-Instantaneous power is 0 when the inverter is offline and the sample is
-fresh. It is unavailable when the measurement time is older than 15 minutes,
-or when that inverter's detail call failed while other devices still
-updated. Status then reads `stale`.
+While SolisCloud (or a sleeping stick) reports the inverter offline, the
+live sensors stay available, however old the last sample is:
+
+- What the inverter produces reads 0: AC power, PV string power and current,
+  phase current, battery power and current, backup and smart-load power.
+- What it only measures reads unknown, because it carries on without the
+  inverter and nothing reads it: grid frequency and voltage, grid power,
+  house consumption, grid phase power, apparent and reactive power, meter
+  phase voltage and current, PV and battery voltage, and temperature.
+- Battery charging reads off.
+
+All live sensors are unavailable when the inverter is not reported offline
+but its measurement time is older than 15 minutes, or when that inverter's
+detail call failed while other devices still updated. Status then reads
+`stale`. Energy totals keep their last value in every case.
 
 A short SolisCloud blip (fewer than three failed polls, and the last good
 sample under 15 minutes old) keeps showing the last values. A longer outage

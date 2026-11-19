@@ -525,12 +525,29 @@ _STRING = {
 }
 
 
-def _power(value: float | None, condition: str) -> float | None:
-    """Zero a live power reading when the inverter is offline, and hide stale ones."""
+def _produced(value: float | None, condition: str) -> float | None:
+    """A quantity the inverter itself produces or carries: 0 while it is off.
+
+    Its own AC output, PV and battery power and current, and the backup and smart
+    ports really are zero when SolisCloud reports the inverter offline. Unavailable
+    only when the sample is stale for another reason.
+    """
     if condition == "stale":
         return None
     if condition == "offline":
         return 0.0
+    return value
+
+
+def _measured(value: float | None, condition: str) -> float | None:
+    """A quantity the inverter only measures: unknown while it is off.
+
+    Grid voltage and frequency, house load, grid-meter readings, PV and battery
+    voltage and the inverter temperature carry on without the inverter, so an
+    offline inverter cannot say what they are. Showing 0 would be false.
+    """
+    if condition in {"stale", "offline"}:
+        return None
     return value
 
 
@@ -539,21 +556,21 @@ def _inverter_value(inverter: InverterSnapshot, key: str, now: datetime) -> Stat
     values: dict[str, Any] = {
         "status": condition,
         "data_source": inverter.data_source,
-        "ac_power": _power(inverter.ac_power_w, condition),
-        "frequency": None if condition == "stale" else inverter.frequency_hz,
-        "temperature": None if condition == "stale" else inverter.temperature_c,
+        "ac_power": _produced(inverter.ac_power_w, condition),
+        "frequency": _measured(inverter.frequency_hz, condition),
+        "temperature": _measured(inverter.temperature_c, condition),
         "energy_today": inverter.energy_today_kwh,
         "energy_month": inverter.energy_month_kwh,
         "energy_year": inverter.energy_year_kwh,
         "energy_total": inverter.energy_total_kwh,
         "data_timestamp": inverter.data_timestamp,
-        "grid_power": _power(inverter.grid_power_w, condition),
-        "consumption_power": _power(inverter.consumption_power_w, condition),
-        "battery_power": _power(inverter.battery_power_w, condition),
+        "grid_power": _measured(inverter.grid_power_w, condition),
+        "consumption_power": _measured(inverter.consumption_power_w, condition),
+        "battery_power": _produced(inverter.battery_power_w, condition),
         "battery_soc": inverter.battery_soc,
         "battery_soh": inverter.battery_soh,
-        "battery_voltage": None if condition == "stale" else inverter.battery_voltage_v,
-        "battery_current": None if condition == "stale" else inverter.battery_current_a,
+        "battery_voltage": _measured(inverter.battery_voltage_v, condition),
+        "battery_current": _produced(inverter.battery_current_a, condition),
         "battery_charge_today": inverter.battery_charge_today_kwh,
         "battery_discharge_today": inverter.battery_discharge_today_kwh,
         "battery_charge_total": inverter.battery_charge_total_kwh,
@@ -571,9 +588,9 @@ def _inverter_value(inverter: InverterSnapshot, key: str, now: datetime) -> Stat
         "grid_export_month": inverter.grid_export_month_kwh,
         "grid_import_year": inverter.grid_import_year_kwh,
         "grid_export_year": inverter.grid_export_year_kwh,
-        "backup_power": _power(inverter.backup_power_w, condition),
+        "backup_power": _produced(inverter.backup_power_w, condition),
         "backup_today": inverter.backup_today_kwh,
-        "smart_load_power": _power(inverter.smart_load_power_w, condition),
+        "smart_load_power": _produced(inverter.smart_load_power_w, condition),
         "smart_load_today": inverter.smart_load_today_kwh,
     }
     return values.get(key)
@@ -801,18 +818,20 @@ def _phase_value(inverter: InverterSnapshot, key: str, index: int, now: datetime
         if phase.index != index:
             continue
         if key == "phase_voltage":
-            return None if condition == "stale" else phase.voltage_v
+            return _measured(phase.voltage_v, condition)
         if key == "phase_current":
-            return None if condition == "stale" else phase.current_a
+            # The inverter's own output current on this phase.
+            return _produced(phase.current_a, condition)
         if key == "phase_meter_voltage":
-            return None if condition == "stale" else phase.meter_voltage_v
+            return _measured(phase.meter_voltage_v, condition)
         if key == "phase_meter_current":
-            return None if condition == "stale" else phase.meter_current_a
+            return _measured(phase.meter_current_a, condition)
+        # Power, apparent and reactive power per phase are read at the grid meter.
         if key == "phase_apparent_power":
-            return _power(phase.apparent_power_va, condition)
+            return _measured(phase.apparent_power_va, condition)
         if key == "phase_reactive_power":
-            return _power(phase.reactive_power_var, condition)
-        return _power(phase.power_w, condition)
+            return _measured(phase.reactive_power_var, condition)
+        return _measured(phase.power_w, condition)
     return None
 
 
@@ -822,10 +841,11 @@ def _string_value(inverter: InverterSnapshot, key: str, index: int, now: datetim
         if pv.index != index:
             continue
         if key == "string_voltage":
-            return None if condition == "stale" else pv.voltage_v
+            # Panels in daylight hold a voltage whether or not the inverter runs.
+            return _measured(pv.voltage_v, condition)
         if key == "string_current":
-            return None if condition == "stale" else pv.current_a
-        return _power(pv.power_w, condition)
+            return _produced(pv.current_a, condition)
+        return _produced(pv.power_w, condition)
     return None
 
 
